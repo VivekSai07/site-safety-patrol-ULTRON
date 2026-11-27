@@ -19,7 +19,7 @@ The current demo starts at a nominal base and returns there. It does not impleme
 
 ## Angle selection
 
-`candidate_views` can propose a full ring for a free-standing A-frame/platform, filtering grid footprint and path availability. Wall/leaning ladders remain in the accessible front hemisphere. This is a candidate generator, not a visibility proof or automatic orbit controller. The protected runtime keeps one optional side recovery; full orbit execution is intentionally not enabled before validation. A better view should answer a named missing component, not merely inflate a score by taking more correlated pictures.
+`candidate_views` can propose a full ring only for an A-frame when the caller explicitly confirms open space and missing rear evidence; without both attestations it uses the simulator's nominal front candidates. Platform and wall/leaning ladders do not receive full-ring candidates. Angles use a fixed map axis, not measured ladder orientation. The grid filters candidate footprints and available paths in simulation only: neither an attestation nor a free grid proves physical clearance or visibility. The protected runtime keeps one optional side recovery; full-orbit execution remains an isolated Tier 3 proposal.
 
 ## Next real integration gate
 

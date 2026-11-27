@@ -14,10 +14,10 @@ The implemented SQLite registry is ULTRON's small offline memory. It is not a re
 
 ```bash
 # In an existing DimOS environment with its supported Python (upstream currently <3.13)
-PYTHONPATH=/home/vivek/ULTRON/src python -m ultron dimos-ingest /home/vivek/ULTRON/runs/ultron-demo --database /tmp/ultron-dimos.sqlite
+PYTHONPATH=src python -m ultron dimos-ingest runs/ultron-demo --database /tmp/ultron-dimos.sqlite
 ```
 
-Then the upstream memory stream can be queried with `store.stream('ultron_inspections').near((3,6,0),radius=2).to_list()` or time/tag filters. Runtime compatibility of this adapter is pending because DimOS is not installed here. Avoid installing all of DimOS into ROS's system interpreter or this host's Python 3.14. Prefer the teammate's already working DimOS environment and pin its commit.
+Then the upstream memory stream can be queried with `store.stream('ultron_inspections').near((3,6,0),radius=2).to_list()` or time/tag filters. Runtime compatibility of this adapter remains unverified. Avoid installing all of DimOS into ROS's system interpreter; use a compatible separate environment and pin its commit.
 
 Future live integration: an actual DimOS Module consumes observations, calls the registry/policy and emits inspection events to memory/visualization. Its B2 connection is a separate adapter. Reuse the organizer SLAM/navigation baseline rather than replace it during bring-up.
 

@@ -50,6 +50,19 @@ class RenderedWorkflowTests(unittest.TestCase):
             self.assertTrue(telemetry[0]['scene_geoms'])
             self.assertTrue(all(g['kind']!=0 for g in telemetry[0]['robot_geoms']))
 
+    def test_open_site_executes_full_ring_and_returns_base(self):
+        os.environ.setdefault('MUJOCO_GL','egl')
+        from ultron.mission import run_demo
+        with tempfile.TemporaryDirectory() as tmp:
+            with contextlib.redirect_stdout(io.StringIO()):
+                result=run_demo(Path(tmp)/'orbit',patrols=1,variant='open-orbit',view_policy='orbit',motion='legacy')
+            mission=result['missions'][0]
+            record=mission['records'][0]
+            self.assertTrue(record['full_ring_executed'])
+            self.assertEqual(len(set(record['orbit_angles'])),8)
+            self.assertTrue(mission['returned_to_base'])
+            self.assertEqual(len([v for v in record['views'] if v['state']=='INSPECT_ORBIT']),8)
+
     def test_blocked_closeup_never_passes_unseen_feet(self):
         os.environ.setdefault('MUJOCO_GL','egl')
         from ultron.mission import run_demo

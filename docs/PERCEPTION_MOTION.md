@@ -26,9 +26,11 @@ The adapter accepts selected images of the SAME ladder, asks for explicit per-co
 
 A detector confidence means evidence for an object category, not safety. A VLM's self-reported confidence is not a calibrated probability. Similar repeated images are correlated and their scores must not be multiplied to manufacture certainty. The current experimental component threshold is 0.85: unseen/low-confidence components become UNKNOWN, known failures dominate, and even complete model PASS proposals require human review until calibrated against held-out physical ladders. Label date judgements remain proposals unless literal fields and semantics are verified.
 
+For a recognized component outside the required type template, a visible model FAIL proposal meeting the existing threshold is retained and can flag the record; an optional PASS cannot complete required fields. This is conservative screening, not validation of the model's claim.
+
 ## Executable commands
 
-Keep model dependencies in a compatible separate environment; downloads/model inference were not possible in this session.
+Keep model dependencies in a compatible separate environment; model downloads and inference were not performed for this reconciliation.
 
 ```bash
 # Install only the desired optional model extra
@@ -49,7 +51,7 @@ With no checkpoint/model arguments, `analyze` exercises evidence capture/reporti
 
 ## Active views and 360 degrees
 
-`candidate_views` generates footprint/path-checked observation candidates. Leaning/extension ladders stay on the accessible front hemisphere; rear orbits against a wall add collision risk and little useful evidence. Full-ring candidates are allowed only for free-standing A-frame/platform types and remain subject to the entire grid/path check. This utility does not prove line-of-sight or geometric component visibility, and it is not wired to execute a full orbit. The protected demo still permits one side recovery.
+`candidate_views` generates simulation-grid-checked observation candidates. A full ring is available only for an A-frame when the caller explicitly confirms open space and missing rear evidence; platforms and leaning/extension ladders use nominal front candidates. Angles use a fixed map axis, not measured ladder orientation. These attestations and grid/path checks do not prove physical clearance, line-of-sight or component visibility, and the utility does not execute a full orbit. The protected demo still permits one side recovery.
 
 Request views to answer a named gap: obscured feet, unseen spreader, unreadable label. Stop on a hard fail, resolved scope, budget, unsafe path or operator action. Report rejected/unseen views and incomplete coverage rather than guessing. A real 360 sequence requires verified space and a controller, not just a list of points.
 

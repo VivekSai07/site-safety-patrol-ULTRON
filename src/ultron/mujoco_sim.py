@@ -9,10 +9,11 @@ from .scene import make_scene
 
 
 class Simulation:
-    def __init__(self, ladders, output, viewer=False):
+    def __init__(self, ladders, output, viewer=False, clear_clutter=False, group_prefix="ultron_mock_site_v1"):
         self.output=Path(output)
         self.ladders=ladders
-        self.xml=make_scene(ladders)
+        self.xml=make_scene(ladders,clear_clutter)
+        self.group_prefix=group_prefix
         (self.output/'scene.xml').write_text(self.xml)
         self.model=mujoco.MjModel.from_xml_string(self.xml)
         self.data=mujoco.MjData(self.model)
@@ -95,13 +96,23 @@ class Simulation:
                 v,u=np.nonzero(np.isin(segmentation[:,:,0],geom_ids))
                 if len(u)>=20:
                     objects.append({'box_xyxy':[int(u.min()),int(v.min()),int(u.max())+1,int(v.max())+1],
-                        'asset_group':'ultron_mock_site_v1:'+ladder['key'],'ladder_type':ladder['type'],
+                        'asset_group':self.group_prefix+':'+ladder['key'],'ladder_type':ladder['type'],
                         'defect_components':[ladder['defect']] if ladder.get('defect') else [],
                         'visible_pixels':int(len(u))})
             with (self.output/'annotations.jsonl').open('a') as annotations:
-                annotations.write(json.dumps({'rgb':frame['rgb'],'frame_index':self.frames,'objects':objects,'synthetic':True})+'\n')
+                annotations.write(json.dumps({'rgb':frame['rgb'],'frame_index':self.frames,'group_prefix':self.group_prefix,'objects':objects,'synthetic':True})+'\n')
         self.frames+=1
         return frame,rgb,depth,segmentation
+
+    def visible_parts(self,key,segmentation):
+        groups={'rear_feet':[f'{key}_rear_foot_{s}' for s in (-1,1)],
+                'spreader':[f'{key}_spreader']}
+        visible={}
+        for part,names in groups.items():
+            ids=[mujoco.mj_name2id(self.model,mujoco.mjtObj.mjOBJ_GEOM,name) for name in names]
+            if all(gid>=0 and np.count_nonzero(segmentation[:,:,0]==gid)>=3 for gid in ids):
+                visible[part]='PASS'
+        return visible
 
     def oracle_detections(self, frame, depth, segmentation):
         detections=[]

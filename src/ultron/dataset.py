@@ -24,6 +24,10 @@ def export_dataset(run,output,*,split='train'):
                 width,height=image.size
                 image.convert('RGB').save(output/'images'/split/(filename+'.jpg'),quality=92)
             labels=[]
+            if not row['objects']:
+                metadata.write(json.dumps({'image':f'images/{split}/{filename}.jpg','split':split,
+                    'asset_group':row.get('group_prefix','unknown-scene')+':background','negative':True,
+                    'synthetic':True,'damage_visibility':'UNANNOTATED'})+'\n')
             for obj in row['objects']:
                 x0,y0,x1,y1=obj['box_xyxy']
                 if not all(isinstance(v,(int,float)) for v in (x0,y0,x1,y1)) or not (0<=x0<x1<=width and 0<=y0<y1<=height):

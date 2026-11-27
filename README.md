@@ -4,20 +4,183 @@
 
 ![ULTRON B2 patrol preview](docs/images/ultron-patrol.gif)
 
-This is ULTRON's team-side working repository. The organizer starter remains the integration authority for real hardware. Nothing contacts organizers or sends robot commands.
+This is ULTRON's team-side working repository. The organizer starter remains the integration authority for real hardware. The simulation demo does not contact organizers or send robot commands; the optional hardware hook is not verified for real operation.
 
-## Run on this machine
+**Organizer starter alignment:** retain ULTRON for inspection workflows and use the SMAROBIX Unitree simulator for SDK/DDS/ROS tests. See the [source comparison, launch commands and nesseler checklist export](docs/ORGANIZER_ALIGNMENT.md). The organizer simulator stands with physics and joint interfaces; it has no walking controller, camera or lidar.
 
-The existing `python3` environment already has MuJoCo, NumPy and Pillow:
+Version 0.4 adds optional model-backed simulation observations, grouped synthetic corpus generation, training entry points and a DimOS goal adapter. [Commands and verification limits](docs/RUNTIME_V04.md) distinguish implemented interfaces from executed integrations.
+
+## Weekend target architecture
+
+**Plan to build, not a claim of completed integration.** Use a local ladder detector for discovery, then an OpenAI vision API worker for evidence-based checklist proposals. A deterministic supervisor owns movement and completion; a deterministic policy owns screening decisions. The dashboard shows the evidence, uncertainty and human completion fields. The seven nesseler sections are report categories, not seven defects a camera can always prove absent.
+
+```mermaid
+flowchart TB
+    subgraph inputs["Inputs and execution environments"]
+        SIM["ULTRON MuJoCo RGB and depth<br/>Existing kinematic workflow; oracle baseline"]
+        REAL["B2 camera, depth, lidar and robot state<br/>Physical integration separately gated"]
+        KIT["Organizer Unitree MuJoCo<br/>Standing and DDS interface tests only<br/>No walking, camera or lidar"]
+    end
+
+    SYNC["Timestamp, calibration and frame adapters<br/>Reject stale or invalid data"]
+    MAP["Sahil: SLAM, localization and costmaps<br/>DimOS or justified alternative"]
+    DET["Om: local ladder detector<br/>YOLO-World or validated ladder checkpoint"]
+    MEM["Sahil: observed spatial memory<br/>Map-scoped IDs, provenance and uncertainty"]
+    SUP["Vivek: deterministic mission supervisor<br/>Search, target, capture, resume, return"]
+    NAV["Sahil: cancellable navigation<br/>Reachable poses, freshness and stop gates"]
+    EXEC["Execution adapter<br/>Kinematic simulation OR verified B2 walking interface"]
+    CAP["Vivek: evidence capture and selection<br/>Overview, label, feet, rungs and useful side views"]
+    STORE["Local evidence store<br/>Image IDs, hashes, poses, timestamps and asset IDs"]
+    JOB["Kaan: asynchronous inspection jobs<br/>Versioned checklist, prompts and image manifest"]
+    VLM["OpenAI Responses API<br/>Same-ladder keyframes to structured proposals"]
+    VAL["Kaan: schema and evidence validation<br/>Check IDs, completeness, refusal and errors"]
+    RULE["Vivek: deterministic screening policy<br/>Hard fail first; unknown or unvalidated pass needs review"]
+    REC["Persistent inspection history<br/>Seven-section nesseler protocol and pending human checks"]
+    EVT["Vivek and Aravind: versioned event API<br/>Mission, navigation, evidence and inspection updates"]
+    UI["Aravind: live inspector dashboard<br/>Map, ladder list, checklist, images and API status<br/>Rerun for spatial diagnostics"]
+    HUMAN["Human inspector<br/>Resolve uncertainty and complete functional checks"]
+    COV["Coverage and pending-target accounting<br/>Return with gaps or wait if base is unreachable"]
+
+    SIM --> SYNC
+    REAL --> SYNC
+    SYNC --> MAP
+    SYNC --> DET
+    MAP --> MEM
+    DET --> MEM
+    MEM --> SUP
+    MAP --> NAV
+    SUP --> NAV
+    NAV --> EXEC
+    EXEC --> SYNC
+    NAV -->|Arrival and capture readiness| CAP
+    SUP --> CAP
+    CAP --> STORE
+    STORE --> JOB
+    JOB --> VLM
+    VLM --> VAL
+    VAL --> RULE
+    RULE --> REC
+    REC --> MEM
+    RULE -.->|Bounded evidence-gap request only| SUP
+    SUP --> COV
+    MEM --> COV
+    COV --> SUP
+    MAP --> EVT
+    SUP --> EVT
+    STORE --> EVT
+    JOB --> EVT
+    REC --> EVT
+    EVT --> UI
+    STORE -->|Referenced evidence| UI
+    UI --> HUMAN
+    HUMAN -->|Explicit reviewed completion| REC
+    KIT -.->|Separate interface checks only| EXEC
+
+    classDef existing fill:#183c32,stroke:#52b788,color:#ffffff
+    classDef planned fill:#183247,stroke:#66b3ff,color:#ffffff
+    classDef external fill:#43351c,stroke:#e9b44c,color:#ffffff
+    class SIM,STORE existing
+    class SYNC,MAP,DET,MEM,SUP,NAV,EXEC,CAP,JOB,VAL,RULE,REC,EVT,UI,COV planned
+    class REAL,KIT,VLM,HUMAN external
+```
+
+Green marks the existing rendered source/evidence baseline; blue marks target integrations, even where partial modules already exist; gold marks external systems or people. The organizer simulator's dashed connection does not imply it implements high-level walking. No API model output is an actuator command. Implement the simulation and physical adapters separately, preserving their provenance.
+
+### Inspection strategy: useful coverage before full orbit
+
+For Om's first baseline, try YOLO-World with a saved `ladder`/`stepladder` vocabulary, then compare a ladder-trained checkpoint if available. Ultralytics documents [custom vocabulary and saving the prepared model](https://docs.ultralytics.com/models/yolo-world/); this supplies an integration route, not demonstrated ladder recall on our course. Keep whichever model meets measured recall/latency, and retain its license/version provenance.
+
+1. **Discover and bind.** Om's detector processes sampled RGB; aligned depth plus timestamp-correct transforms locate the candidate. Sahil's memory associates it with a map-scoped ID, preserving ambiguous matches. Use the same detector adapter for rendered and real images, but evaluate those domains separately. Simulator segmentation remains labeled oracle ground truth for tests, never model performance.
+2. **Approach and capture.** The baseline is a whole-ladder overview plus an aisle-facing label close-up, with feet/rung/spreader crops from suitable frames. Preserve uncropped originals and crop coordinates. Select sharp, sufficiently exposed, distinct views of the same ladder; nearby ladders must not leak into its evidence bundle. Start with roughly 4–8 selected images per ladder as a tunable trial budget, not a measured optimum.
+3. **Inspect reachable surfaces.** Add one approved second look when it can resolve a specific gap. A full circle is optional, not a prerequisite. The current experimental full-ring path is simulation-only for an explicitly open A-frame with missing rear evidence. Wall-backed ladders, blocked paths and unknown clearances must not trigger an orbit. A fixed camera cannot promise a top-down view; do not assume a gimbal, arm or body-tilt interface. Record unseen upper/rear/underside surfaces as unknown.
+4. **Queue evidence, then continue bounded work.** Kaan's worker receives the immutable image manifest and seven-section rubric. API processing must not block the motion watchdog or sensor pipeline. While analysis is pending, the supervisor may resume its configured route; a later result updates the same asset/job. Any re-observation is a separately validated goal with a budget, never a free-form VLM instruction.
+5. **Validate, preserve and report.** Check every returned image/criterion ID against the request. Retain raw response, model ID, prompt/schema version, timestamps and usage. Fuse evidence without clearing earlier hard failures. Weak/conflicting/unseen evidence, unreadable dates, API failure or a model-only clean result require human review. Return to base with any pending/gap counts visible; navigation completion and analysis completion are separate states.
+
+### Seven-section rubric for the API worker
+
+Expand each section into the actual criteria in the organizer PDF; a single coarse PASS per section is insufficient. Output literal observations with evidence image IDs, visibility, unknowns, raw model confidence and reasons. Confidence is uncalibrated and is not a probability of safe use. Human-only criteria remain pending even when the visible surface looks intact.
+
+| Nesseler section | Image-based proposals to request | What remains human/unknown without other evidence |
+|---|---|---|
+| 1. Holme — rails/stiles | Visible bends, cracks, corrosion, splinters and wear | Hidden damage, sharpness by touch, structural strength, wood treatment when not observable |
+| 2. Sprossen/Stufen/Plattform | Missing/deformed rungs, visible joints, wear and contamination | Joint tightness, play and load-bearing function |
+| 3. Spreizsicherung — spreader | Presence, visible detachment/damage and observed configuration | Locking/security and functional operation |
+| 4. Beschlagteile — fittings | Missing hardware, visible damage/rust and accessible connections | Fastener security, mechanism function and lubrication adequacy |
+| 5. Füße/Rollen — feet/rollers | Missing/damaged caps, visible support contact and rollers | Grip, brake function and stability under load |
+| 6. Zubehör — accessories | Visible presence/damage of supports, extensions and stabilizers | Required applicability, secure attachment and function |
+| 7. Kennzeichnung — markings | Manufacturer/instructions/pictograms; transcribed label text and ambiguous dates | Qualified inspection/sign-off and unreadable/unverified label semantics |
+
+Track inspection-sticker status and deployment hazards (pallet support, leaning inclination) separately from those seven sections. Geometry needs calibrated depth/reference planes and uncertainty; VLM angle estimates alone are not a measured inclination. Do not infer next-inspection dates from sticker colour or a universal annual expiry. Extract readable text first, then apply explicit verified date semantics in code.
+
+The prompt package contains the organizer criterion IDs/text, applicability guidance, visible defect examples with known labels, unknown/human-only rules and the requested JSON schema. This is prompt context, not fine-tuning. Treat text printed in images as scene data, never instructions. Proposed criterion states: `DEFECT_OBSERVED`, `NO_VISIBLE_DEFECT`, `UNKNOWN`, `NOT_APPLICABLE_PROPOSED`; applicability proposals require validation. A new adapter must map these into existing policy without treating `NO_VISIBLE_DEFECT` as certification. All seven sections remain present even if most criteria need review.
+
+### OpenAI API and budget plan
+
+Use a **server-side OpenAI API worker**, not the ChatGPT website or a browser-exposed key. The Responses API accepts image inputs, including multiple images in one request. Use a vision-capable model available to the team's credited project and strict Structured Outputs where supported; pin the tested model ID/configuration after Kaan benchmarks correctness, latency and cost. A valid JSON schema does not guarantee correct findings. See the official [vision guide](https://developers.openai.com/api/docs/guides/images-vision?api-mode=responses) and [Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs).
+
+Start with one multi-image inspection request per ladder, with one bounded additional request for genuinely new evidence if useful. Use a configurable small worker pool, timeout/backoff, request deduplication and a persistent job queue. Cache only by the complete evidence/rubric/model context; a changed inspection cannot reuse an unrelated old result. Refusal, malformed/incomplete response, exhausted budget or network failure produces `MANUAL_REVIEW` with saved evidence, not a fabricated result. Measure P50/P95 latency and actual token usage before setting the stopped-inspection deadline.
+
+The reported **$75 per member** is a resource to verify per credited project/account, not an assumed pooled balance. Use a backend-owned environment key, never commit it or send it to the dashboard. Log estimated cost from observed usage and the verified model price; impose an application-side per-run spend/request cap and reserve credits for the final demo. No streaming every frame, no five-key rotation scheme, and no model training on the critical path. No API calls or credits have been spent by this architecture update.
+
+## Team owners and deliverables
+
+These assignments keep Sahil and Aravind's current work intact. Vivek owns the integration contract; each teammate supplies a runnable adapter plus a small representative fixture so other workstreams can progress independently. The paths below are proposed new boundaries, not existing services.
+
+| Owner | Workstream and concrete output | First handoff / acceptance | Ownership boundary |
+|---|---|---|---|
+| **Sahil** | SLAM, localization, maps/costmaps, navigation, observed spatial memory and coverage; DimOS or justified alternative. Continue on [`sahil`](https://github.com/VivekSai07/site-safety-patrol-ULTRON/tree/sahil) using the [agent handoff](https://github.com/VivekSai07/site-safety-patrol-ULTRON/blob/sahil/docs/SAHIL_HANDOFF.md). | Pose/map stream, observed asset records and cancellable goal adapter. Demo capture pause/resume, repeated IDs, blocked goal and return/unreachable-base outcomes. Real SLAM must be sensor-driven; disclose replay/kinematic parts. | `autonomy/` package if chosen; coordinate `navigation.py`, `memory.py` and map schema with Vivek. No inspection verdict changes. |
+| **Om** | Ladder detector and evidence localization; prepare a ladder vocabulary/checkpoint, run it on synthetic and real samples, produce boxes/tracks plus depth/TF observations. Own detection dataset annotation and recall evaluation with negatives/occlusion. | First deliver saved detector config/weights provenance, annotated preview and timestamped detection fixture. Then report recall/false detections, FPS/latency and ID/depth failures on held-out physical ladder/session groups. | `perception/` detector adapter, observation schema implementation, dataset/evaluation tooling. No API inspection worker or navigation control. |
+| **Kaan** | OpenAI multi-image inspection worker; versioned seven-section rubric/prompt/schema; label transcription; bounded retries/budgeting; criterion evidence and nesseler field mapping. Own inspector-reviewed assessment cases. | First deliver an inspection-job fixture and schema-valid result fixture without needing the robot. Then run a credited-project API smoke test and evaluate defect/unreadable/occluded cases; retain raw responses and failure-to-review results. | Proposed `inspection_api/`, prompt/schema files and checklist mapping in `nesseler.py`. Coordinate policy mapping with Vivek; no final model-only safe verdict. |
+| **Vivek** | Mission orchestrator and integration lead; own shared contracts, frame-to-asset evidence bundles, capture quality/pose budgets, deterministic policy, persistent jobs/events and end-to-end runner. Coordinate hardware readiness with a named authorized operator. | First publish versioned contracts/fixtures to everyone. Wire one detection -> capture bundle -> API result -> policy -> dashboard. Then integrate Sahil's goal/status adapter, repeat patrol, cloud outage and evidence-gap scenarios. | `mission.py`, `supervisor.py`, capture/bundle code, event/worker plumbing and integration tests. Resolve shared-file changes; do not rewrite teammates' backends. |
+| **Aravind** | Live dashboard with ladder/map list, navigation and coverage state, seven-section evidence cards, pending/API-failed states, human completion and protocol download. Rerun may supply spatial diagnostics; the usable inspection UI is the deliverable. | Build now against Vivek/Kaan's fixtures; display image-linked findings and live event updates. Validate that pending/unknown never looks green and that final reports survive API failure/reconnect. | Dashboard frontend and its read API/SSE or WebSocket adapter, coordinated with Vivek. Browser has no OpenAI credentials or direct robot transport. A UI stop request is not an independent E-stop. |
+
+### Contract freeze and immediate next actions
+
+**First integration checkpoint: one ladder, one evidence bundle, one seven-section reviewed report on the dashboard.** Mapping and navigation develop in parallel; no teammate needs to wait for the whole robot stack.
+
+| Producer -> consumer | Contract to agree before deeper implementation |
+|---|---|
+| Om -> Sahil/Vivek | `DetectionObservation`: observation ID, sensor timestamp/clock/frame, bbox/class/score, source model, evidence reference; map position and uncertainty only when depth/TF are valid. A detector track ID is not a persistent asset ID. |
+| Sahil -> Vivek/Aravind | `LocalizationState`, `AssetObservation`, `CoverageState`; map ID/version, validity/age and uncertainty. `NavigationGoal/Result` share goal IDs, explicit status/reason and cancellation acknowledgement. |
+| Vivek -> Kaan | `InspectionJob`: job/mission/asset/map IDs, observation time, ladder-type proposal, criterion/rubric version and immutable view manifest (image ID/hash, original/crop reference, pose/TF, angle/quality where measured). One bundle identifies one target. |
+| Kaan -> Vivek | `InspectionProposal`: job/asset IDs, all criterion IDs with evidence/unknowns, literal label text/date proposal, raw confidence, model/prompt/schema versions, response reference, usage and error/refusal state. No command or final safety certification. |
+| Vivek -> Aravind | Ordered, replayable `MissionEvent` plus REST-style snapshots/evidence access; include event sequence, job/asset IDs, provenance and proposed states `CAPTURED`, `ANALYZING`, `FLAGGED`, `MANUAL_REVIEW`, `HUMAN_COMPLETED`. Human completion does not mean safe use; preserve the signed decision separately. |
+
+Vivek defines/versions these shared schemas and publishes success, pending and failure fixtures first. Om and Kaan implement separate modules against them. Aravind develops without robot/API access. Sahil maintains his dedicated branch. Use focused work branches/PRs for the other workstreams; only `sahil` has been created by this assignment, so do not assume other branch names already exist. Agree before changing a shared schema or database; preserve evidence/history through explicit migrations.
+
+### Integration gates through submission
+
+| Order | Team target / acceptance evidence |
+|---|---|
+| **Now** | Agree contracts and fixture IDs. Om runs a detector on a real reference/sample image; Kaan produces one seven-section API proposal; Aravind renders its evidence; Vivek joins them. Reference photos are examples, not labeled defect ground truth. |
+| **Baseline** | One ladder end-to-end, persistent record, human review and a cloud-failure case. Then two ladders and correct image-to-asset binding. Sahil supplies sensor/replay mapping and navigation with explicit validity/gap states. |
+| **Protected demo** | Integrate bounded patrol -> discover -> approach -> capture -> report -> resume -> return. Measure detector recall against an independently enumerated course; report false-pass count, abstentions, duplicate/merged IDs, interventions, processing latency and spend. Run representative blocked/unreadable/network-failure cases. |
+| **Freeze** | Team planning target: Saturday 28 Nov around 13:30 for the reliable baseline; preserve a backup hardware video by 22:00 if authorized access is available. These are planning targets, not evidence the system is ready. Drop full orbits/fine-tuning before risking the working slice. |
+| **Hand-in** | Organizer material records Sunday 29 Nov noon hand-in and a hardware video up to two minutes; confirm current event instructions. Finish README/runbook, repository, pitch/demo video, one-pager and provenance-reviewed dataset package. Public data upload needs its own team/user instruction. |
+
+Physical testing follows the separate gates below; this plan does not grant robot-operation authority. A replay/kinematic demo is the honest fallback if hardware access or validated autonomy is unavailable. The minimum useful outcome is an evidence-backed seven-section screening report with explicit human work remaining, not an autonomous “safe to use” certificate.
+
+## Simulation-first; hardware is separately gated
+
+Do most development and validation in simulation. Complete integrated hardware deployment requires documented full-system simulation acceptance, followed by separate real-world readiness, explicit authorization and operator supervision. Simulation acceptance records unresolved assumptions; it does not validate physical locomotion, real sensors or optional SDKs.
+
+Targeted component hardware tests may happen before full-system simulation acceptance, but only with component-appropriate tests and risk assessment, authorization and a bounded plan. Any motion also requires verified RC priority, an independent watchdog/stop, a functional E-stop, a measured environment and a controlled operator. Any hardware connection requires explicit user/operator authority and independent safety validation; this reconciliation authorizes none. See [simulation-to-hardware gates](docs/SIM_TO_HARDWARE.md).
+
+Optional advanced intelligence has no control authority. Proposed System One remains off by default, offboard and read-only/audit-only after the hard-fail scan, with no route to motion, verdict or veto. Inspection verdicts are prescreening, never safe-to-use certification.
+
+Numeric thresholds and launch, network and device details in plans or examples are proposed until verified for their intended environment; simulation settings are not hardware approvals. The [Pass 7 Build Bible](docs/bible/BUILD_BIBLE_PASS7.md) and [reconciliation record](docs/RECONCILIATION_PASS7.md) distinguish current implementation from proposed work; neither authorizes hardware operation.
+
+## Run the simulation
+
+From the repository root, on a machine with MuJoCo, NumPy and Pillow (verify dependencies and launch details locally):
 
 ```bash
-cd /home/vivek/ULTRON
-PYTHONPATH=src MUJOCO_GL=egl python3 -m ultron demo --out runs/my-demo
+PYTHONPATH=src MUJOCO_GL=egl python3 -m ultron demo --out runs/ultron-demo
 ```
 
 Omit `--out` for a unique run folder. Existing folders are refused. Default: two patrols with acceleration-limited motion; simulated duration follows the route and turn profile, and rendering speed depends on the machine. Run data is roughly 200–300 MB because depth arrays are preserved.
 
-A generated example lives in `runs/ultron-demo/`. Open `report.html` directly, or serve it:
+After generating a run at `runs/ultron-demo/`, open `report.html` directly, or serve it:
 
 ```bash
 python3 -m http.server 8000 --bind 127.0.0.1 --directory runs/ultron-demo
@@ -34,7 +197,7 @@ python -m pip install -e '.[sim,rerun]'
 ultron demo --out runs/demo
 ```
 
-The local `.venv` created during preparation is empty: package downloads failed on DNS. Use the already installed `python3` command above here, or install extras when networking is available.
+Install the simulation extra in a suitable isolated environment if those dependencies are not already available.
 
 ## What to demonstrate
 
@@ -73,7 +236,7 @@ scripts/rviz.sh runs/ultron-demo
 
 Rerun logs the B2, site primitives, route, camera transforms, RGB/depth, spatial asset pins, and events. RViz replay publishes only `/ultron/sim/*` visualization topics and TF. It publishes **no `/cmd_vel`, DDS low-level commands or hardware goals**. Primitive capsule visuals are approximated by bounding boxes in Rerun and cylinders in RViz; MuJoCo renders original primitives.
 
-**Verification limits here:** headless EGL rendering and SQLite workflows were executed. Rerun/DimOS SDKs are absent and cannot be downloaded in this restricted shell. Their adapters are based on inspected upstream APIs but remain unverified end to end. ROS Humble/RViz are installed; ROS node creation and interactive windows are blocked by session socket/display restrictions. Portable recordings remain available for all viewers.
+**Verification limits:** headless EGL rendering and SQLite workflows have been exercised in simulation. Rerun/DimOS adapters were not verified end to end in the recorded validation; their availability and graphical/ROS restrictions vary by environment. Portable recordings remain available for supported viewers.
 
 ## What is real in the simulation
 
@@ -110,7 +273,7 @@ PYTHONPATH=src python3 -m ultron rerun runs/live-patrol --spawn --follow
 
 A normal COCO YOLO checkpoint lacks a ladder class; use a ladder-trained checkpoint or open-vocabulary YOLOE/YOLO-World. Model confidence is not a calibrated safety probability. Unseen/weak evidence is UNKNOWN, and unvalidated model PASS proposals require human review. Synthetic defect metadata does not establish pixel visibility. See [motion/perception](docs/PERCEPTION_MOTION.md), [supervisor architecture](docs/AUTONOMOUS_SUPERVISOR.md), and [data collection](docs/DATA_COLLECTION.md).
 
-Start with [source review](docs/SOURCE_REVIEW.md), [jury strategy](docs/JURY_STRATEGY.md), [B2/DimOS integration](docs/INTEGRATION.md), [handoff](docs/EVENT_HANDOFF.md) and [pitch/video plan](docs/PITCH.md). Organizer and teammate PDFs are preserved locally in `docs/` and ignored by Git; these notes identify exact pages. No dataset or repository has been uploaded.
+Start with [source review](docs/SOURCE_REVIEW.md), [jury strategy](docs/JURY_STRATEGY.md), [B2/DimOS integration](docs/INTEGRATION.md), [handoff](docs/EVENT_HANDOFF.md) and [pitch/video plan](docs/PITCH.md). The referenced organizer and teammate PDFs are not included in this checkout; locally supplied PDFs are ignored by Git. These notes identify source pages to verify.
 
 ## Verify
 

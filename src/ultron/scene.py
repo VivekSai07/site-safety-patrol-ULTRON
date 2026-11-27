@@ -19,7 +19,7 @@ def box(parent, name, pos, size, color):
                          size=" ".join(map(str,size)),rgba=color)
 
 
-def make_scene(ladders):
+def make_scene(ladders,clear_clutter=False):
     root=ET.parse(ASSETS / "upstream.xml").getroot()
     root.set("model","ULTRON_B2_inspection_sim")
     root.find("compiler").attrib.pop("meshdir",None)
@@ -49,8 +49,9 @@ def make_scene(ladders):
     ET.SubElement(world,"geom",name="floor",type="plane",size="14 11 .1",material="floor_mat")
     for name,pos,size in [("wall_back",[6,8.8,1.5],[6,.1,1.5]),("wall_left",[0,4.5,1.5],[.1,4.5,1.5])]:
         box(world,name,pos,size,".36 .40 .46 1")
-    box(world,"crate",[4.6,3.0,.5],[.4,.55,.5],".65 .36 .13 1")
-    box(world,"pallet",[10.9,3.4,.16],[.5,.8,.16],".55 .39 .23 1")
+    if not clear_clutter:
+        box(world,"crate",[4.6,3.0,.5],[.4,.55,.5],".65 .36 .13 1")
+        box(world,"pallet",[10.9,3.4,.16],[.5,.8,.16],".55 .39 .23 1")
     for ladder in ladders:
         x,y,z=ladder['position']; key=ladder['key']
         body=ET.SubElement(world,"body",name=key,pos=f"{x} {y} {z}")
@@ -74,6 +75,21 @@ def make_scene(ladders):
             box(body,f"{key}_hinge",[0,0,2.65],[.34,.08,.06],".9 .62 .12 1")
         else:
             box(world,key+'_support_wall',[x,y+.28,1.5],[.65,.08,1.5],".34 .39 .45 1")
+    for ladder in ladders:
+        body=world.find("body[@name='"+ladder['key']+"']")
+        width=ladder.get('width_factor',1.);height=ladder.get('height_factor',1.)
+        for geom in body.findall('geom'):
+            if 'pos' in geom.attrib:
+                pos=list(map(float,geom.get('pos').split()));pos[0]*=width;pos[2]*=height
+                geom.set('pos',' '.join(map(str,pos)))
+            if 'size' in geom.attrib and geom.get('type')=='box':
+                size=list(map(float,geom.get('size').split()));size[0]*=width;size[2]*=height
+                geom.set('size',' '.join(map(str,size)))
+            if 'fromto' in geom.attrib:
+                points=list(map(float,geom.get('fromto').split()))
+                for i in (0,3): points[i]*=width
+                for i in (2,5): points[i]*=height
+                geom.set('fromto',' '.join(map(str,points)))
     base=world.find("body[@name='base_link']")
     # Camera looks along robot +X, slightly upwards. This extrinsic is a demo assumption.
     ET.SubElement(base,"camera",name="inspection",pos=".45 0 .13",xyaxes="0 -1 0 -.22 0 .9755",fovy="75")
