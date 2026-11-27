@@ -4,7 +4,7 @@ This is the team-side simulation repository requested by the owner. No organizer
 
 ## Current five-person work split
 
-The authoritative assignments, contracts and acceptance gates are in the [main README](../README.md#team-owners-and-deliverables): Sahil owns autonomy/spatial memory, Om detection/localization of observations, Kaan the OpenAI checklist worker, Vivek mission/evidence integration, and Aravind the dashboard. This supersedes the earlier generic four-role split. Start with the one-ladder vertical slice while navigation progresses independently.
+The authoritative assignments, contracts and acceptance gates are in the [main README](../README.md#team-owners-and-deliverables): Sahil owns simulation SLAM/mapping/navigation, Om detection/localization of observations, Kaan spatial memory, Vivek seven-section API assessments/evaluation and mission/evidence integration, and Aravind the dashboard. This supersedes the earlier generic four-role split. Start with the one-ladder vertical slice while navigation progresses independently.
 
 ## First hardware session
 
