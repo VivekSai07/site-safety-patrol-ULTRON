@@ -13,7 +13,7 @@ The official weighting is 30% real-hardware operation, 25% reliability, 20% tech
 ## Freeze order
 
 1. Real sensor frame -> one detected ladder -> evidence crop -> official protocol field -> report. Record this early.
-2. Use organizer navigation/mapping baseline for a bounded, operator-approved route. Keep optional AI outside the control/watchdog loop.
+2. Integrate Sahil's verified mapping/navigation adapter for a bounded, operator-approved route. The organizer kit supplies standing/DDS simulation, not a navigation baseline. Keep model inference outside the control/watchdog loop.
 3. Add persistent identity/history and explicit unresolved items. Measure duplicate IDs and missing expected assets.
 4. Freeze the real baseline before second-look navigation, tilt, new mapping stacks or model fine-tuning. Team target: Saturday 13:30.
 5. Capture the backup real-hardware video by Saturday 22:00. Final packaging on Sunday before noon.

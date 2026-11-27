@@ -2,12 +2,9 @@
 
 This is the team-side simulation repository requested by the owner. No organizer contact or permission step is part of this workflow. Organizer source documents and team proposals are distinguished in SOURCE_REVIEW.md.
 
-## Four-person work split
+## Current five-person work split
 
-1. Robot/operator owner: starter bring-up, measured sensors/TF, mapping/localization, bounded navigation, RC/watchdog, early real video and bag collection.
-2. Perception owner: ladder detection, rail-depth projection, stationary evidence, literal label reading, unknown/conflict handling.
-3. Registry/report owner: stable asset IDs, mission/event history, actual nesseler field mapping, usable report and exports.
-4. Integration/evaluation owner: repeatable tests, Rerun replay, seeded runs, privacy-approved dataset, packaging and pitch.
+The authoritative assignments, contracts and acceptance gates are in the [main README](../README.md#team-owners-and-deliverables): Sahil owns autonomy/spatial memory, Om detection/localization of observations, Kaan the OpenAI checklist worker, Vivek mission/evidence integration, and Aravind the dashboard. This supersedes the earlier generic four-role split. Start with the one-ladder vertical slice while navigation progresses independently.
 
 ## First hardware session
 
