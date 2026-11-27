@@ -21,3 +21,5 @@ datasets/
 *.sqlite-wal
 .env
 .env.*
+# nesseler form and other downloaded reference data stay local
+data/

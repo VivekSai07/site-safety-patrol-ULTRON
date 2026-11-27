@@ -1,0 +1,18 @@
+{
+  "public_url": "http://LAPTOP-LAN-IP:8000",
+  "escalate_after_s": 300,
+  "ntfy": {"server": "http://LAPTOP-LAN-IP:8080"},
+  "recipients": [
+    {"role": "site_safety_officer", "title": "Site safety officer", "name": "[NAME]", "where": "on site", "ntfy_topic": "ultron-sso-CHANGE-ME"},
+    {"role": "safety_engineer", "title": "Safety engineer", "name": "[NAME]", "where": "off site", "ntfy_topic": "ultron-se-CHANGE-ME"},
+    {"role": "site_manager", "title": "Site manager", "name": "[NAME]", "where": "on site", "ntfy_topic": "ultron-sm-CHANGE-ME"},
+    {"role": "robot_operator", "title": "Robot operator", "name": "[NAME]", "where": "on site", "ntfy_topic": "ultron-op-CHANGE-ME"}
+  ],
+  "rules": {
+    "FLAGGED": ["site_safety_officer", "safety_engineer"],
+    "MANUAL_REVIEW": ["site_safety_officer"],
+    "ROBOT_STOPPED": ["robot_operator"],
+    "MISSION_SUMMARY": ["safety_engineer"],
+    "ESCALATION": ["site_manager"]
+  }
+}

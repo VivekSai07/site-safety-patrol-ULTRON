@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ladder Patrol Live</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-row">
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <span class="brand">ULTRON · Site Safety Patrol</span>
+      <span class="badge-sim" id="sim-badge" hidden>SIMULATION DATA</span>
+    </div>
+    <div class="meta">
+      <span class="live-dot idle" id="live-dot">NO MISSION</span>
+      <span>Site <strong id="site">–</strong></span>
+      <span>Mission <strong id="mission">–</strong></span>
+      <span>Mission time <strong id="clock">–</strong></span>
+      <a class="alert-count zero" id="alert-count" href="#alerts">0 alerts open</a>
+    </div>
+  </div>
+  <nav class="tabs" aria-label="Dashboard pages">
+    <a href="/" aria-current="page">Live mission</a>
+    <a href="/history">Site mission history</a>
+  </nav>
+</header>
+
+<div class="banner" id="banner" aria-live="assertive"></div>
+
+<main>
+  <div class="live-grid">
+    <section class="tiles" id="tiles" aria-label="Mission summary"></section>
+
+    <aside class="cams" aria-label="Live cameras and robot">
+      <div class="cam">
+        <div class="card-head"><h2>Front camera</h2><span class="sub" id="cam-rgb-info">RGB</span></div>
+        <div class="frame" id="cam-front_rgb">Waiting for frames</div>
+      </div>
+      <div class="cam">
+        <div class="card-head"><h2>Depth camera</h2><span class="sub">near = bright · 0.3–8 m</span></div>
+        <div class="frame" id="cam-front_depth">Waiting for frames</div>
+      </div>
+      <div class="card">
+        <h2>Robot</h2>
+        <div class="kv" id="robot"></div>
+      </div>
+    </aside>
+
+    <div class="primary">
+      <div class="split" id="alerts">
+        <section class="card attn wide" aria-label="Notifications">
+          <div class="card-head"><h2>Notifications this mission</h2><span class="sub">Sent live to the responsible officers</span></div>
+          <div id="alert-list"><p class="empty">No notifications yet.</p></div>
+        </section>
+        <section class="card narrow" aria-label="Notification rules">
+          <h2>Who gets told what</h2>
+          <div id="rules"></div>
+          <p class="sub" id="channels"></p>
+        </section>
+      </div>
+
+      <section class="card" aria-label="Site map">
+        <div class="card-head"><h2>Site map</h2><span class="sub" id="map-info">Robot, route and ladder pins</span></div>
+        <div class="map-wrap"><svg class="map" id="map" role="img" aria-label="Site map with robot and ladders"></svg></div>
+        <div class="legend">
+          <span><i style="background:var(--flag-pin)"></i>Flagged (square)</span>
+          <span><i style="background:var(--rev-pin);transform:rotate(45deg)"></i>Manual review (diamond)</span>
+          <span><i style="background:var(--pass-pin);border-radius:50%"></i>Automated pass (circle)</span>
+          <span><i style="background:var(--live-pin);border-radius:50%"></i>Being inspected</span>
+          <span><i style="background:#fff;border:2px solid var(--live-pin);border-radius:3px"></i>B2 robot</span>
+        </div>
+      </section>
+
+      <div class="split">
+        <section class="card wide" aria-label="Ladder register">
+          <div class="card-head">
+            <div><h2>Ladder register · this mission</h2><span class="sub">Click a ladder for the nesseler checklist and photos</span></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap" id="exports"></div>
+          </div>
+          <div class="table-box"><table>
+            <thead><tr><th>Ladder</th><th>Type</th><th>Status</th><th>Reason</th><th>Sticker</th><th>At</th></tr></thead>
+            <tbody id="register"><tr><td colspan="6" class="empty">No ladders yet.</td></tr></tbody>
+          </table></div>
+          <p class="sub" id="coverage"></p>
+        </section>
+        <section class="card narrow" aria-label="Live events">
+          <div class="card-head"><h2>Live events</h2><span class="sub">Newest first</span></div>
+          <ol class="events" id="events"></ol>
+        </section>
+      </div>
+    </div>
+  </div>
+  <footer class="note">Automated visual pre-screening only. "Automated pass" means no defect was seen in the checked visual fields. It is never a release for use: function and touch checks and the sign-off stay with the qualified person (Sachkundiger).</footer>
+</main>
+<dialog id="ladder"></dialog>
+<script src="/static/common.js"></script>
+<script src="/static/live.js"></script>
+</body>
+</html>
