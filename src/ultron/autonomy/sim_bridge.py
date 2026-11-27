@@ -21,7 +21,7 @@ import time  # noqa: E402
 
 import numpy as np  # noqa: E402
 
-from .config import CONFIG_DIR, load_route, load_sim_slam_config  # noqa: E402
+from .config import CONFIG_DIR, load_route, load_scenario, load_sim_slam_config  # noqa: E402
 from .driver import KinematicDriver, route_segments  # noqa: E402
 from .hall_scene import HallSim  # noqa: E402
 from .lidar import SimLidar  # noqa: E402
@@ -50,7 +50,7 @@ def _quat(yaw):
 
 
 class SimBridge:
-    def __init__(self, config, route=None, rate=1.0, out=None):
+    def __init__(self, config, route=None, rate=1.0, out=None, scenario=None):
         import rclpy
         from rclpy.node import Node
         from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
@@ -70,7 +70,9 @@ class SimBridge:
             raise ValueError('rate must be in (0, 10]')
         lidar_profile = config.lidar
         self.sim = HallSim(lidar_profile.mount_xyz_m, lidar_profile.mount_rpy_rad)
-        start = route.start_pose if route else DEFAULT_START
+        if route and scenario:
+            raise ValueError('Use either a route or a scenario')
+        start = route.start_pose if route else scenario.start_pose if scenario else DEFAULT_START
         self.sim.place(*start)
         self.lidar = SimLidar(self.sim, lidar_profile, config.self_filter, seed=config.odometry['seed'] + 1)
         first = self.lidar.scan(0.0)
@@ -80,6 +82,11 @@ class SimBridge:
         self.route = route
         if route:
             self.driver.load_route(route_segments(start, route.waypoints, route.final_yaw))
+        self.scenario = scenario
+        self.steps = list(scenario.steps) if scenario else []
+        self.wait_until = None
+        self.blackout_until = float('-inf')
+        self.scans_suppressed = 0
         self.odom = OdometrySimulator(config.odometry)
         self.start = start
         self.dt = 1.0 / config.odometry['rate_hz']
@@ -114,6 +121,7 @@ class SimBridge:
             out.mkdir(parents=True, exist_ok=False)
             self.logs = {'ground_truth': (out / 'ground_truth.csv').open('w'),
                          'odometry': (out / 'odometry.csv').open('w')}
+            self.logs['events'] = (out / 'events.jsonl').open('w')
             self.logs['ground_truth'].write('t,x,y,yaw\n')
             self.logs['odometry'].write('t,x,y,yaw\n')
             self._write_meta()
@@ -147,6 +155,7 @@ class SimBridge:
             'config_sha256': self.config.sha256, 'lidar_profile_sha256': self.config.lidar.sha256,
             'lidar_unconfirmed_parameters': self.config.lidar.unconfirmed,
             'route': None if not self.route else {'name': self.route.name, 'sha256': self.route.sha256},
+            'scenario': None if not self.scenario else {'name': self.scenario.name, 'sha256': self.scenario.sha256},
             'rate': self.rate, 'clock_start_s': CLOCK_START_S, 'noise_seed': self.config.odometry['seed'],
             'scan_geometry': {'angle_min': g.angle_min, 'angle_max': g.angle_max,
                               'angle_increment': g.angle_increment, 'bins': g.bins,
@@ -166,6 +175,42 @@ class SimBridge:
             self.driver.set_command(msg.linear.x, msg.angular.z, self.t)
         except ValueError:
             self.ignored_commands += 1
+
+    # --- scenario ----------------------------------------------------------------------
+    def _event(self, kind, **payload):
+        record = {'t': round(self.t, 3), 'event': kind, **payload}
+        self.node.get_logger().info(json.dumps(record))
+        if self.logs:
+            self.logs['events'].write(json.dumps(record) + '\n')
+            self.logs['events'].flush()
+
+    def _advance_scenario(self):
+        """Start the next step once the previous route/wait has finished."""
+        while self.steps and not self.driver.route_active and (self.wait_until is None or self.t >= self.wait_until):
+            self.wait_until = None
+            step = self.steps.pop(0)
+            s = self.driver.state
+            if step[0] == 'route':
+                self.driver.load_route(route_segments((s.x, s.y, s.yaw), step[1], step[2]))
+                self._event('ROUTE_START', waypoints=[list(w) for w in step[1]])
+                return
+            if step[0] == 'wait':
+                self.wait_until = self.t + step[1]
+                self._event('WAIT', seconds=step[1])
+                return
+            if step[0] == 'teleport':
+                before = (s.x, s.y, s.yaw)
+                self.driver.teleport(*step[1])
+                self._event('TELEPORT', true_before=list(before), true_after=list(step[1]),
+                            note='odometry not informed (kidnapped robot)')
+            elif step[0] == 'fault':
+                self.blackout_until = self.t + step[2]
+                self._event('FAULT_START', fault=step[1], duration_s=step[2])
+
+    @property
+    def scenario_done(self):
+        return (self.scenario is not None and not self.steps and not self.driver.route_active
+                and (self.wait_until is None or self.t >= self.wait_until))
 
     # --- publishing --------------------------------------------------------------------
     def _publish_cloud(self, scan, stamp):
@@ -229,6 +274,7 @@ class SimBridge:
         return {'sim_time_s': round(self.t, 3), 'driver_event': s.last_event, 'collisions': s.collisions,
                 'command_timeouts': s.timeouts, 'route_active': self.driver.route_active,
                 'ignored_commands': self.ignored_commands, 'requested_rate': self.rate,
+                'scans_suppressed_by_fault': self.scans_suppressed,
                 'achieved_rate': round(achieved_rtf, 3), 'odom_distance_m': round(self.odom.distance, 3),
                 'provenance': 'SIMULATION_ONLY'}
 
@@ -247,14 +293,21 @@ class SimBridge:
                 stamp = self._stamp()
                 clock.clock = stamp
                 self.pub['clock'].publish(clock)
+                if self.scenario:
+                    self._advance_scenario()
                 state = self.driver.step(self.t, self.dt)
                 self.sim.place(state.x, state.y, state.yaw)
                 self.odom.step(state.vx, state.wz, self.dt)
                 self._publish_state(stamp)
                 if k % self.scan_every == 0:
-                    scan = self.lidar.scan(self.t)
-                    self._publish_cloud(scan, stamp)
-                    self._publish_scan(scan, stamp)
+                    if self.t < self.blackout_until:
+                        self.scans_suppressed += 1  # injected fault: the sensor publishes nothing
+                    else:
+                        if self.scans_suppressed and self.t - self.blackout_until < self.dt * self.scan_every:
+                            self._event('FAULT_END', fault='lidar_blackout', scans_suppressed=self.scans_suppressed)
+                        scan = self.lidar.scan(self.t)
+                        self._publish_cloud(scan, stamp)
+                        self._publish_scan(scan, stamp)
                 elapsed = time.monotonic() - wall0
                 rtf = (self.t - t0) / elapsed if elapsed > 0 else 0.0
                 if self.t - last_status >= 1.0:
@@ -262,7 +315,7 @@ class SimBridge:
                     msg.data = json.dumps(self.status(rtf))
                     self.pub['status'].publish(msg)
                     last_status = self.t
-                if self.route and not self.driver.route_active and route_done_at is None:
+                if ((self.route and not self.driver.route_active) or self.scenario_done) and route_done_at is None:
                     route_done_at = self.t
                 if route_done_at is not None and self.t - route_done_at >= hold_after_route:
                     break
@@ -287,6 +340,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='ULTRON lidar hall ROS 2 simulation bridge (simulation only)')
     parser.add_argument('--config', type=Path, default=CONFIG_DIR / 'sim_slam.yaml')
     parser.add_argument('--route', type=Path, help='Scripted route YAML; omit for cmd_vel control')
+    parser.add_argument('--scenario', type=Path, help='Scenario YAML (route/wait/teleport/fault steps)')
     parser.add_argument('--rate', type=float, default=1.0, help='Simulation speed relative to wall time')
     parser.add_argument('--duration', type=float, help='Stop after this many simulated seconds')
     parser.add_argument('--out', type=Path, help='New folder for run metadata and evaluation logs')
@@ -298,10 +352,11 @@ def main(argv=None):
         config = dataclasses.replace(config, odometry=dict(config.odometry, seed=args.seed))
     check_isolation(config)
     route = load_route(args.route) if args.route else None
+    scenario = load_scenario(args.scenario) if args.scenario else None
     import rclpy
     rclpy.init()
     try:
-        bridge = SimBridge(config, route, args.rate, args.out)
+        bridge = SimBridge(config, route, args.rate, args.out, scenario)
         bridge.run(args.duration)
         bridge.node.destroy_node()
     except KeyboardInterrupt:

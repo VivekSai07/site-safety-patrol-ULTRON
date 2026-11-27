@@ -141,6 +141,9 @@ SIM_KEYS = {
                  'angular_noise_std', 'seed'),
     'driver': ('max_linear_m_s', 'max_angular_rad_s', 'max_linear_accel_m_s2',
                'max_angular_accel_rad_s2', 'command_timeout_s', 'footprint_radius_m'),
+    'localization': ('scan_age_limit_s', 'pose_age_limit_s', 'match_tolerance_m', 'score_valid_min',
+                     'score_lost_max', 'valid_consecutive', 'recover_consecutive', 'lost_consecutive',
+                     'degraded_timeout_s', 'jump_threshold_m', 'jump_threshold_rad'),
 }
 
 
@@ -153,6 +156,7 @@ class SimSlamConfig:
     scan_projection: dict
     odometry: dict
     driver: dict
+    localization: dict
     lidar: LidarProfile
     sha256: str
 
@@ -177,12 +181,12 @@ def load_sim_slam_config(path=CONFIG_DIR / 'sim_slam.yaml'):
         if not isinstance(topic, str) or not (topic in ALLOWED_TOPICS or topic.startswith(ALLOWED_TOPIC_PREFIXES)):
             raise ConfigError(f'topics.{name}: {topic!r} is outside the simulation namespace')
     numeric = {}
-    for section in ('scan_projection', 'odometry', 'driver'):
+    for section in ('scan_projection', 'odometry', 'driver', 'localization'):
         numeric[section] = {}
         for key, value in data[section].items():
-            if key == 'seed':
-                if isinstance(value, bool) or not isinstance(value, int):
-                    raise ConfigError('odometry.seed: integer required')
+            if key in ('seed', 'valid_consecutive', 'recover_consecutive', 'lost_consecutive'):
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    raise ConfigError(f'{section}.{key}: non-negative integer required')
                 numeric[section][key] = value
                 continue
             negative_ok = key in ('z_min_m', 'z_max_m', 'yaw_rate_bias_rad_s', 'linear_scale_error')
@@ -196,6 +200,15 @@ def load_sim_slam_config(path=CONFIG_DIR / 'sim_slam.yaml'):
     for key, value in numeric['driver'].items():
         if value <= 0:
             raise ConfigError(f'driver.{key}: must be positive')
+    loc = numeric['localization']
+    if not 0 < loc['score_lost_max'] < loc['score_valid_min'] <= 1:
+        raise ConfigError('localization: need 0 < score_lost_max < score_valid_min <= 1')
+    if min(loc['valid_consecutive'], loc['recover_consecutive'], loc['lost_consecutive']) < 1:
+        raise ConfigError('localization: consecutive counts must be >= 1')
+    for key in ('scan_age_limit_s', 'pose_age_limit_s', 'match_tolerance_m', 'degraded_timeout_s',
+                'jump_threshold_m', 'jump_threshold_rad'):
+        if loc[key] <= 0:
+            raise ConfigError(f'localization.{key}: must be positive')
     low = _vector(data['self_filter']['min_xyz_m'], 3, 'self_filter.min_xyz_m')
     high = _vector(data['self_filter']['max_xyz_m'], 3, 'self_filter.max_xyz_m')
     if not all(a < b for a, b in zip(low, high)):
@@ -229,3 +242,52 @@ def load_route(path):
                  final_yaw=_number(data['final_yaw'], 'final_yaw'),
                  waypoints=tuple(_vector(w, 2, f'waypoints[{i}]') for i, w in enumerate(data['waypoints'])),
                  sha256=digest)
+
+
+@dataclass(frozen=True)
+class Scenario:
+    """Simulation test script executed by the bridge: route / wait / teleport / fault steps."""
+    name: str
+    scene: str
+    start_pose: tuple
+    steps: tuple
+    sha256: str
+
+
+FAULTS = {'lidar_blackout'}
+
+
+def load_scenario(path):
+    path = Path(path)
+    data, digest = _load_yaml(path)
+    _keys(data, ('schema', 'scene', 'start_pose', 'steps'), str(path))
+    if data['schema'] != 'ultron.sim_scenario/v1':
+        raise ConfigError(f'Unsupported scenario schema {data["schema"]!r}')
+    if not isinstance(data['steps'], list) or not data['steps']:
+        raise ConfigError('steps: non-empty list required')
+    steps = []
+    for i, step in enumerate(data['steps']):
+        where = f'steps[{i}]'
+        if not isinstance(step, dict):
+            raise ConfigError(f'{where}: mapping required')
+        if 'route' in step:
+            _keys(step, ('route', 'final_yaw'), where)
+            if not isinstance(step['route'], list) or not step['route']:
+                raise ConfigError(f'{where}.route: non-empty list required')
+            steps.append(('route', tuple(_vector(w, 2, where) for w in step['route']),
+                          _number(step['final_yaw'], where)))
+        elif 'wait_s' in step:
+            _keys(step, ('wait_s',), where)
+            steps.append(('wait', _number(step['wait_s'], where, positive=True)))
+        elif 'teleport' in step:
+            _keys(step, ('teleport',), where)
+            steps.append(('teleport', _vector(step['teleport'], 3, where)))
+        elif 'fault' in step:
+            _keys(step, ('fault', 'duration_s'), where)
+            if step['fault'] not in FAULTS:
+                raise ConfigError(f'{where}.fault: one of {sorted(FAULTS)}')
+            steps.append(('fault', step['fault'], _number(step['duration_s'], where, positive=True)))
+        else:
+            raise ConfigError(f'{where}: unknown step {sorted(step)}')
+    return Scenario(name=path.stem, scene=str(data['scene']), start_pose=_vector(data['start_pose'], 3, 'start_pose'),
+                    steps=tuple(steps), sha256=digest)

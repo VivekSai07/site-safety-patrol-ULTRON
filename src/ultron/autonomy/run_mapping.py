@@ -34,6 +34,14 @@ def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def terminate_cleanly():
+    """Turn SIGTERM (e.g. from `timeout`) into KeyboardInterrupt so `finally` blocks stop children;
+    otherwise slam_toolbox and helper nodes (own process groups) were left running."""
+    def handler(*_):
+        raise KeyboardInterrupt('SIGTERM')
+    signal.signal(signal.SIGTERM, handler)
+
+
 def spawn(cmd, log):
     return subprocess.Popen(cmd, stdout=log.open('w'), stderr=subprocess.STDOUT, start_new_session=True)
 
@@ -112,6 +120,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     config = load_sim_slam_config()
     check_isolation(config)
+    terminate_cleanly()
     out = args.out
     out.mkdir(parents=True, exist_ok=False)
     py = sys.executable

@@ -48,6 +48,15 @@ class KinematicDriver:
         self.route = [tuple(map(float, s)) for s in segments]
         self.route_left = self.route[0][2] if self.route else 0.0
 
+    def teleport(self, x, y, yaw):
+        """Move the TRUE pose instantly (simulation test hook; odometry is not told)."""
+        if not self.is_free(x, y):
+            raise ValueError(f'Teleport target ({x}, {y}) collides with the scene')
+        self.route = []
+        self.state.x, self.state.y, self.state.yaw = float(x), float(y), float(yaw)
+        self.state.vx = self.state.wz = 0.0
+        self.state.last_event = 'TELEPORT'
+
     @property
     def route_active(self):
         return bool(self.route)

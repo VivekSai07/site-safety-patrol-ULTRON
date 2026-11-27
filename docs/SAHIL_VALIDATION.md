@@ -97,3 +97,32 @@ Finding fixed: `map_saver` (via slam_toolbox) writes `free_thresh: 0.25`, so `na
 Review images (local): `runs/phase3/*/overlay.png` — SLAM path on truth, odometry drifting ~2 m, occupied cells on reference surfaces; ladders appear as small rail clusters.
 
 Limitations: one scripted route in one synthetic hall; kinematic motion on a flat floor; no dynamic obstacles; wall recall excludes surfaces never observed in the scan band; replay determinism shown for one bag; map ID/version are per-run metadata (versioning on map updates is Phase 4).
+
+## Phase 4 — Map reload, LocalizationState and failure gates
+
+**Date:** 2026-11-28 · **Backend:** slam_toolbox 2.6.10 `localization_slam_toolbox_node`, `config/autonomy/slam_toolbox_localization.yaml` (mapping config + the package's localization differences) · **Map:** `runs/phase3/accept_seed7` (`ultron-hall-be73b8cbf8bf`, v1) · **Code:** `src/ultron/autonomy/{localization_state,localization_monitor,run_localization,eval_localization}.py`, scenario steps in `sim_bridge.py` · **Command:** `scripts/sim-slam.sh localize OUT --map MAP_RUN [--scenario FILE] [--offset DX DY DYAW_DEG]`
+
+**LocalizationState** (`ultron.localization_state/v1`, JSON on `/ultron/sim/localization_state`): `stamp` (scan time the pose refers to), `evaluated_at`, `clock_id`, `frame_id`/`child_frame_id` (`map`/`base_link`), `map_id`, `map_version`, `position` (m), `orientation_xyzw`, `state` ∈ {INITIALIZING, VALID, DEGRADED, LOST, STALE}, `reason`, `match_score`, `covariance_xy_yaw` (null: slam_toolbox provides none; `covariance_source` says so), `age_s`, `age_limit_s`, `source`, `ground_truth_used: false`. Consumers gate with `accept_pose(state, map_id, map_version, now)` (rejects map mismatch, non-VALID, stale, future stamps). Observations use `TransformHistory.transform_at(t)` (interpolates; rejects extrapolation, too-old, gaps > 0.1 s, non-VALID).
+
+Validity rules (`config/autonomy/sim_slam.yaml: localization`, fixed before evaluation): match score = fraction of scan endpoints within 0.15 m of an occupied map cell; VALID needs 5 consecutive scans ≥ 0.70 (10 to leave LOST/STALE); < 0.70 → DEGRADED; ≤ 0.40 for 5 scans or DEGRADED > 3 s → LOST; no scan / transform for 0.5 s → STALE; pose jump > 0.5 m or 0.35 rad → DEGRADED. **A pose at time t is labelled VALID only after a scan taken at or after t has been scored VALID** (added after the first kidnap run, below).
+
+Thresholds (evaluation): no VALID sample with true error > 0.25 m (all scenarios); first VALID ≤ 10 s; while VALID RMSE ≤ 0.10 m, max ≤ 0.25 m, yaw RMSE ≤ 2°; blackout → STALE ≤ 0.75 s and VALID again ≤ 5 s after scans resume; kidnap leaves VALID ≤ 2 s.
+
+| Scenario (1.5×) | Verdict | Results |
+|---|---|---|
+| Reload, initial guess 0.5 m / 15° off (`runs/phase4/final_reload_offset`) | PASS | slam_toolbox corrected the guess on its first scan; first VALID 0.40 s; while VALID RMSE 0.040 m, max 0.093 m, yaw 0.73°; false VALID 0 |
+| Reload, exact guess (`reload_zero`) | PASS | RMSE 0.039 m, max 0.088 m |
+| Lidar blackout 3 s while moving (`final_blackout`) | PASS | VALID → STALE 0.48 s after the last scan; VALID again 1.08 s after scans resumed; false VALID 0 |
+| Kidnap: true pose teleported 3.78 m, odometry not told (`kidnap_v2`) | PASS | VALID → DEGRADED 0.08 s after teleport (score 0.07) → LOST; slam_toolbox relocalized, VALID again at +8.2 s, final error 0.04 m; false VALID 0 |
+| Kidnap, first implementation (`kidnap`) | **FAIL** (kept for the record) | 2 false VALID samples (error 3.78 m): poses between the teleport and the next scan inherited the previous scan's VALID. Fixed by the later-scan confirmation rule |
+| Stress (beyond plan): guess 3 m off (`stress_offset3m`) | FAIL on convergence time only | LOST while wrong (error up to 3.0 m), first VALID at 15.2 s (> 10 s), **false VALID 0**, then RMSE 0.043 m |
+| Opt-in end-to-end: fresh map at 2×, then kidnap on it | PASS | kidnap detected 0.08 s, VALID RMSE 0.043 m, false VALID 0 (`LocalizationRunTest`); with bridge + mapping opt-in tests: 23 tests OK |
+| Full suites | PASS | System Python 101 (16 skipped: MuJoCo/ROS); `.venv-ros` rendered 101 (5 skipped: opt-in) |
+| Unit tests: transitions, data arrival never validates, stale/recovery, jump, gate, interpolation/rejections, later-scan confirmation, scenario/threshold validation | PASS | `tests/test_autonomy_localization.py` (14) |
+
+Findings fixed during the phase:
+1. False VALID during a kidnap (above): later-scan confirmation rule.
+2. Orchestrators killed by SIGTERM (`timeout`) left slam_toolbox and the monitor running (own process groups). SIGTERM now raises KeyboardInterrupt so cleanup runs; verified no orphans after `timeout 15`.
+3. `map_start_pose` is applied by slam_toolbox only when the first scan is processed (identity `map -> odom` before); confirmed with a 3 m offset (parameter `[3.0, 0.0, 0.0]`, pose jumped to x = 2.88). Samples before the first scored scan are INITIALIZING.
+
+Limitations: match score measures agreement with the map, not accuracy; a repetitive environment could match confidently at a wrong pose. No covariance from the backend. Single hall and route family; static scene; one map. Consumers see VALID ~0.25 s after a pose's time (scan period + scoring delay). Map versioning beyond v1 and Nav2 integration are next.

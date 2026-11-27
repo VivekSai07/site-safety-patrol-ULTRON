@@ -48,3 +48,17 @@ driver:
   max_angular_accel_rad_s2: 1.0
   command_timeout_s: 0.5
   footprint_radius_m: 0.55
+localization:
+  # LocalizationState rules (simulation choices, fixed before Phase 4 evaluation).
+  # Match score = fraction of scan endpoints within match_tolerance_m of an occupied map cell.
+  scan_age_limit_s: 0.5         # no scan newer than this -> STALE
+  pose_age_limit_s: 0.5         # no map->base_link transform at the latest scan -> STALE
+  match_tolerance_m: 0.15
+  score_valid_min: 0.70         # below -> DEGRADED
+  score_lost_max: 0.40          # this low for lost_consecutive scans -> LOST
+  valid_consecutive: 5          # good scans needed before VALID (INITIALIZING/DEGRADED)
+  recover_consecutive: 10       # good scans needed to leave LOST or STALE
+  lost_consecutive: 5
+  degraded_timeout_s: 3.0       # DEGRADED longer than this -> LOST
+  jump_threshold_m: 0.5         # pose jump between scans -> DEGRADED (no silent relocalization)
+  jump_threshold_rad: 0.35
