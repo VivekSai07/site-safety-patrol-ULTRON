@@ -11,6 +11,8 @@ dependencies = []
 
 [project.optional-dependencies]
 sim = ["mujoco>=3.3,<4", "numpy>=1.24", "Pillow>=9"]
+# Camera frames to nesseler checklist records (vision model over HTTP, no GPU).
+protocol = ["Pillow>=9", "numpy>=1.24"]
 rerun = ["rerun-sdk==0.32.0", "numpy>=1.24", "Pillow>=9"]
 # Live dashboard: CPU only, no ROS or GPU; runs on Ubuntu and Windows.
 dashboard = ["fastapi>=0.110", "uvicorn>=0.29", "pydantic>=2", "httpx>=0.27", "pypdf>=4", "reportlab>=4", "Pillow>=9"]
@@ -24,6 +26,7 @@ training-vlm = ["transformers>=4.57,<5", "accelerate>=1", "Pillow>=9", "torch>=2
 
 [project.scripts]
 ultron = "ultron.__main__:main"
+ultron-protocol = "ultron.protocol.__main__:main"
 safety-patrol = "site_safety_patrol.cli:main"
 
 [tool.setuptools.packages.find]
