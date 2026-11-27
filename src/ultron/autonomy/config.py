@@ -134,6 +134,7 @@ def load_lidar_profile(path=CONFIG_DIR / 'lidar_helios32.yaml'):
 SIM_KEYS = {
     'ros': ('domain_id', 'localhost_only', 'use_sim_time'),
     'frames': ('map', 'odom', 'base', 'lidar'),
+    'self_filter': ('min_xyz_m', 'max_xyz_m'),
     'topics': ('clock', 'points', 'scan', 'odom', 'ground_truth', 'cmd_vel', 'localization_state'),
     'scan_projection': ('z_min_m', 'z_max_m', 'angle_increment_deg', 'range_min_m', 'range_max_m'),
     'odometry': ('rate_hz', 'linear_scale_error', 'yaw_rate_bias_rad_s', 'linear_noise_std',
@@ -147,6 +148,7 @@ SIM_KEYS = {
 class SimSlamConfig:
     ros: dict
     frames: dict
+    self_filter: dict
     topics: dict
     scan_projection: dict
     odometry: dict
@@ -194,7 +196,12 @@ def load_sim_slam_config(path=CONFIG_DIR / 'sim_slam.yaml'):
     for key, value in numeric['driver'].items():
         if value <= 0:
             raise ConfigError(f'driver.{key}: must be positive')
+    low = _vector(data['self_filter']['min_xyz_m'], 3, 'self_filter.min_xyz_m')
+    high = _vector(data['self_filter']['max_xyz_m'], 3, 'self_filter.max_xyz_m')
+    if not all(a < b for a, b in zip(low, high)):
+        raise ConfigError('self_filter: min must be below max on every axis')
     profile_path = data['lidar_profile']
     profile_path = Path(profile_path) if Path(profile_path).is_absolute() else path.parent / profile_path
     return SimSlamConfig(ros=dict(ros), frames=dict(frames), topics=dict(data['topics']),
+                         self_filter={'min_xyz_m': low, 'max_xyz_m': high},
                          lidar=load_lidar_profile(profile_path), sha256=digest, **numeric)

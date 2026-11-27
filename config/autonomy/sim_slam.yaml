@@ -19,6 +19,11 @@ topics:
   ground_truth: /ultron/sim/ground_truth/pose
   cmd_vel: /ultron/sim/cmd_vel
   localization_state: /ultron/sim/localization_state
+self_filter:
+  # Crop box in base_link removing returns from the robot's own body and legs,
+  # as a real driver/filter would. Simulation choice; measure on the robot.
+  min_xyz_m: [-0.55, -0.38, -0.75]
+  max_xyz_m: [0.50, 0.38, 0.60]
 scan_projection:
   # Points between these heights in base_link are flattened into the 2D scan.
   z_min_m: -0.45

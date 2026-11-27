@@ -19,7 +19,8 @@ range_min_m: {value: 0.2, source: assumed}
 range_max_m: {value: 100.0, source: assumed}
 range_noise_std_m: {value: 0.015, source: assumed}
 dropout_probability: {value: 0.005, source: assumed}
-# base_link -> lidar_link. Team photos show the lidar on a front bracket of the body,
-# upright, below the depth camera and floodlight. Offsets are not yet measured.
-mount_xyz_m: {value: [0.42, 0.0, 0.12], source: assumed}
+# base_link -> lidar_link. Team photos show the lidar upright at the front of the body,
+# below the depth camera and floodlight, where the B2 MJCF has a front cylinder
+# (centre x=0.342, z=0.159). Offsets are not yet measured on the robot.
+mount_xyz_m: {value: [0.342, 0.0, 0.18], source: assumed}
 mount_rpy_rad: {value: [0.0, 0.0, 0.0], source: assumed}
