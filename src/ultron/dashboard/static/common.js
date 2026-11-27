@@ -1,4 +1,4 @@
-// Small DOM helpers shared by both pages. All text goes through textContent (no HTML injection).
+// Shared DOM helpers. All text goes through textContent (no HTML injection) and t() (German/English).
 function el(tag, attrs, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs || {})) {
@@ -14,23 +14,35 @@ function el(tag, attrs, ...children) {
   return node;
 }
 
-const STATUS_LABEL = {FLAGGED: 'FLAGGED', MANUAL_REVIEW: 'MANUAL REVIEW', AUTOMATED_PASS: 'AUTOMATED PASS', INSPECTING: 'INSPECTING'};
-const RESULT_LABEL = {OK: 'No defect seen', DEFECT: 'Defect', UNKNOWN: 'Not visible', NOT_CHECKED: 'Person checks', N_A: 'Does not apply'};
-const ASCENT_EN = {Anlegeleiter: 'Leaning ladder', Stehleiter: 'Stepladder (A-frame)', Mehrzweckleiter: 'Multi-purpose ladder',
-  Schiebeleiter: 'Extension ladder', Podestleitern: 'Platform ladder', Seilzugleiter: 'Rope-operated ladder',
-  Steckleiter: 'Sectional ladder', Tritt: 'Step stool', Sonstige: 'Other'};
+const STATUS_LABEL = new Proxy({}, {get: (_, key) => t(`status.${String(key)}`)});
+const SIM_ASCENT = {LEANING_SINGLE: 'Anlegeleiter', A_FRAME_STEPLADDER: 'Stehleiter'};
+const GROUP_KEYS = ['holme', 'sprossen', 'spreiz', 'beschlag', 'fuesse', 'zubehoer', 'kennzeichnung'];
 
-function statusPill(status) { return el('span', {class: `pill s-${status}`}, STATUS_LABEL[status] || status); }
-function resultPill(result) { return el('span', {class: `pill r-${result}`}, RESULT_LABEL[result] || result || '–'); }
+function statusPill(status) { return el('span', {class: `pill s-${status}`}, t(`status.${status}`)); }
+function resultPill(result) { return el('span', {class: `pill r-${result || 'N_A'}`}, result ? t(`result.${result}`) : '–'); }
 function mmss(seconds) {
   if (seconds === null || seconds === undefined) return '–';
   const s = Math.max(0, Math.floor(seconds));
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
-function ascentLabel(record) {
-  const a = (record.ladder || {}).ascent_type;
-  return a ? `${ASCENT_EN[a] || a} (${a})` : record.ladder_type;
+function ascentOf(record) { return (record.ladder || {}).ascent_type || SIM_ASCENT[record.ladder_type] || null; }
+function ascentLabel(record) { const a = ascentOf(record); return a ? t(`asc.${a}`) : record.ladder_type; }
+function groupNames(keys) { return keys.map(k => t(`group.${k}`)).join(', '); }
+
+// Short, translated reason built from the structured result instead of the robot's English sentence.
+function reasonText(record) {
+  const items = record.checklist || {};
+  const defects = GROUP_KEYS.filter(k => items[k] === 'DEFECT');
+  const unseen = GROUP_KEYS.filter(k => items[k] === 'UNKNOWN');
+  const sticker = (record.ladder || {}).sticker_status || record.label_status;
+  const parts = [];
+  if (defects.length) parts.push(t('reason.defect', {x: groupNames(defects)}));
+  if (sticker === 'OVERDUE') parts.push(t('reason.sticker'));
+  if (record.status === 'MANUAL_REVIEW' && unseen.length) parts.push(t('reason.unseen', {x: groupNames(unseen)}));
+  if (!parts.length && record.status === 'AUTOMATED_PASS') parts.push(t('reason.clear'));
+  return parts.length ? parts.join(' · ') : record.reason;
 }
+
 async function getJSON(url) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
@@ -38,40 +50,39 @@ async function getJSON(url) {
 }
 function fill(node, ...children) { node.replaceChildren(...children.flat().filter(c => c !== null && c !== undefined)); }
 
-// Ladder detail dialog: nesseler checklist, evidence photos and PDF link.
-function openLadder(dialog, record, checklist, mission) {
+function reportUrl(site, record) {
+  return `/api/sites/${encodeURIComponent(site)}/ladders/${record.asset_id}/report.pdf?mission=${encodeURIComponent(record.mission_id)}`;
+}
+
+// Ladder detail dialog: nesseler checklist, evidence photos, report link.
+function openLadder(dialog, record, checklist, site) {
   const items = record.checklist || {};
   const photoIndex = Object.fromEntries((record.photos || []).map((p, i) => [p.id, `F${i + 1}`]));
+  const de = LANG === 'de';
   const rows = [];
   for (const group of checklist) {
-    rows.push(el('tr', {}, el('td', {class: 'grp'}, `${group.de}`, el('span', {class: 'sub'}, `  ${group.en}`)),
-      el('td', {class: 'grp'}, resultPill(items[group.key])), el('td', {class: 'grp'}, '')));
+    rows.push(el('tr', {}, el('td', {class: 'grp'}, de ? group.de : group.en), el('td', {class: 'grp'}, resultPill(items[group.key])), el('td', {class: 'grp'}, '')));
     for (const item of group.items) {
       const refs = ((record.item_photos || {})[item.key] || []).map(id => photoIndex[id]).filter(Boolean).join(', ');
-      rows.push(el('tr', {}, el('td', {}, item.de, el('div', {class: 'sub'}, item.en + (item.mode === 'person' ? ' · needs a person' : ''))),
-        el('td', {}, resultPill(items[item.key])), el('td', {}, refs)));
+      rows.push(el('tr', {}, el('td', {style: 'padding-left:22px'}, de ? item.de : item.en), el('td', {}, resultPill(items[item.key])), el('td', {class: 'mono'}, refs)));
     }
   }
   const ladder = record.ladder || {};
-  const reasonClass = record.status === 'FLAGGED' ? 's-FLAGGED' : record.status === 'MANUAL_REVIEW' ? 's-MANUAL_REVIEW' : 's-AUTOMATED_PASS';
   fill(dialog, el('div', {class: 'dlg'},
     el('div', {class: 'dlg-head'},
-      el('div', {}, el('h2', {}, `${record.asset_id} · ${ascentLabel(record)}`),
-        el('div', {class: 'sub'}, `Mission ${record.mission_id} · map (${record.position[0].toFixed(1)}, ${record.position[1].toFixed(1)}) m`)),
+      el('div', {}, el('h2', {style: 'font-size:22px'}, `${record.asset_id} · ${ascentLabel(record)}`),
+        el('span', {class: 'sub mono'}, `${record.mission_id} · ${record.position[0].toFixed(1)} / ${record.position[1].toFixed(1)} m`)),
       el('div', {style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap'}, statusPill(record.status),
-        el('a', {class: 'btn primary', href: `/api/missions/${mission}/ladders/${record.asset_id}/protocol.pdf`, target: '_blank'}, 'nesseler form PDF'),
-        el('button', {onclick: () => dialog.close()}, 'Close'))),
-    el('div', {class: `reason ${reasonClass}`}, el('strong', {}, 'Reason: '), record.reason,
-      record.status === 'AUTOMATED_PASS' ? ' · Visual pre-screen only. Function and touch checks are still pending; not a release for use.' : ''),
-    el('div', {class: 'kv'},
-      el('div', {}, el('span', {}, 'Inspection sticker (Prüfplakette)'), el('strong', {}, `${ladder.sticker_status || 'not read'}${ladder.sticker_due ? ' · due ' + ladder.sticker_due : ''}`)),
-      el('div', {}, el('span', {}, 'Inventory no. / manufacturer'), el('strong', {}, `${ladder.inventory_no || 'not read'} / ${ladder.manufacturer || 'not read'}`))),
+        el('a', {class: 'btn primary', href: reportUrl(site, record), target: '_blank'}, `${t('report')} (PDF)`),
+        el('button', {onclick: () => dialog.close()}, t('close')))),
+    el('div', {class: `reason s-${record.status}`}, reasonText(record)),
+    el('div', {class: 'sub'}, `${t('sticker')}: ${ladder.sticker_status || t('not_read')}${ladder.sticker_due ? ` · ${t('due')} ${ladder.sticker_due}` : ''}`),
     el('div', {class: 'photos'}, (record.photos || []).map((p, i) => el('figure', {},
-      el('img', {src: `/media/${record.mission_id}/${p.id}.jpg`, alt: `Evidence photo F${i + 1} of ${record.asset_id}`}),
-      el('figcaption', {}, `F${i + 1} · ${p.caption}`)))),
+      el('img', {src: `/media/${record.mission_id}/${p.id}.jpg`, alt: `F${i + 1} ${record.asset_id}`}),
+      el('figcaption', {}, `F${i + 1}`)))),
     el('div', {class: 'table-box'}, el('table', {class: 'checklist'},
-      el('thead', {}, el('tr', {}, el('th', {}, 'nesseler checklist item'), el('th', {}, 'Result'), el('th', {}, 'Photo'))),
+      el('thead', {}, el('tr', {}, el('th', {}, t('item')), el('th', {}, t('result')), el('th', {}, t('photo')))),
       el('tbody', {}, rows))),
-    el('p', {class: 'sub'}, 'Only the qualified person (Sachkundiger) can set "Leiter i. O. und verwendungsfähig" and sign the form.')));
+    el('p', {class: 'sub', style: 'margin:0'}, t('person_only'))));
   dialog.showModal();
 }

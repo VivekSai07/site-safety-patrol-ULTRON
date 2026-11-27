@@ -1,50 +1,23 @@
-# Dashboard (brainstorm)
+# Dashboard
 
-Status: idea stage, nothing built yet.
+Live view of the ladder patrol for the site manager. Runs on localhost.
 
-## Purpose
-Show ladder inspection results live, for the site manager and the jury.
+## What it does
 
-## Idea
-- The robot side (sim now, ROS later) posts finished ladder records to a small server.
-- The dashboard only displays them. It never re-judges a verdict.
-- Results reach the browser live via Server-Sent Events.
+- Shows the patrol live: robot, map, front and depth camera, alerts.
+- Keeps **one report per ladder**: nesseler's ladder form, one column per patrol, a new sheet every 5 patrols.
+- Never marks a ladder safe. The qualified person signs each report.
+- Planned: email all ladder reports to the site manager when the robot is back home.
 
-## From the presentation feedback
-- Robot replaces about 80% of the safety engineer's ladder work and assists with the other 20%
-- So: live notifications during the mission to the responsible officers, on site and off site
-- Ladder register per site mission, plus a site mission history page
+## Run it
 
-## Requirements
-- Runs on any team laptop: pip install + one start command
-- No GPU, ROS or Docker needed
-- Python 3.10+
-- Team laptops: mostly Ubuntu and Windows
-- Same start command on both, e.g. `python -m ultron.dashboard`
-
-## Rough stack
-- FastAPI + Pydantic + SQLite
-- Plain HTML/JS page, no build step
-- Exports: PDF / JSON / CSV
-
-## Views (first guess)
-- Site map with ladder pins coloured by status
-- Ladder list
-- Ladder detail: photos, reason, missing parts, pending tactile checks, history
-
-## Open questions
-- ~~nesseler's protocol template~~: answered. The PDF fills their Kontrollblatt Leitern und Tritte (BGI 694) directly
-- ~~PDF on Windows~~: answered. pypdf + reportlab are pure Python, no WeasyPrint
-- Who sees it during the demo: laptop, phone, jury screen?
-- 
-
-## Run it (Ubuntu or Windows, Python 3.10+)
 ```bash
-pip install -e .[dashboard]                  # once
-python -m ultron.dashboard fetch-form          # once: nesseler's ladder form for the PDF export
-python -m ultron.dashboard --lan               # http://<laptop-ip>:8000 for phones and other laptops
-python -m ultron.dashboard.replay runs/history-demo --speed 4   # play a sim run in live (needs the sim extras)
+cd site-safety-patrol
+PYTHONPATH=src .venv/bin/python -m ultron.dashboard fetch-form   # once: nesseler's form
+PYTHONPATH=src .venv/bin/python -m ultron.dashboard              # open http://127.0.0.1:8000
+PYTHONPATH=src .venv/bin/python -m ultron.dashboard.replay runs/history-demo --speed 4   # second terminal: sim data
 ```
-- Pages: `/` live mission, `/history` site mission history
-- Exports per mission: nesseler form PDF (all ladders, or one ladder), CSV, JSON
-- Phone push: copy `config/notify.example.json`, set an ntfy server and topics, start with `--notify config/notify.json`
+
+On Windows, set `$env:PYTHONPATH="src"` and use `python`.
+
+Design mockup: Ladder Patrol Dashboard canvas, page "Redesign v2".

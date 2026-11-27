@@ -1,97 +1,61 @@
-// Site mission history: missions, per-ladder history across missions, open items, per-mission register.
+// Site history: ladders across patrols and the list of patrols.
 const $ = id => document.getElementById(id);
-let checklist = [];
-let missions = [];
+const H = {site: new URLSearchParams(location.search).get('site'), missions: [], ladders: {}};
 
-async function loadSite(site) {
-  const list = await getJSON(`/api/missions?site_id=${encodeURIComponent(site)}`);
-  missions = await Promise.all(list.map(async m => {
-    const [full, alerts] = await Promise.all([getJSON(`/api/missions/${m.id}`), getJSON(`/api/alerts?mission_id=${m.id}`)]);
-    return {...full, alerts};
-  }));
-  const history = await getJSON(`/api/sites/${encodeURIComponent(site)}/ladders`);
-  renderTiles(history); renderMissions(); renderMatrix(history); renderOpen(history);
-  if (missions.length) selectMission(missions[0].id);
-}
-
-function counts(m) {
-  const c = s => m.inspections.filter(i => i.status === s).length;
-  return {flagged: c('FLAGGED'), review: c('MANUAL_REVIEW'), pass: c('AUTOMATED_PASS')};
-}
-
-function changed(entries) {
-  return entries.length > 1 && entries[entries.length - 1].status !== entries[entries.length - 2].status;
-}
-
-function renderTiles(history) {
-  const ladders = Object.entries(history);
-  const open = ladders.filter(([, h]) => h[h.length - 1].status !== 'AUTOMATED_PASS');
-  const tiles = [['Missions on this site', missions.length, missions.map(m => m.id).slice(0, 3).join(', '), 'var(--ink)'],
-    ['Ladders on register', ladders.length, 'Same ID across patrols', 'var(--ink)'],
-    ['Open flags', open.length, open.map(([a]) => a).join(', ') || 'None', open.length ? 'var(--flag-fg)' : 'var(--ink)'],
-    ['Changed since last mission', ladders.filter(([, h]) => changed(h)).length, 'Status differs from previous patrol', 'var(--accent)'],
-    ['Alerts sent', missions.reduce((n, m) => n + m.alerts.filter(a => a.severity !== 'info').length, 0), 'Flagged and review alerts', 'var(--ink)']];
-  fill($('tiles'), tiles.map(([label, value, note, color]) => el('div', {class: 'tile'},
-    el('div', {class: 'label'}, label), el('div', {class: 'value', style: `color:${color}`}, value), el('div', {class: 'note'}, note))));
-}
-
-function renderMissions() {
-  if (!missions.length) { fill($('missions'), el('tr', {}, el('td', {colspan: 9, class: 'empty'}, 'No missions on this site yet.'))); return; }
-  fill($('missions'), missions.map((m, i) => {
-    const c = counts(m);
-    return el('tr', {},
-      el('td', {}, el('button', {class: 'link', onclick: () => selectMission(m.id)}, m.id), i === 0 ? el('div', {class: 'sub'}, 'Latest') : null),
-      el('td', {}, new Date(m.started).toLocaleString()), el('td', {}, m.status), el('td', {}, m.inspections.length),
-      el('td', {style: 'color:var(--flag-fg);font-weight:700'}, c.flagged), el('td', {style: 'color:var(--rev-fg);font-weight:700'}, c.review),
-      el('td', {style: 'color:var(--pass-fg);font-weight:700'}, c.pass), el('td', {}, m.alerts.filter(a => a.severity !== 'info').length),
-      el('td', {}, el('a', {href: `/api/missions/${m.id}/protocol.pdf`, target: '_blank'}, 'PDF'), ' · ',
-        el('a', {href: `/api/missions/${m.id}/export.csv`}, 'CSV'), ' · ',
-        el('a', {href: `/api/missions/${m.id}/export.json`, target: '_blank'}, 'JSON')));
-  }));
-}
-
-function renderMatrix(history) {
-  const order = missions.slice().reverse().map(m => m.id);
-  const head = el('thead', {}, el('tr', {}, el('th', {}, 'Ladder'), order.map(id => el('th', {}, id)), el('th', {}, 'What changed')));
-  const rows = Object.entries(history).sort().map(([asset, entries]) => {
-    const byMission = Object.fromEntries(entries.map(e => [e.mission_id, e]));
-    const last = entries[entries.length - 1], prev = entries[entries.length - 2];
-    let note = 'First inspection';
-    if (prev) note = changed(entries) ? `${STATUS_LABEL[prev.status]} → ${STATUS_LABEL[last.status]}: ${last.reason}`
-      : last.status === 'AUTOMATED_PASS' ? 'No change' : `Still open: ${last.reason}`;
-    return el('tr', {class: changed(entries) ? 'flagged' : ''}, el('td', {}, el('strong', {}, asset)),
-      order.map(id => el('td', {}, byMission[id] ? statusPill(byMission[id].status) : '–')), el('td', {}, note));
-  });
-  fill($('matrix'), head, el('tbody', {}, rows));
-}
-
-function renderOpen(history) {
-  const open = Object.entries(history).filter(([, h]) => h[h.length - 1].status !== 'AUTOMATED_PASS');
-  if (!open.length) { fill($('open'), el('p', {class: 'empty'}, 'Nothing open.')); return; }
-  fill($('open'), open.map(([asset, h]) => {
-    const since = [...h].reverse().find((e, i, arr) => !arr[i + 1] || arr[i + 1].status === 'AUTOMATED_PASS');
-    const last = h[h.length - 1];
-    return el('div', {class: 'rule'}, el('strong', {}, `${asset} · ${STATUS_LABEL[last.status]}`), el('span', {}, last.reason),
-      el('span', {class: 'sub'}, `Open since ${since ? since.mission_id : last.mission_id}`));
-  }));
-}
-
-function selectMission(id) {
-  const m = missions.find(x => x.id === id);
-  $('reg-title').textContent = `Ladder register · ${m.id}`;
-  fill($('reg-exports'), el('a', {class: 'btn', href: `/api/missions/${m.id}/export.csv`}, 'CSV'),
-    el('a', {class: 'btn primary', href: `/api/missions/${m.id}/protocol.pdf`, target: '_blank'}, 'Protocol PDF'));
-  fill($('register'), m.inspections.map(rec => el('tr', {class: rec.status === 'FLAGGED' ? 'flagged' : ''},
-    el('td', {}, el('button', {class: 'link', onclick: () => openLadder($('ladder'), rec, checklist, m.id)}, rec.asset_id)),
-    el('td', {}, ascentLabel(rec)), el('td', {}, statusPill(rec.status)), el('td', {}, rec.reason),
-    el('td', {}, (rec.ladder || {}).sticker_status || rec.label_status || '–'),
-    el('td', {}, el('a', {href: `/api/missions/${m.id}/ladders/${rec.asset_id}/protocol.pdf`, target: '_blank'}, 'PDF')))));
-}
-
-(async () => {
-  checklist = await getJSON('/api/checklist');
+async function boot() {
   const sites = await getJSON('/api/sites');
-  fill($('site'), sites.length ? sites.map(s => el('option', {value: s}, s)) : [el('option', {}, 'No sites yet')]);
-  $('site').addEventListener('change', e => loadSite(e.target.value));
-  if (sites.length) await loadSite(sites[0]);
-})();
+  if (!H.site) H.site = sites[0];
+  $('site').textContent = H.site || '';
+  fill($('site-select'), sites.map(s => el('option', {value: s, selected: s === H.site}, s)));
+  $('site-select').onchange = e => { location.search = new URLSearchParams({site: e.target.value}).toString(); };
+  if (!H.site) return render();
+  const list = await getJSON(`/api/missions?site_id=${encodeURIComponent(H.site)}`);
+  H.missions = await Promise.all(list.map(async m => {
+    const [full, alerts] = await Promise.all([getJSON(`/api/missions/${m.id}`), getJSON(`/api/alerts?mission_id=${m.id}`)]);
+    return {...full, alerts: alerts.filter(a => a.severity !== 'info')};
+  }));
+  H.ladders = await getJSON(`/api/sites/${encodeURIComponent(H.site)}/ladders`);
+  render();
+}
+
+function change(h) {
+  if (h.length < 2) return t('h.first');
+  const [prev, last] = h.slice(-2);
+  if (prev.status !== last.status) return last.status === 'FLAGGED' || prev.status === 'AUTOMATED_PASS' ? t('h.worse') : `${t(`status.${prev.status}`)} → ${t(`status.${last.status}`)}`;
+  return last.status === 'AUTOMATED_PASS' ? t('h.same') : t('h.still');
+}
+
+function render() {
+  const ladders = Object.entries(H.ladders).sort();
+  const open = ladders.filter(([, h]) => h[h.length - 1].status !== 'AUTOMATED_PASS').length;
+  const changed = ladders.filter(([, h]) => h.length > 1 && h[h.length - 1].status !== h[h.length - 2].status).length;
+  fill($('tiles'), [[t('h.patrols'), H.missions.length, 'var(--ink)'], [t('h.ladders'), ladders.length, 'var(--ink)'],
+    [t('h.open'), open, open ? 'var(--flag-fg)' : 'var(--ink)'], [t('h.changed'), changed, changed ? 'var(--accent)' : 'var(--ink)']]
+    .map(([label, value, color]) => el('div', {class: 'tile'}, el('div', {class: 'value', style: `color:${color}`}, value), el('div', {class: 'label'}, label))));
+
+  const order = H.missions.slice().reverse().map(m => m.id);
+  fill($('matrix'),
+    el('thead', {}, el('tr', {}, el('th', {}, t('h.ladders')), order.map(id => el('th', {class: 'mono'}, id)), el('th', {}, t('h.change')), el('th', {}))),
+    el('tbody', {}, ladders.map(([id, h]) => {
+      const by = Object.fromEntries(h.map(e => [e.mission_id, e]));
+      const last = h[h.length - 1];
+      return el('tr', {class: h.length > 1 && last.status !== h[h.length - 2].status ? 'flagged' : ''},
+        el('td', {}, el('a', {class: 'mono', style: 'font-weight:700', href: `/ladder?${new URLSearchParams({site: H.site, id})}`}, id)),
+        order.map(mid => el('td', {}, by[mid] ? statusPill(by[mid].status) : '–')),
+        el('td', {}, change(h)),
+        el('td', {}, el('a', {href: `/api/sites/${encodeURIComponent(H.site)}/ladders/${id}/report.pdf`, target: '_blank'}, t('report'))));
+    })));
+
+  fill($('patrols'),
+    el('thead', {}, el('tr', {}, [t('h.patrol'), t('h.date'), t('h.ladders'), t('h.flagged'), t('h.alerts'), t('h.data')].map(x => el('th', {}, x)))),
+    el('tbody', {}, H.missions.map(m => el('tr', {},
+      el('td', {class: 'mono', style: 'font-weight:600'}, m.id),
+      el('td', {}, new Date(m.started).toLocaleString(LANG === 'de' ? 'de-DE' : 'en-GB', {dateStyle: 'short', timeStyle: 'short'})),
+      el('td', {}, m.inspections.length),
+      el('td', {style: 'color:var(--flag-fg);font-weight:700'}, m.inspections.filter(i => i.status === 'FLAGGED').length),
+      el('td', {}, m.alerts.length),
+      el('td', {}, el('a', {href: `/api/missions/${m.id}/export.csv`}, 'CSV'), ' · ', el('a', {href: `/api/missions/${m.id}/export.json`, target: '_blank'}, 'JSON'))))));
+}
+
+initChrome(render);
+boot();

@@ -1,54 +1,54 @@
 <!doctype html>
-<html lang="en">
+<html lang="de">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Site Mission History</title>
+<title>Site History</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <header class="top">
   <div class="top-row">
-    <span class="brand">ULTRON · Site Safety Patrol</span>
-    <div class="meta"><label for="site">Site</label> <select id="site"></select></div>
+    <div style="display:flex;gap:12px;align-items:baseline;flex-wrap:wrap">
+      <span class="brand">ULTRON</span>
+      <span class="sub" style="color:var(--head-muted)" id="site">–</span>
+      <span class="badge-sim" id="sim-badge" data-i18n="sim" hidden>SIMULATION</span>
+    </div>
+    <div class="meta">
+      <label for="site-select" class="sub" style="color:var(--head-muted)" data-i18n="site">Baustelle</label>
+      <select id="site-select"></select>
+      <div class="switch" role="group" data-i18n-aria="lang.toggle">
+        <button type="button" data-lang="de">DE</button><button type="button" data-lang="en">EN</button>
+      </div>
+      <button type="button" class="theme-btn" id="theme" data-i18n-aria="theme.toggle">
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
+        <span data-theme-label></span>
+      </button>
+    </div>
   </div>
-  <nav class="tabs" aria-label="Dashboard pages">
-    <a href="/">Live mission</a>
-    <a href="/history" aria-current="page">Site mission history</a>
+  <nav class="tabs" aria-label="Pages">
+    <a href="/" data-i18n="nav.live">Live</a>
+    <a href="/ladder" data-i18n="nav.ladders">Leitern</a>
+    <a href="/history" aria-current="page" data-i18n="nav.history">Verlauf</a>
   </nav>
 </header>
-<main style="display:flex;flex-direction:column;gap:16px">
-  <div><h1 style="font-size:24px">Site mission history</h1>
-    <p class="sub" style="margin:4px 0 0">Every patrol on this site, its ladder register, and how each ladder changed between patrols.</p></div>
-  <section class="tiles" id="tiles" aria-label="Site summary"></section>
-  <section class="card" aria-label="Missions">
-    <div class="card-head"><h2>Missions</h2><span class="sub">Newest first · pick one to see its ladder register</span></div>
-    <div class="table-box"><table>
-      <thead><tr><th>Mission</th><th>Started</th><th>Status</th><th>Ladders</th><th>Flagged</th><th>Review</th><th>Pass</th><th>Alerts</th><th>Exports</th></tr></thead>
-      <tbody id="missions"></tbody>
-    </table></div>
+
+<main>
+  <h1 style="font-size:24px" data-i18n="h.title">Verlauf</h1>
+  <section class="tiles" id="tiles"></section>
+  <section class="card">
+    <h2 data-i18n="h.ladders">Leitern</h2>
+    <div class="table-box"><table id="matrix"></table></div>
   </section>
-  <div class="split">
-    <section class="card wide" aria-label="Ladder history across missions">
-      <div class="card-head"><h2>Ladder history across missions</h2><span class="sub">Same ID every patrol · changes highlighted</span></div>
-      <div class="table-box"><table id="matrix"></table></div>
-    </section>
-    <section class="card attn narrow" aria-label="Open items">
-      <h2>Open items for a person</h2>
-      <p class="sub" style="margin:0">A flag stays open until the qualified person resolves it. Later patrols never clear it.</p>
-      <div id="open"></div>
-    </section>
-  </div>
-  <section class="card" aria-label="Ladder register of the selected mission">
-    <div class="card-head"><h2 id="reg-title">Ladder register</h2><div style="display:flex;gap:8px;flex-wrap:wrap" id="reg-exports"></div></div>
-    <div class="table-box"><table>
-      <thead><tr><th>Ladder</th><th>Type</th><th>Status</th><th>Reason</th><th>Sticker</th><th>nesseler form</th></tr></thead>
-      <tbody id="register"></tbody>
-    </table></div>
+  <section class="card">
+    <h2 data-i18n="h.patrols">Patrouillen</h2>
+    <div class="table-box"><table id="patrols"></table></div>
   </section>
-  <footer class="note">Automated visual pre-screening only. Never a release for use: function and touch checks and the sign-off stay with the qualified person.</footer>
+  <footer class="note" data-i18n="footer"></footer>
 </main>
-<dialog id="ladder"></dialog>
+<script src="/static/i18n.js"></script>
 <script src="/static/common.js"></script>
 <script src="/static/history.js"></script>
 </body>

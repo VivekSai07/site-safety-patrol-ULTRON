@@ -64,6 +64,11 @@ class DashboardApiTest(unittest.TestCase):
         response = self.client.post('/api/missions', json={'mission_id': 'PATROL-01', 'site_id': 'site-a'})
         self.assertEqual(response.status_code, 201)
 
+    def test_pages_are_served(self):
+        for path in ('/', '/ladder', '/history', '/static/i18n.js', '/static/ladder.js', '/static/history.js'):
+            with self.subTest(path):
+                self.assertEqual(self.client.get(path).status_code, 200)
+
     def test_inspection_round_trip_drops_sim_internals(self):
         self.assertEqual(self.client.post('/api/inspections', json=record()).status_code, 201)
         mission = self.client.get('/api/missions/PATROL-01').json()
@@ -279,24 +284,60 @@ class EvidenceAndExportTest(unittest.TestCase):
         self.client.post('/api/inspections', json=self.flagged_with_photo())
         self.client.post('/api/inspections', json=record(**PASS_RECORD, ladder={'ascent_type': 'Anlegeleiter'}))
         self.client.post('/api/missions/PATROL-01/end', json={'status': 'MISSION_COMPLETE'})
-        flagged = self.client.get('/api/missions/PATROL-01/ladders/LAD-002/protocol.pdf')
-        passed = self.client.get('/api/missions/PATROL-01/ladders/LAD-001/protocol.pdf')
-        mission = self.client.get('/api/missions/PATROL-01/protocol.pdf')
-        self.assertEqual({flagged.status_code, passed.status_code, mission.status_code}, {200})
+        report = '/api/sites/site-a/ladders/{}/report.pdf'
+        flagged, passed = self.client.get(report.format('LAD-002')), self.client.get(report.format('LAD-001'))
+        self.assertEqual({flagged.status_code, passed.status_code}, {200})
+        self.assertEqual(self.client.get('/api/missions/PATROL-01/protocol.pdf').status_code, 404)  # no patrol report any more
         f_pages, p_pages = PdfReader(io.BytesIO(flagged.content)).pages, PdfReader(io.BytesIO(passed.content)).pages
-        self.assertEqual((len(f_pages), len(PdfReader(io.BytesIO(mission.content)).pages)), (4, 1 + 4 * 2))
+        self.assertEqual(len(f_pages), 4)  # 3 form pages + evidence page
+        self.assertIn('Blatt 1', f_pages[1].extract_text())
         self.assertIn('Roboter-ID LAD-002', f_pages[0].extract_text())
         self.assertIn('ABGELAUFEN', f_pages[0].extract_text())
         self.assertIn('Vorschlag', f_pages[2].extract_text())       # take-out-of-use proposal
         self.assertNotIn('Vorschlag', p_pages[2].extract_text())    # a pass proposes nothing
         self.assertTrue(all('/Annots' not in p for p in f_pages))   # empty widgets removed
 
+    @unittest.skipUnless(FORM.exists(), 'nesseler form missing: python -m ultron.dashboard fetch-form')
+    def test_one_report_per_ladder_with_a_new_sheet_every_five_patrols(self):
+        import io
+        from pypdf import PdfReader
+        for n in range(1, 7):  # LAD-001 inspected on six patrols
+            mission = f'P-{n:02d}'
+            if n > 1:
+                self.client.post('/api/missions', json={'mission_id': mission, 'site_id': 'site-a'})
+            else:
+                mission = 'PATROL-01'
+            self.assertEqual(self.client.post('/api/inspections', json=record(**{**PASS_RECORD, 'mission_id': mission})).status_code, 201)
+        detail = self.client.get('/api/sites/site-a/ladders/LAD-001').json()
+        self.assertEqual([(s['sheet'], s['first'], s['last']) for s in detail['sheets']], [(1, 1, 5), (2, 6, 6)])
+        text = lambda r: PdfReader(io.BytesIO(r.content)).pages[1].extract_text()
+        newest = self.client.get('/api/sites/site-a/ladders/LAD-001/report.pdf')
+        as_of_5 = self.client.get('/api/sites/site-a/ladders/LAD-001/report.pdf', params={'mission': 'P-05'})
+        first = self.client.get('/api/sites/site-a/ladders/LAD-001/report.pdf', params={'sheet': 1})
+        self.assertIn('Blatt 2', text(newest))
+        self.assertIn('Prüfung 6–10', text(newest))
+        self.assertIn('Blatt 1', text(as_of_5))
+        self.assertIn('Blatt 1', text(first))
+        for page in PdfReader(io.BytesIO(newest.content)).pages[:3]:  # every label must sit on the visible page
+            spots = []
+            page.extract_text(visitor_text=lambda t, cm, tm, fd, fs: spots.append((tm[4], tm[5])) if 'Blatt' in t else None)
+            self.assertTrue(spots and all(0 <= x <= float(page.mediabox.width) and 0 <= y <= float(page.mediabox.height) for x, y in spots))
+        self.assertEqual(self.client.get('/api/sites/site-a/ladders/LAD-001/report.pdf', params={'sheet': 3}).status_code, 404)
+        self.assertEqual(self.client.get('/api/sites/site-a/ladders/LAD-999/report.pdf').status_code, 404)
+
+    def test_sheet_slice_rule(self):
+        history = [{'mission_id': f'M{i}'} for i in range(1, 12)]
+        self.assertEqual(protocol_pdf.sheet_slice(history[:5])[0::2], (1, 1))
+        sheet, cols, first = protocol_pdf.sheet_slice(history)
+        self.assertEqual((sheet, [c['mission_id'] for c in cols], first), (3, ['M11'], 11))
+        self.assertEqual(protocol_pdf.sheet_slice(history, 2)[1][0]['mission_id'], 'M6')
+
     def test_pdf_reports_missing_form_clearly(self):
         import os
         os.environ['ULTRON_NESSELER_FORM'] = str(Path(self.tmp.name) / 'missing.pdf')
         self.addCleanup(os.environ.pop, 'ULTRON_NESSELER_FORM')
         self.client.post('/api/inspections', json=record(**PASS_RECORD))
-        response = self.client.get('/api/missions/PATROL-01/protocol.pdf')
+        response = self.client.get('/api/sites/site-a/ladders/LAD-001/report.pdf')
         self.assertEqual(response.status_code, 503)
         self.assertIn('fetch-form', response.text)
 

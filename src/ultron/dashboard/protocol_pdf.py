@@ -1,4 +1,4 @@
-"""Fill nesseler's ladder form (kontrollblatt_checkliste_leitern_tritte.pdf) from inspection records.
+"""One report per ladder: nesseler's ladder form (kontrollblatt_checkliste_leitern_tritte.pdf) filled from inspections.
 
 The form ships as a PDF with empty, unnamed widgets and no working form fields, so this
 module draws onto the original pages at the measured widget positions and removes the
@@ -144,9 +144,32 @@ def legend(c, x, y):
     c.drawString(x, y - 12, 'F1, F2 … = Fotonachweis im Anhang. "Leiter i. O. und verwendungsfähig" setzt nur der Sachkundige.')
 
 
-def overlay_pages(mission, history, photo_refs):
-    current = history[-1]
-    columns = history[-5:]
+PER_SHEET = 5  # the form has five inspection columns
+
+
+def sheet_slice(history, sheet=None):
+    """Split one ladder's inspections (oldest first) into form sheets of five columns.
+
+    Returns (sheet number, that sheet's records, inspection number of its first column).
+    Default: the sheet holding the newest inspection. Inspection 6 starts sheet 2.
+    """
+    if not history:
+        raise ValueError('no inspections for this ladder')
+    if sheet is None:
+        sheet = (len(history) - 1) // PER_SHEET + 1
+    start = (sheet - 1) * PER_SHEET
+    columns = history[start:start + PER_SHEET] if sheet >= 1 else []
+    if not columns:
+        raise ValueError(f'sheet {sheet} does not exist (this ladder has {len(history)} inspections)')
+    return sheet, columns, start + 1
+
+
+def sheet_label(sheet_no, first_no):
+    return f'Blatt {sheet_no} · Spalten 1–5 = Prüfung {first_no}–{first_no + PER_SHEET - 1}'
+
+
+def overlay_pages(mission, columns, photo_refs, sheet_no=1, first_no=1):
+    current = columns[-1]
     ladder = current.get('ladder') or {}
     buffers = []
 
@@ -179,6 +202,9 @@ def overlay_pages(mission, history, photo_refs):
     c.drawString(104, 140, 'Felder ohne Eintrag wurden vom Roboter nicht gelesen und sind vom Sachkundigen zu ergänzen.')
     if mission.get('synthetic'):
         c.drawString(104, 130, 'Datenquelle: Simulation (synthetische Daten), keine reale Begehung.')
+    c.setFont('Helvetica-Bold', 8)
+    c.setFillColor(INK)
+    c.drawString(104, 115, sheet_label(sheet_no, first_no))
     c.save()
     buffers.append(buf)
 
@@ -201,6 +227,8 @@ def overlay_pages(mission, history, photo_refs):
     # Page 2: sections 1-5
     c2, b2 = columns_page((842, 595), P2_COLS, P2_ROWS, lambda *a: None, P2_ROWS)
     legend(c2, 160, 45)
+    c2.setFont('Helvetica-Bold', 8)
+    c2.drawRightString(731, 498, sheet_label(sheet_no, first_no))
     c2.save()
     buffers.append(b2)
 
@@ -221,7 +249,10 @@ def overlay_pages(mission, history, photo_refs):
                           page3_text, P3_ROWS)
     legend(c3, 160, 225)
     c3.setFont('Helvetica-Bold', 8)
-    c3.drawString(160, 185, f"Aktuelle Vorprüfung ({current['mission_id']}, Spalte {len(columns)}): {VERDICT_DE[current['status']]}")
+    c3.drawRightString(731, 455, sheet_label(sheet_no, first_no))
+    c3.setFont('Helvetica-Bold', 8)
+    c3.drawString(160, 185, f"Aktuelle Vorprüfung ({current['mission_id']}, Prüfung {first_no + len(columns) - 1}): "
+                            f"{VERDICT_DE[current['status']]}")
     c3.setFont('Helvetica', 8)
     c3.drawString(160, 172, 'Kontrollergebnis und Freigabe: ausschließlich durch den Sachkundigen.')
     c3.drawString(160, 140, 'Sachkundiger: ______________________________    Datum: ____________    Unterschrift: ______________________')
@@ -291,11 +322,11 @@ def photo_refs_for(record):
     return {key: ','.join(index[r] for r in refs if r in index) for key, refs in (record.get('item_photos') or {}).items()}
 
 
-def append_ladder(writer, template, mission, history, media_dir):
+def append_ladder(writer, template, mission, columns, media_dir, sheet_no=1, first_no=1):
     reader = PdfReader(str(template))
-    current = history[-1]
+    current = columns[-1]
     refs = photo_refs_for(current)
-    overlays = overlay_pages(mission, history, refs)
+    overlays = overlay_pages(mission, columns, refs, sheet_no, first_no)
     for page, overlay in zip(reader.pages, overlays):
         target = writer.add_page(page)  # pypdf 7: pages must belong to the writer before merging
         if '/Annots' in target:
@@ -308,55 +339,6 @@ def append_ladder(writer, template, mission, history, media_dir):
     writer.add_page(PdfReader(io.BytesIO(buf.getvalue())).pages[0])
 
 
-def cover_page(mission, inspections, alerts):
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
-    width, height = A4
-    c.setFont('Helvetica-Bold', 16)
-    c.drawString(40, height - 55, 'Prüfprotokoll Leitern und Tritte – Roboter-Sichtvorprüfung')
-    c.setFont('Helvetica', 9)
-    counts = {s: sum(1 for i in inspections if i['status'] == s) for s in VERDICT_DE}
-    info = [f"Baustelle: {mission['site_id']}    Mission: {mission['id']}    Datum: {de_date(mission['started'])}",
-            f"Roboter: Unitree B2 (ULTRON)    Missionsstatus: {mission['status']}",
-            f"Leitern bewertet: {len(inspections)}  ·  Mangel: {counts['FLAGGED']}  ·  Prüfung vor Ort: {counts['MANUAL_REVIEW']}"
-            f"  ·  ohne Befund: {counts['AUTOMATED_PASS']}",
-            'Grundlage: Kontrollblatt / Checkliste zur Überprüfung von Leitern und Tritten (BGI 694), je Leiter 3 Seiten + Fotonachweis.']
-    if mission.get('summary', {}).get('coverage_note'):
-        info.append(f"Abdeckung: {mission['summary']['coverage_note']}")
-    for i, line in enumerate(info):
-        fit(c, line, 38, height - 80 - i * 13, width - 76, size=9)
-    y = height - 160
-    c.setFont('Helvetica-Bold', 9)
-    for x, title in ((40, 'Leiter'), (110, 'Aufstiegsart'), (200, 'Ergebnis der Vorprüfung'), (420, 'Begründung')):
-        c.drawString(x, y, title)
-    c.setFont('Helvetica', 8)
-    for record in inspections:
-        y -= 14
-        c.setFillColor(RED if record['status'] == 'FLAGGED' else AMBER if record['status'] == 'MANUAL_REVIEW' else INK)
-        c.drawString(40, y, record['asset_id'])
-        c.setFillColor(INK)
-        c.drawString(110, y, (record.get('ladder') or {}).get('ascent_type') or record['ladder_type'])
-        fit(c, VERDICT_DE[record['status']], 198, y, 220, size=7.5)
-        fit(c, record['reason'], 418, y, 140, size=7.5)
-    y -= 30
-    c.setFont('Helvetica-Bold', 9)
-    c.drawString(40, y, 'Benachrichtigungen während der Mission')
-    c.setFont('Helvetica', 8)
-    for alert in alerts[:12]:
-        y -= 13
-        who = ', '.join(r['title'] for r in alert.get('recipients', []))
-        state = f"quittiert von {alert['acked_by']}" if alert.get('acked_at') else 'nicht quittiert'
-        fit(c, f"{alert['title']} → {who} ({state})", 38, y, width - 76, size=8)
-    c.setFont('Helvetica', 8)
-    c.drawString(40, 110, 'Diese Vorprüfung ersetzt nicht die Prüfung durch den Sachkundigen. Kein Eintrag gilt als Freigabe.')
-    c.drawString(40, 80, 'Sachkundiger: ______________________________    Datum: ____________    Unterschrift: ______________________')
-    if mission.get('synthetic'):
-        c.setFillColor(SLATE)
-        c.drawString(40, 50, 'Datenquelle: Simulation (synthetische Daten). Nicht als reale Begehung verwenden.')
-    c.save()
-    return PdfReader(io.BytesIO(buf.getvalue())).pages[0]
-
-
 def require_form(template=None):
     template = Path(template or form_path())
     if not template.exists():
@@ -364,20 +346,16 @@ def require_form(template=None):
     return template
 
 
-def ladder_pdf(mission, history, media_dir, template=None):
-    writer = PdfWriter()
-    append_ladder(writer, require_form(template), mission, history, media_dir)
-    out = io.BytesIO()
-    writer.write(out)
-    return out.getvalue()
+def ladder_report(missions, history, media_dir, template=None, sheet=None):
+    """The ladder's report: one nesseler sheet (3 form pages + evidence page).
 
-
-def mission_pdf(mission, inspections, histories, alerts, media_dir, template=None):
+    missions: mission records by id; history: this ladder's inspections on this site, oldest first.
+    """
     template = require_form(template)
+    sheet_no, columns, first_no = sheet_slice(history, sheet)
+    mission = missions[columns[-1]['mission_id']]
     writer = PdfWriter()
-    writer.add_page(cover_page(mission, inspections, alerts))
-    for record in inspections:
-        append_ladder(writer, template, mission, histories[record['asset_id']], media_dir)
+    append_ladder(writer, template, mission, columns, media_dir, sheet_no, first_no)
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()

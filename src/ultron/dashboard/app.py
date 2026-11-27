@@ -80,6 +80,10 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
     async def history_page():
         return FileResponse(STATIC / 'history.html')
 
+    @app.get('/ladder', include_in_schema=False)
+    async def ladder_page():
+        return FileResponse(STATIC / 'ladder.html')
+
     # Missions
     @app.post('/api/missions', status_code=201)
     async def start_mission(body: MissionStart):
@@ -223,34 +227,39 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
     async def ladder_history(site_id: str):
         return store.ladder_history(site_id)
 
-    # Exports
-    def histories_for(mission, inspections):
-        return {i['asset_id']: store.ladder_inspections(mission['site_id'], i['asset_id'], mission['id']) for i in inspections}
+    # One report per ladder: its nesseler sheet, one column per patrol, a new sheet every 5 patrols
+    def ladder_history_or_404(site_id, asset_id, mission_id=None):
+        history = store.ladder_inspections(site_id, asset_id, mission_id)
+        if mission_id and history and history[-1]['mission_id'] != mission_id:
+            raise HTTPException(404, f'{asset_id} has no verdict in {mission_id}')
+        if not history:
+            raise HTTPException(404, f'no inspections of {asset_id} on {site_id}')
+        return history
 
-    async def pdf_response(build, filename):
+    @app.get('/api/sites/{site_id}/ladders/{asset_id}')
+    async def ladder_detail(site_id: str, asset_id: str):
+        history = ladder_history_or_404(site_id, asset_id)
+        sheets = (len(history) - 1) // protocol_pdf.PER_SHEET + 1
+        return {'site_id': site_id, 'asset_id': asset_id, 'inspections': history, 'sheets': [
+            {'sheet': n, 'first': (n - 1) * protocol_pdf.PER_SHEET + 1,
+             'last': min(n * protocol_pdf.PER_SHEET, len(history)),
+             'url': f'/api/sites/{site_id}/ladders/{asset_id}/report.pdf?sheet={n}'} for n in range(1, sheets + 1)]}
+
+    @app.get('/api/sites/{site_id}/ladders/{asset_id}/report.pdf')
+    async def ladder_report(site_id: str, asset_id: str, mission: str | None = None, sheet: int | None = None):
+        """Default: the sheet holding the newest inspection. ?mission= the report as it stood after
+        that patrol; ?sheet= a full earlier sheet."""
+        history = ladder_history_or_404(site_id, asset_id, mission)
+        missions = {m['id']: m for m in store.missions(site_id)}
         try:
-            data = await asyncio.to_thread(build)
+            data = await asyncio.to_thread(protocol_pdf.ladder_report, missions, history, media, None, sheet)
         except protocol_pdf.FormMissing as error:
             raise HTTPException(503, str(error))
-        return Response(data, media_type='application/pdf',
-                        headers={'Content-Disposition': f'inline; filename="{filename}"'})
-
-    @app.get('/api/missions/{mission_id}/protocol.pdf')
-    async def mission_protocol(mission_id: str):
-        mission = require_mission(mission_id)
-        inspections = store.inspections(mission_id)
-        return await pdf_response(lambda: protocol_pdf.mission_pdf(
-            mission, inspections, histories_for(mission, inspections), store.alerts(mission_id), media),
-            f'Pruefprotokoll_Leitern_{mission_id}.pdf')
-
-    @app.get('/api/missions/{mission_id}/ladders/{asset_id}/protocol.pdf')
-    async def ladder_protocol(mission_id: str, asset_id: str):
-        mission = require_mission(mission_id)
-        history = store.ladder_inspections(mission['site_id'], asset_id, mission_id)
-        if not history or history[-1]['mission_id'] != mission_id:
-            raise HTTPException(404, f'{asset_id} has no verdict in {mission_id}')
-        return await pdf_response(lambda: protocol_pdf.ladder_pdf(mission, history, media),
-                                  f'Kontrollblatt_{asset_id}_{mission_id}.pdf')
+        except ValueError as error:
+            raise HTTPException(404, str(error))
+        sheet_no = sheet or (len(history) - 1) // protocol_pdf.PER_SHEET + 1
+        return Response(data, media_type='application/pdf', headers={
+            'Content-Disposition': f'inline; filename="Kontrollblatt_{asset_id}_Blatt{sheet_no}.pdf"'})
 
     @app.get('/api/missions/{mission_id}/export.json')
     async def export_json(mission_id: str):

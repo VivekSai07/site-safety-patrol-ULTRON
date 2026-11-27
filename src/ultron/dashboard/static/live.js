@@ -1,13 +1,28 @@
-// Live mission page: loads the current mission, then follows the server's event stream.
-const S = {mission: null, inspections: new Map(), confirmed: new Map(), alerts: new Map(), events: [],
-  pose: null, trail: [], checklist: [], config: null, clock: null};
-const SVG = 'http://www.w3.org/2000/svg';
+// Live page: loads the current mission, then follows the server's event stream.
+const S = {mission: null, inspections: new Map(), confirmed: new Map(), photos: new Map(), order: [], alerts: new Map(),
+  events: [], pose: null, trail: [], checklist: [], history: {}, clock: null};
 const $ = id => document.getElementById(id);
+const SVG = 'http://www.w3.org/2000/svg';
+const DOT = {FLAGGED: 'var(--flag-dot)', MANUAL_REVIEW: 'var(--rev-dot)', AUTOMATED_PASS: 'var(--pass-dot)', INSPECTING: 'var(--live-dot)'};
 
-function svg(tag, attrs) {
+function svg(tag, attrs, style) {
   const node = document.createElementNS(SVG, tag);
   for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  if (style) node.setAttribute('style', style);
   return node;
+}
+
+function noteEvent(e) {
+  if (!e.asset_id) return;
+  if (e.type === 'LADDER_CONFIRMED') {
+    if (!S.confirmed.has(e.asset_id)) S.order.push(e.asset_id);
+    S.confirmed.set(e.asset_id, e);
+  }
+  if (e.type === 'EVIDENCE_CAPTURED') S.photos.set(e.asset_id, (S.photos.get(e.asset_id) || 0) + 1);
+}
+
+async function loadHistory() {
+  if (S.mission) S.history = await getJSON(`/api/sites/${encodeURIComponent(S.mission.site_id)}/ladders`).catch(() => ({}));
 }
 
 async function load() {
@@ -15,55 +30,29 @@ async function load() {
   S.mission = live.mission;
   S.inspections = new Map((live.inspections || []).map(i => [i.asset_id, i]));
   S.alerts = new Map((live.alerts || []).map(a => [a.id, a]));
+  S.confirmed = new Map(); S.photos = new Map(); S.order = [];
+  for (const e of live.events || []) noteEvent(e);
+  for (const i of live.inspections || []) if (!S.order.includes(i.asset_id)) S.order.push(i.asset_id);
   S.events = (live.events || []).slice().reverse();
-  S.confirmed = new Map();
-  for (const e of live.events || []) noteConfirmed(e);
   S.pose = live.pose;
   S.trail = live.trail || [];
-  S.clock = S.pose ? S.pose.time : (live.events || []).reduce((t, e) => Math.max(t, e.time), 0);
+  S.clock = S.pose ? S.pose.time : (live.events || []).reduce((m, e) => Math.max(m, e.time), 0);
+  await loadHistory();
   for (const cam of Object.keys(live.cameras || {})) showFrame(cam);
   render();
 }
 
-function noteConfirmed(e) {
-  if (e.type === 'LADDER_CONFIRMED' && e.asset_id && e.data && e.data.position) S.confirmed.set(e.asset_id, e);
-}
-
-function current(asset) {
-  if (S.inspections.has(asset)) return S.inspections.get(asset).status;
-  return 'INSPECTING';
-}
+const statusOf = asset => (S.inspections.get(asset) || {}).status || 'INSPECTING';
 
 function render() {
   const m = S.mission;
   $('site').textContent = m ? m.site_id : '–';
-  $('mission').textContent = m ? m.id : '–';
   $('sim-badge').hidden = !(m && m.synthetic);
   const running = m && m.status === 'RUNNING';
-  $('live-dot').className = `live-dot${running ? '' : ' idle'}`;
-  $('live-dot').textContent = running ? 'LIVE' : m ? `ENDED · ${m.status}` : 'NO MISSION';
-  $('clock').textContent = mmss(S.clock);
-  renderTiles(); renderAlerts(); renderRegister(); renderEvents(); renderMap(); renderRobot(); renderExports();
-}
-
-function renderTiles() {
-  const list = [...S.inspections.values()];
-  const count = s => list.filter(i => i.status === s).length;
-  const found = new Set([...S.inspections.keys(), ...S.confirmed.keys()]).size;
-  const open = [...S.alerts.values()].filter(a => a.severity !== 'info' && !a.acked_at).length;
-  const tiles = [
-    ['Ladders found', found, `${found - list.length} being inspected`, 'var(--ink)'],
-    ['Flagged', count('FLAGGED'), 'Take out of use', 'var(--flag-fg)'],
-    ['Manual review', count('MANUAL_REVIEW'), 'Check in person', 'var(--rev-fg)'],
-    ['Automated pass', count('AUTOMATED_PASS'), 'Touch checks pending', 'var(--pass-fg)'],
-    ['Alerts open', open, open ? 'Waiting for acknowledgement' : 'All acknowledged', open ? 'var(--accent)' : 'var(--ink)'],
-    ['Area coverage', 'Unverified', 'Waypoints ≠ area covered', 'var(--grey-fg)'],
-  ];
-  fill($('tiles'), tiles.map(([label, value, note, color]) => el('div', {class: 'tile'},
-    el('div', {class: 'label'}, label), el('div', {class: 'value', style: `color:${color}`}, value), el('div', {class: 'note'}, note))));
-  const link = $('alert-count');
-  link.textContent = open ? `${open} alert${open > 1 ? 's' : ''} not acknowledged` : 'No open alerts';
-  link.className = `alert-count${open ? '' : ' zero'}`;
+  $('live-chip').className = `live-chip${running ? '' : ' idle'}`;
+  $('live-chip').textContent = running ? t('live') : m ? t('ended') : t('no_mission');
+  $('mission-clock').textContent = m ? `${m.id} · ${mmss(S.clock)}` : '';
+  renderBanner(); renderSteps(); renderNow(); renderLadders(); renderMap(); renderAlerts(); renderRobot(); renderLog();
 }
 
 async function ack(id) {
@@ -71,84 +60,100 @@ async function ack(id) {
   if (response.ok) { const alert = await response.json(); S.alerts.set(alert.id, alert); render(); }
 }
 
-function deliveryPills(recipient) {
-  return el('span', {class: 'ch'}, (recipient.deliveries || []).map(d =>
-    el('span', {class: `pill d-${d.state}`, title: d.error || ''}, `${d.channel}: ${d.state}`)));
+function renderBanner() {
+  const open = [...S.alerts.values()].filter(a => a.severity === 'critical' && !a.acked_at).sort((a, b) => b.id - a.id);
+  fill($('banner'), open.map(a => el('div', {class: 'item', role: 'alert'},
+    el('strong', {}, `${a.asset_id || t('robot')} · ${a.rule === 'FLAGGED' ? t('status.FLAGGED') : t('robot')} — ${t(`action.${a.rule === 'FLAGGED' ? 'FLAGGED' : 'ROBOT'}`)}`),
+    el('button', {onclick: () => ack(a.id)}, t('ack')))));
+}
+
+function renderSteps() {
+  const ended = S.mission && S.mission.status !== 'RUNNING';
+  const steps = S.order.map(asset => {
+    const rec = S.inspections.get(asset);
+    const status = statusOf(asset);
+    return el('li', {class: status}, el('span', {class: 'id mono'}, asset), el('strong', {style: 'font-size:12.5px'}, t(`status.${status}`)),
+      el('span', {class: 'sub mono'}, rec && rec.time !== null && rec.time !== undefined ? mmss(rec.time) : t('photos', {n: S.photos.get(asset) || 0})));
+  });
+  steps.push(el('li', {class: ended ? 'AUTOMATED_PASS' : 'WAIT'}, el('span', {class: 'id'}, t('home')),
+    el('strong', {style: 'font-size:12.5px'}, ended ? t('home.done') : t('home.next'))));
+  fill($('steps'), steps);
+}
+
+function groupResults(asset) {
+  const rec = S.inspections.get(asset);
+  if (rec) return Object.fromEntries(GROUP_KEYS.map(k => [k, (rec.checklist || {})[k] || 'N_A']));
+  const ascent = SIM_ASCENT[((S.confirmed.get(asset) || {}).data || {}).ladder_type];
+  return Object.fromEntries(GROUP_KEYS.map(k => [k, k === 'spreiz' && ascent === 'Anlegeleiter' ? 'N_A' : 'PENDING']));
+}
+
+function renderNow() {
+  const asset = S.order[S.order.length - 1];
+  $('now').hidden = !asset;
+  if (!asset) return;
+  const rec = S.inspections.get(asset);
+  const results = groupResults(asset);
+  const relevant = GROUP_KEYS.filter(k => results[k] !== 'N_A');
+  const done = relevant.filter(k => results[k] !== 'PENDING').length;
+  const ascent = rec ? ascentLabel(rec) : t(`asc.${SIM_ASCENT[((S.confirmed.get(asset) || {}).data || {}).ladder_type] || 'Sonstige'}`);
+  $('now-label').textContent = rec ? t('last') : t('now');
+  $('now-title').textContent = `${asset} · ${ascent}`;
+  $('now-count').textContent = rec ? t(`status.${rec.status}`) : `${t('photos', {n: S.photos.get(asset) || 0})} · ${t('result_pending')}`;
+  $('now-bar').style.width = `${relevant.length ? Math.round(100 * done / relevant.length) : 0}%`;
+  fill($('now-groups'), GROUP_KEYS.map(k => el('div', {class: 'group'}, el('strong', {}, t(`group.${k}`)), resultPill(results[k]))));
+}
+
+function renderLadders() {
+  const site = S.mission && S.mission.site_id;
+  fill($('ladders'), S.order.map(asset => {
+    const rec = S.inspections.get(asset);
+    const status = statusOf(asset);
+    const past = (S.history[asset] || []).filter(h => !rec || h.mission_id !== rec.mission_id);
+    const trend = [...past.map(h => h.status), status];
+    const first = trend.length - Math.min(5, trend.length);
+    return el('article', {class: `ladder edge-${status}`},
+      el('div', {class: 'row'},
+        rec ? el('button', {class: 'link mono', style: 'font-size:15px', onclick: () => openLadder($('ladder'), rec, S.checklist, site)}, asset)
+          : el('strong', {class: 'mono', style: 'font-size:15px'}, asset),
+        statusPill(status)),
+      el('span', {class: 'sub'}, rec ? ascentLabel(rec) : t('result_pending')),
+      rec ? el('span', {}, reasonText(rec)) : null,
+      el('div', {class: 'row'},
+        el('div', {class: 'trend'}, trend.slice(-5).map((s, i) => el('span', {class: `s-${s}`, title: t(`status.${s}`)}, String(first + i + 1)))),
+        rec ? el('a', {href: reportUrl(site, rec), target: '_blank', style: 'font-weight:600'}, t('report')) : null));
+  }));
 }
 
 function renderAlerts() {
-  const alerts = [...S.alerts.values()].sort((a, b) => b.id - a.id);
-  const critical = alerts.filter(a => a.severity === 'critical' && !a.acked_at);
-  fill($('banner'), critical.map(a => el('div', {class: 'item', role: 'alert'},
-    el('div', {}, el('strong', {}, a.title), el('div', {}, a.action || a.message)),
-    el('button', {onclick: () => ack(a.id)}, 'Acknowledge'))));
-  if (!alerts.length) { fill($('alert-list'), el('p', {class: 'empty'}, 'No notifications yet.')); return; }
-  fill($('alert-list'), alerts.map(a => el('article', {class: `alert ${a.severity}`},
-    el('div', {class: 'row'},
+  const alerts = [...S.alerts.values()].filter(a => a.severity !== 'info').sort((a, b) => b.id - a.id);
+  if (!alerts.length) { fill($('alerts'), el('p', {class: 'empty', style: 'margin:0'}, t('alerts.none'))); return; }
+  fill($('alerts'), alerts.map(a => {
+    const ladderRule = a.rule === 'FLAGGED' || a.rule === 'MANUAL_REVIEW';
+    return el('div', {class: 'alert-row'},
       el('div', {style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap'},
-        el('span', {class: `pill sev-${a.severity}`}, a.severity.toUpperCase()), el('strong', {}, a.title)),
-      el('span', {class: 'sub'}, new Date(a.created).toLocaleTimeString())),
-    el('div', {}, a.message),
-    a.action ? el('div', {}, el('strong', {}, 'Action requested: '), a.action) : null,
-    el('div', {class: 'recips'}, [...(a.recipients || []), ...(a.escalation || []).map(r => ({...r, title: `Escalated → ${r.title}`}))]
-      .map(r => el('div', {class: 'recip'}, el('span', {}, el('strong', {}, r.title), ` · ${r.name} · ${r.where}`), deliveryPills(r)))),
-    el('div', {class: 'row'},
-      a.acked_at ? el('span', {class: 'pill acked'}, `Acknowledged by ${a.acked_by} · ${new Date(a.acked_at).toLocaleTimeString()}`)
-        : a.severity === 'info' ? el('span', {class: 'sub'}, 'Information only') : el('span', {class: 'pill sev-warning'}, 'Not acknowledged'),
-      !a.acked_at && a.severity !== 'info' ? el('button', {class: 'warn', onclick: () => ack(a.id)}, 'Acknowledge') : null))));
-}
-
-function renderRules() {
-  const cfg = S.config;
-  if (!cfg) return;
-  const titles = Object.fromEntries(cfg.recipients.map(r => [r.role, r.title]));
-  const text = {FLAGGED: 'Immediately', MANUAL_REVIEW: 'Immediately', ROBOT_STOPPED: 'E-stop, takeover or link lost',
-    MISSION_SUMMARY: 'When the mission ends', ESCALATION: `If a critical alert is not acknowledged in ${Math.round(cfg.escalate_after_s / 60)} min`};
-  const cls = {FLAGGED: 's-FLAGGED', MANUAL_REVIEW: 's-MANUAL_REVIEW', ROBOT_STOPPED: 's-INSPECTING', MISSION_SUMMARY: 'sev-info', ESCALATION: 'sev-critical'};
-  fill($('rules'), Object.entries(cfg.rules).map(([rule, roles]) => el('div', {class: 'rule'},
-    el('span', {class: `pill ${cls[rule] || 'sev-info'}`}, rule.replace('_', ' ')),
-    el('span', {}, roles.map(r => titles[r] || r).join(', ')), el('span', {class: 'sub'}, text[rule] || ''))));
-  $('channels').textContent = `Channels: ${cfg.channels.join(', ')}${cfg.channels.length === 1 ? ' (phone push not configured)' : ''}`;
-}
-
-function renderRegister() {
-  const assets = [...new Set([...S.confirmed.keys(), ...S.inspections.keys()])].sort();
-  if (!assets.length) { fill($('register'), el('tr', {}, el('td', {colspan: 6, class: 'empty'}, 'No ladders yet.'))); return; }
-  fill($('register'), assets.map(asset => {
-    const rec = S.inspections.get(asset);
-    if (!rec) return el('tr', {}, el('td', {}, el('strong', {}, asset)), el('td', {}, '…'), el('td', {}, statusPill('INSPECTING')),
-      el('td', {}, 'Inspection in progress'), el('td', {}, '–'), el('td', {}, '–'));
-    const sticker = (rec.ladder || {}).sticker_status || rec.label_status || '–';
-    return el('tr', {class: rec.status === 'FLAGGED' ? 'flagged' : ''},
-      el('td', {}, el('button', {class: 'link', onclick: () => openLadder($('ladder'), rec, S.checklist, S.mission.id)}, asset)),
-      el('td', {}, ascentLabel(rec)), el('td', {}, statusPill(rec.status)), el('td', {}, rec.reason),
-      el('td', {}, sticker), el('td', {}, mmss(rec.time)));
+        el('span', {class: `pill ${ladderRule ? 's-' + a.rule : 'sev-critical'}`}, ladderRule ? t(`status.${a.rule}`) : t('robot')),
+        el('strong', {class: 'mono'}, a.asset_id || ''),
+        el('span', {class: 'sub'}, `→ ${(a.recipients || []).map(r => t(`role.${r.role}`)).join(', ')}`)),
+      a.acked_at ? el('span', {class: 'pill acked'}, t('acked')) : el('button', {class: 'warn', onclick: () => ack(a.id)}, t('ack')));
   }));
-  const m = S.mission;
-  $('coverage').textContent = m && m.summary && m.summary.coverage_note ? `Coverage: ${m.summary.coverage_note}.` :
-    'Coverage: area coverage is reported separately from waypoint completion and is not verified yet.';
-}
-
-function renderEvents() {
-  fill($('events'), S.events.slice(0, 80).map(e => el('li', {}, el('time', {}, mmss(e.time)),
-    el('span', {}, el('strong', {}, e.type.replaceAll('_', ' ').toLowerCase()), e.asset_id ? ` · ${e.asset_id}` : ''))));
 }
 
 function renderRobot() {
   const p = S.pose;
-  const items = [['State', p ? p.state.replaceAll('_', ' ').toLowerCase() || '–' : '–'],
-    ['Position', p ? `${p.x.toFixed(1)}, ${p.y.toFixed(1)} m` : '–'],
-    ['Mode', S.mission ? (S.mission.synthetic ? 'Autonomous (simulation)' : 'Autonomous') : '–'],
-    ['Takeovers', String(S.events.filter(e => e.type === 'OPERATOR_INTERVENTION').length)]];
+  const items = [[t('robot.state'), p && p.state ? p.state.replaceAll('_', ' ').toLowerCase() : '–'],
+    [t('robot.pos'), p ? `${p.x.toFixed(1)} / ${p.y.toFixed(1)} m` : '–'],
+    [t('robot.mode'), S.mission ? (S.mission.synthetic ? t('mode.auto_sim') : t('mode.auto')) : '–'],
+    [t('robot.takeovers'), String(S.events.filter(e => e.type === 'OPERATOR_INTERVENTION').length)]];
   fill($('robot'), items.map(([k, v]) => el('div', {}, el('span', {}, k), el('strong', {}, v))));
 }
 
-function renderExports() {
-  const m = S.mission;
-  fill($('exports'), m ? [
-    el('a', {class: 'btn', href: `/api/missions/${m.id}/export.csv`}, 'CSV'),
-    el('a', {class: 'btn', href: `/api/missions/${m.id}/export.json`, target: '_blank'}, 'JSON'),
-    el('a', {class: 'btn primary', href: `/api/missions/${m.id}/protocol.pdf`, target: '_blank'}, 'Protocol PDF')] : []);
+function renderLog() {
+  const shown = S.events.filter(e => e.type !== 'PATROL_WAYPOINT' && e.type !== 'ROUTE_RESUME').slice(0, 60);
+  fill($('log'), shown.map(e => {
+    const label = t(`ev.${e.type}`);
+    return el('li', {}, el('time', {class: 'mono'}, mmss(e.time)),
+      el('span', {}, label === `ev.${e.type}` ? e.type.toLowerCase() : label, e.asset_id ? el('span', {class: 'mono'}, ` ${e.asset_id}`) : null));
+  }));
 }
 
 function renderMap() {
@@ -159,83 +164,83 @@ function renderMap() {
   const X = x => x - b[0] + pad, Y = y => b[3] + pad - y;
   map.setAttribute('viewBox', `0 0 ${w} ${h}`);
   map.replaceChildren();
-  map.append(svg('rect', {x: X(b[0]), y: Y(b[3]), width: b[2] - b[0], height: b[3] - b[1], fill: '#f7f8f5', stroke: '#8a9099', 'stroke-width': 0.04}));
+  map.append(svg('rect', {x: X(b[0]), y: Y(b[3]), width: b[2] - b[0], height: b[3] - b[1], 'stroke-width': 0.04}, 'fill: var(--surface); stroke: var(--map-line)'));
   for (const k of (m && m.map && m.map.keepouts) || []) {
-    map.append(svg('rect', {x: X(k[0]), y: Y(k[3]), width: k[2] - k[0], height: k[3] - k[1], fill: '#d4d7d1', stroke: '#6b7079', 'stroke-width': 0.03, 'stroke-dasharray': '0.1 0.08'}));
+    map.append(svg('rect', {x: X(k[0]), y: Y(k[3]), width: k[2] - k[0], height: k[3] - k[1], 'stroke-width': 0.03, 'stroke-dasharray': '0.1 0.08'}, 'fill: var(--hatch); stroke: var(--muted)'));
   }
   const base = m && m.map && m.map.base;
-  if (base) map.append(svg('rect', {x: X(base[0]) - 0.2, y: Y(base[1]) - 0.2, width: 0.4, height: 0.4, fill: '#fff', stroke: '#17191c', 'stroke-width': 0.05}));
+  if (base) map.append(svg('rect', {x: X(base[0]) - 0.2, y: Y(base[1]) - 0.2, width: 0.4, height: 0.4, 'stroke-width': 0.05}, 'fill: var(--surface); stroke: var(--ink)'));
   if (S.trail.length > 1) {
-    map.append(svg('polyline', {points: S.trail.map(([x, y]) => `${X(x)},${Y(y)}`).join(' '), fill: 'none', stroke: '#2563a8', 'stroke-width': 0.06, 'stroke-linejoin': 'round', opacity: 0.8}));
+    map.append(svg('polyline', {points: S.trail.map(([x, y]) => `${X(x)},${Y(y)}`).join(' '), fill: 'none', 'stroke-width': 0.06, 'stroke-linejoin': 'round'}, 'stroke: var(--live-dot); opacity: .85'));
   }
-  const assets = new Set([...S.confirmed.keys(), ...S.inspections.keys()]);
-  for (const asset of assets) {
+  for (const asset of S.order) {
     const rec = S.inspections.get(asset);
-    const pos = rec ? rec.position : S.confirmed.get(asset).data.position;
-    const status = current(asset);
-    const color = {FLAGGED: '#c62828', MANUAL_REVIEW: '#b7791f', AUTOMATED_PASS: '#2e7d4f', INSPECTING: '#2563a8'}[status];
+    const conf = S.confirmed.get(asset);
+    const pos = rec ? rec.position : conf && conf.data && conf.data.position;
+    if (!pos) continue;
+    const status = statusOf(asset);
     const cx = X(pos[0]), cy = Y(pos[1]), r = 0.22;
-    const group = svg('g', {cursor: rec ? 'pointer' : 'default'});
-    if (status === 'FLAGGED') group.append(svg('rect', {x: cx - r, y: cy - r, width: 2 * r, height: 2 * r, fill: color, stroke: '#fff', 'stroke-width': 0.06}));
-    else if (status === 'MANUAL_REVIEW') group.append(svg('rect', {x: cx - r, y: cy - r, width: 2 * r, height: 2 * r, fill: color, stroke: '#fff', 'stroke-width': 0.06, transform: `rotate(45 ${cx} ${cy})`}));
-    else group.append(svg('circle', {cx, cy, r, fill: color, stroke: '#fff', 'stroke-width': 0.06}));
-    const label = svg('text', {x: cx, y: cy - 0.38, 'text-anchor': 'middle', 'font-size': 0.32, 'font-weight': 700, fill: '#17191c', 'paint-order': 'stroke', stroke: '#fff', 'stroke-width': 0.08});
+    const fillStyle = `fill: ${DOT[status]}; stroke: var(--surface)`;
+    const g = svg('g', {}, rec ? 'cursor: pointer' : '');
+    if (status === 'FLAGGED') g.append(svg('rect', {x: cx - r, y: cy - r, width: 2 * r, height: 2 * r, 'stroke-width': 0.06}, fillStyle));
+    else if (status === 'MANUAL_REVIEW') g.append(svg('rect', {x: cx - r, y: cy - r, width: 2 * r, height: 2 * r, 'stroke-width': 0.06, transform: `rotate(45 ${cx} ${cy})`}, fillStyle));
+    else g.append(svg('circle', {cx, cy, r, 'stroke-width': 0.06}, fillStyle));
+    const label = svg('text', {x: cx, y: cy - 0.36, 'text-anchor': 'middle', 'font-size': 0.3, 'font-weight': 700, 'stroke-width': 0.08, 'paint-order': 'stroke'}, 'fill: var(--ink); stroke: var(--surface)');
     label.textContent = asset;
-    group.append(label);
-    if (rec) group.addEventListener('click', () => openLadder($('ladder'), rec, S.checklist, S.mission.id));
-    map.append(group);
+    g.append(label);
+    if (rec) g.addEventListener('click', () => openLadder($('ladder'), rec, S.checklist, m.site_id));
+    map.append(g);
   }
   if (S.pose) {
-    const cx = X(S.pose.x), cy = Y(S.pose.y), deg = -S.pose.yaw * 180 / Math.PI;
-    const robot = svg('g', {transform: `translate(${cx} ${cy}) rotate(${deg})`});
-    robot.append(svg('rect', {x: -0.35, y: -0.2, width: 0.7, height: 0.4, rx: 0.08, fill: '#fff', stroke: '#2563a8', 'stroke-width': 0.08}));
-    robot.append(svg('path', {d: 'M0.18,-0.12 L0.42,0 L0.18,0.12 Z', fill: '#2563a8'}));
+    const robot = svg('g', {transform: `translate(${X(S.pose.x)} ${Y(S.pose.y)}) rotate(${-S.pose.yaw * 180 / Math.PI})`});
+    robot.append(svg('rect', {x: -0.35, y: -0.2, width: 0.7, height: 0.4, rx: 0.08, 'stroke-width': 0.08}, 'fill: var(--surface); stroke: var(--live-dot)'));
+    robot.append(svg('path', {d: 'M0.18,-0.12 L0.42,0 L0.18,0.12 Z'}, 'fill: var(--live-dot)'));
     map.append(robot);
   }
-  $('map-info').textContent = `${(b[2] - b[0]).toFixed(1)} × ${(b[3] - b[1]).toFixed(1)} m · trail ${S.trail.length} poses`;
+  $('map-info').textContent = `${(b[2] - b[0]).toFixed(1)} × ${(b[3] - b[1]).toFixed(1)} m`;
 }
 
-// Camera frames: fetch the newest JPEG when told a new one exists, never queue up old ones.
+// Camera frames: fetch the newest JPEG when told one exists; never queue old frames.
 const camBusy = {};
 function showFrame(camera) {
   const box = $(`cam-${camera}`);
   if (!box || camBusy[camera]) return;
   camBusy[camera] = true;
   let img = box.querySelector('img');
-  if (!img) { img = el('img', {alt: `Live ${camera.replace('_', ' ')} frame`}); box.replaceChildren(img); }
+  if (!img) { img = el('img', {alt: t(camera === 'front_depth' ? 'cam.depth' : 'cam.front')}); box.removeAttribute('data-i18n'); box.replaceChildren(img); }
   img.onload = img.onerror = () => { camBusy[camera] = false; };
   img.src = `/api/cameras/${camera}/latest.jpg?t=${Date.now()}`;
 }
 
-let renderQueued = false;
+let queued = false;
 function scheduleRender() {
-  if (renderQueued) return;
-  renderQueued = true;
-  requestAnimationFrame(() => { renderQueued = false; render(); });
+  if (queued) return;
+  queued = true;
+  requestAnimationFrame(() => { queued = false; render(); });
 }
 
 function connect() {
   const source = new EventSource('/api/stream');
   const on = (kind, fn) => source.addEventListener(kind, msg => fn(JSON.parse(msg.data)));
+  const mine = x => S.mission && x.mission_id === S.mission.id;
   on('mission', m => { if (!S.mission || m.id !== S.mission.id || m.status !== S.mission.status) load(); });
-  on('event', e => {
-    if (!S.mission || e.mission_id !== S.mission.id) return;
-    S.events.unshift(e); noteConfirmed(e); S.clock = Math.max(S.clock || 0, e.time); scheduleRender();
+  on('event', e => { if (!mine(e)) return; S.events.unshift(e); noteEvent(e); S.clock = Math.max(S.clock || 0, e.time); scheduleRender(); });
+  on('inspection', i => {
+    if (!mine(i)) return;
+    S.inspections.set(i.asset_id, i);
+    if (!S.order.includes(i.asset_id)) S.order.push(i.asset_id);
+    loadHistory().then(scheduleRender);
   });
-  on('inspection', i => { if (S.mission && i.mission_id === S.mission.id) { S.inspections.set(i.asset_id, i); scheduleRender(); } });
-  on('alert', a => { if (S.mission && a.mission_id === S.mission.id) { S.alerts.set(a.id, a); scheduleRender(); } });
-  on('pose', p => {
-    if (!S.mission || p.mission_id !== S.mission.id) return;
-    S.pose = p; S.trail.push([p.x, p.y]); S.clock = Math.max(S.clock || 0, p.time); scheduleRender();
-  });
-  on('frame', f => { if (S.mission && f.mission_id === S.mission.id) showFrame(f.camera); });
-  source.onerror = () => { $('live-dot').className = 'live-dot idle'; $('live-dot').textContent = 'RECONNECTING'; };
+  on('alert', a => { if (mine(a)) { S.alerts.set(a.id, a); scheduleRender(); } });
+  on('pose', p => { if (!mine(p)) return; S.pose = p; S.trail.push([p.x, p.y]); S.clock = Math.max(S.clock || 0, p.time); scheduleRender(); });
+  on('frame', f => { if (mine(f)) showFrame(f.camera); });
+  source.onerror = () => { $('live-chip').className = 'live-chip idle'; $('live-chip').textContent = '…'; };
   source.onopen = () => load();
 }
 
 (async () => {
-  [S.checklist, S.config] = await Promise.all([getJSON('/api/checklist'), getJSON('/api/notify/config')]);
-  renderRules();
+  initChrome(render);
+  S.checklist = await getJSON('/api/checklist');
   await load();
   connect();
 })();

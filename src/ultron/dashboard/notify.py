@@ -120,7 +120,7 @@ class Notifier:
                    f"{counts['AUTOMATED_PASS']} automated pass. Mission status {mission['status']}.")
         return self.raise_alert(rule='MISSION_SUMMARY', kind='SUMMARY', severity='info', mission_id=mission['id'],
                                 asset_id=None, title=f"Mission summary {mission['id']}", message=message,
-                                action='Protocol PDF is on the dashboard.')
+                                action='Each ladder report is on the dashboard.')
 
     # Delivery
     def raise_alert(self, rule, **alert):
