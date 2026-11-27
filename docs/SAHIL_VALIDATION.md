@@ -40,3 +40,32 @@ Findings fixed during the phase (both measured, mujoco 3.3.7):
 Local review images (not committed): `runs/phase1/scan_start.png`, `scan_center.png`, `view_hall.png`, `view_ladders.png`.
 
 Limitations: intensity is a constant placeholder; no motion distortion yet (whole sweep cast from one pose); channel angles uniform placeholder; ladder/hall dimensions approximate; static people only.
+
+## Phase 2 — ROS 2 simulation bridge
+
+**Date:** 2026-11-27 · **Environment:** `.venv-ros` + ROS 2 Humble, `ROS_DOMAIN_ID=71`, `ROS_LOCALHOST_ONLY=1` · **Code:** `src/ultron/autonomy/{sim_bridge,driver,odometry,scan2d}.py`, `scripts/sim-slam.sh`
+
+Interfaces (all simulation-only): `/clock` (sim time from 10 s), `/ultron/sim/lidar/points` (PointCloud2 x,y,z,intensity,ring,time; 24 B/pt; `lidar_link`), `/ultron/sim/scan` (LaserScan, `lidar_link`, open sector −123.6°…+123.4°, 0.5°, 495 bins, base_link height band −0.45…0.60 m), `/ultron/sim/odom` + TF `odom -> base_link` (50 Hz), static TF `base_link -> lidar_link`, `/ultron/sim/ground_truth/pose` (frame `ultron_sim_world`, never on TF), `/ultron/sim/bridge_status` (JSON), input `/ultron/sim/cmd_vel` (latest-only queue).
+
+| Check | Result | Evidence |
+|---|---|---|
+| Rates in sim time within ±10 %: clock/odom 50 Hz, scan/points 10 Hz | PASS | `test_streams_frames_and_isolation` (2× speed, scripted route) |
+| Stamps strictly increasing, non-zero; scan and cloud of a sweep share a stamp | PASS | same |
+| TF tree exactly `odom -> base_link` + static `base_link -> lidar_link`; no `map`; ground-truth frame absent from TF | PASS | same |
+| Only `/ultron/sim/*`, `/clock`, `/tf`, `/tf_static`, `/rosout`, `/parameter_events` exist; no `/cmd_vel` | PASS | same |
+| Bridge refuses to start outside domain 71 / localhost-only | PASS | `test_bridge_refuses_without_isolated_domain` |
+| Command timeout stops the base: last motion 0.480 s (sim) after the last command, timeout 0.5 s | PASS | `test_cmd_vel_timeout_and_collision_stop` |
+| Footprint check stops the base before the cart when driven into it; collision counted | PASS | same |
+| Driver: acceleration and speed limits, nonfinite rejection, collision cancels route; route reproduces every waypoint within 2 cm and returns to start | PASS | `tests/test_autonomy_bridge_logic.py` (11 tests) |
+| Scan projection: nearest return per bin, height band, blind rear sector excluded (not published as free space) | PASS | same |
+| Scripted survey (`hall_survey_loop`, 100.3 s sim, 31.7 m) at requested 2×: achieved 1.98×, 0 collisions | PASS | `runs/phase2/survey_r2/` (local) |
+| rosbag2 recording of all bridge topics: 1,003 scans / 1,003 clouds / 5,013 odom for 100.3 s (no drops), 763 MiB | PASS | `runs/phase2/bag_survey` (local, not committed) |
+| Odometry drifts from truth (SLAM has something to correct): final 2.02 m / 22.1°, RMSE 1.25 m over 31.7 m | Measured | from `ground_truth.csv` vs `odometry.csv` |
+| RViz shows cloud, scan, odom and TF (`scripts/sim-slam.sh rviz`) | UNRUN | config provided; display not checked by the agent |
+| Full suites | PASS | System Python 80 tests (14 skipped: MuJoCo/ROS); `.venv-ros` rendered 80 tests (3 skipped: timing/ROS opt-in); ROS live 2 tests |
+
+Findings fixed during the phase:
+1. rclpy validated PointCloud2 `data` byte-by-byte in Python (75 % of loop time; 0.35× real time). Passing `array.array` skips it: unthrottled bridge now 2.2× real time.
+2. A queued `cmd_vel` subscription applied stale commands late (base moved 0.86 s after the last command). Latest-only queue (depth 1) plus servicing several callbacks per step: 0.48 s.
+
+Limitations: kinematic base (no walking dynamics, flat floor, no body roll/pitch); odometry error model is synthetic (yaw bias 0.004 rad/s dominates drift); no IMU topic; no motion distortion (`time_increment = 0`); bags are large (≈7.6 MiB/s) and stay local.

@@ -135,7 +135,7 @@ SIM_KEYS = {
     'ros': ('domain_id', 'localhost_only', 'use_sim_time'),
     'frames': ('map', 'odom', 'base', 'lidar'),
     'self_filter': ('min_xyz_m', 'max_xyz_m'),
-    'topics': ('clock', 'points', 'scan', 'odom', 'ground_truth', 'cmd_vel', 'localization_state'),
+    'topics': ('clock', 'points', 'scan', 'odom', 'ground_truth', 'cmd_vel', 'localization_state', 'status'),
     'scan_projection': ('z_min_m', 'z_max_m', 'angle_increment_deg', 'range_min_m', 'range_max_m'),
     'odometry': ('rate_hz', 'linear_scale_error', 'yaw_rate_bias_rad_s', 'linear_noise_std',
                  'angular_noise_std', 'seed'),
@@ -205,3 +205,27 @@ def load_sim_slam_config(path=CONFIG_DIR / 'sim_slam.yaml'):
     return SimSlamConfig(ros=dict(ros), frames=dict(frames), topics=dict(data['topics']),
                          self_filter={'min_xyz_m': low, 'max_xyz_m': high},
                          lidar=load_lidar_profile(profile_path), sha256=digest, **numeric)
+
+
+@dataclass(frozen=True)
+class Route:
+    name: str
+    scene: str
+    start_pose: tuple
+    final_yaw: float
+    waypoints: tuple
+    sha256: str
+
+
+def load_route(path):
+    path = Path(path)
+    data, digest = _load_yaml(path)
+    _keys(data, ('schema', 'scene', 'start_pose', 'final_yaw', 'waypoints'), str(path))
+    if data['schema'] != 'ultron.sim_route/v1':
+        raise ConfigError(f'Unsupported route schema {data["schema"]!r}')
+    if not isinstance(data['waypoints'], list) or not data['waypoints']:
+        raise ConfigError('waypoints: non-empty list required')
+    return Route(name=path.stem, scene=str(data['scene']), start_pose=_vector(data['start_pose'], 3, 'start_pose'),
+                 final_yaw=_number(data['final_yaw'], 'final_yaw'),
+                 waypoints=tuple(_vector(w, 2, f'waypoints[{i}]') for i, w in enumerate(data['waypoints'])),
+                 sha256=digest)

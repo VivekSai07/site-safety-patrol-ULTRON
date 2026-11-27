@@ -1,0 +1,311 @@
+"""ROS 2 bridge for the ULTRON lidar hall simulation. SIMULATION ONLY.
+
+Publishes simulated time, a Helios-32-profile PointCloud2, a 2D LaserScan of the unblocked
+sector, drifting odometry with TF ``odom -> base_link``, static ``base_link -> lidar_link``
+and an evaluation-only ground-truth pose (never on TF). Accepts velocity only on the
+simulation command topic. No hardware topic, transport or SDK is used.
+
+Run through ``scripts/sim-slam.sh bridge`` (sets the isolated ROS domain).
+"""
+import os
+
+# Must precede numpy import: OpenBLAS busy-wait threads slow MuJoCo ray casting.
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+
+import argparse  # noqa: E402
+import array  # noqa: E402
+import json  # noqa: E402
+import math  # noqa: E402
+from pathlib import Path  # noqa: E402
+import time  # noqa: E402
+
+import numpy as np  # noqa: E402
+
+from .config import CONFIG_DIR, load_route, load_sim_slam_config  # noqa: E402
+from .driver import KinematicDriver, route_segments  # noqa: E402
+from .hall_scene import HallSim  # noqa: E402
+from .lidar import SimLidar  # noqa: E402
+from .odometry import OdometrySimulator  # noqa: E402
+from .scan2d import geometry_from, project  # noqa: E402
+
+DEFAULT_START = (1.6, 1.5, math.pi / 2)
+CLOCK_START_S = 10.0          # avoid t=0, which ROS tools treat as "unset"
+GROUND_TRUTH_FRAME = 'ultron_sim_world'
+CLOUD_DTYPE = np.dtype({'names': ['x', 'y', 'z', 'intensity', 'ring', 'time'],
+                        'formats': ['<f4', '<f4', '<f4', '<f4', '<u2', '<f4'],
+                        'offsets': [0, 4, 8, 12, 16, 20], 'itemsize': 24})
+
+
+def check_isolation(config):
+    """Refuse to start outside the configured isolated ROS domain."""
+    domain = os.environ.get('ROS_DOMAIN_ID')
+    local = os.environ.get('ROS_LOCALHOST_ONLY')
+    if domain != str(config.ros['domain_id']) or local != '1':
+        raise SystemExit(f'Refusing to start: need ROS_DOMAIN_ID={config.ros["domain_id"]} and '
+                         f'ROS_LOCALHOST_ONLY=1 (got {domain!r}, {local!r}). Use scripts/sim-slam.sh.')
+
+
+def _quat(yaw):
+    return 0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2)
+
+
+class SimBridge:
+    def __init__(self, config, route=None, rate=1.0, out=None):
+        import rclpy
+        from rclpy.node import Node
+        from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
+        from geometry_msgs.msg import PoseStamped, TransformStamped, Twist
+        from nav_msgs.msg import Odometry
+        from rosgraph_msgs.msg import Clock
+        from sensor_msgs.msg import LaserScan, PointCloud2, PointField
+        from std_msgs.msg import String
+        from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
+
+        self.msg = dict(PoseStamped=PoseStamped, TransformStamped=TransformStamped, Odometry=Odometry,
+                        Clock=Clock, LaserScan=LaserScan, PointCloud2=PointCloud2, PointField=PointField,
+                        String=String)
+        self.rclpy = rclpy
+        self.config, self.rate, self.out = config, float(rate), out
+        if not 0 < self.rate <= 10:
+            raise ValueError('rate must be in (0, 10]')
+        lidar_profile = config.lidar
+        self.sim = HallSim(lidar_profile.mount_xyz_m, lidar_profile.mount_rpy_rad)
+        start = route.start_pose if route else DEFAULT_START
+        self.sim.place(*start)
+        self.lidar = SimLidar(self.sim, lidar_profile, config.self_filter, seed=config.odometry['seed'] + 1)
+        first = self.lidar.scan(0.0)
+        self.geometry = geometry_from(config, first.blind_columns, first.azimuth_deg)
+        radius = config.driver['footprint_radius_m']
+        self.driver = KinematicDriver(config.driver, start, lambda x, y: self.sim.footprint_free(x, y, radius))
+        self.route = route
+        if route:
+            self.driver.load_route(route_segments(start, route.waypoints, route.final_yaw))
+        self.odom = OdometrySimulator(config.odometry)
+        self.start = start
+        self.dt = 1.0 / config.odometry['rate_hz']
+        self.scan_every = max(1, round(1.0 / (lidar_profile.scan_rate_hz * self.dt)))
+        self.t = CLOCK_START_S
+        self.ignored_commands = 0
+
+        self.node = Node('ultron_sim_bridge')
+        qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
+        latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                             durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        topics = config.topics
+        self.pub = {
+            'clock': self.node.create_publisher(Clock, topics['clock'], qos),
+            'points': self.node.create_publisher(PointCloud2, topics['points'], qos),
+            'scan': self.node.create_publisher(LaserScan, topics['scan'], qos),
+            'odom': self.node.create_publisher(Odometry, topics['odom'], qos),
+            'ground_truth': self.node.create_publisher(PoseStamped, topics['ground_truth'], qos),
+            'status': self.node.create_publisher(String, topics['status'], latched),
+        }
+        # Latest command wins: a queue would apply stale velocities late.
+        latest = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
+        self.node.create_subscription(Twist, topics['cmd_vel'], self._on_cmd, latest)
+        self.tf = TransformBroadcaster(self.node)
+        self.static_tf = StaticTransformBroadcaster(self.node)
+        self._publish_static()
+        self.fields = [PointField(name=n, offset=CLOUD_DTYPE.fields[n][1], count=1,
+                                  datatype=PointField.UINT16 if n == 'ring' else PointField.FLOAT32)
+                       for n in CLOUD_DTYPE.names]
+        self.logs = None
+        if out:
+            out.mkdir(parents=True, exist_ok=False)
+            self.logs = {'ground_truth': (out / 'ground_truth.csv').open('w'),
+                         'odometry': (out / 'odometry.csv').open('w')}
+            self.logs['ground_truth'].write('t,x,y,yaw\n')
+            self.logs['odometry'].write('t,x,y,yaw\n')
+            self._write_meta()
+
+    # --- helpers -----------------------------------------------------------------------
+    def _stamp(self, t=None):
+        from builtin_interfaces.msg import Time
+        t = self.t if t is None else t
+        sec = int(math.floor(t))
+        return Time(sec=sec, nanosec=int(round((t - sec) * 1e9)) % 1_000_000_000)
+
+    def _transform(self, parent, child, xyz, yaw, stamp):
+        tf = self.msg['TransformStamped']()
+        tf.header.stamp, tf.header.frame_id, tf.child_frame_id = stamp, parent, child
+        tf.transform.translation.x, tf.transform.translation.y, tf.transform.translation.z = map(float, xyz)
+        (tf.transform.rotation.x, tf.transform.rotation.y,
+         tf.transform.rotation.z, tf.transform.rotation.w) = _quat(yaw)
+        return tf
+
+    def _publish_static(self):
+        f = self.config.frames
+        self.static_tf.sendTransform(self._transform(f['base'], f['lidar'], self.config.lidar.mount_xyz_m,
+                                                     self.config.lidar.mount_rpy_rad[2], self._stamp()))
+
+    def _write_meta(self):
+        g = self.geometry
+        meta = {
+            'schema': 'ultron.sim_run/v1', 'provenance': 'SIMULATION_KINEMATIC_BASE_RAYCAST_LIDAR',
+            'scene': 'ultron_lidar_hall_v1', 'start_pose_world': list(self.start),
+            'odom_origin': 'odom frame origin = start pose; map frame defined by the SLAM backend',
+            'config_sha256': self.config.sha256, 'lidar_profile_sha256': self.config.lidar.sha256,
+            'lidar_unconfirmed_parameters': self.config.lidar.unconfirmed,
+            'route': None if not self.route else {'name': self.route.name, 'sha256': self.route.sha256},
+            'rate': self.rate, 'clock_start_s': CLOCK_START_S,
+            'scan_geometry': {'angle_min': g.angle_min, 'angle_max': g.angle_max,
+                              'angle_increment': g.angle_increment, 'bins': g.bins,
+                              'z_band_base_link': [g.z_min, g.z_max]},
+            'ground_truth': 'EVALUATION_ONLY: ground_truth.csv / topic; never on TF or estimator input',
+        }
+        (self.out / 'run_meta.json').write_text(json.dumps(meta, indent=2))
+
+    def _on_cmd(self, msg):
+        if self.driver.route_active:
+            self.ignored_commands += 1
+            return
+        if msg.linear.y or msg.linear.z or msg.angular.x or msg.angular.y:
+            self.node.get_logger().warn('Only linear.x and angular.z are simulated; other axes ignored',
+                                        throttle_duration_sec=5.0)
+        try:
+            self.driver.set_command(msg.linear.x, msg.angular.z, self.t)
+        except ValueError:
+            self.ignored_commands += 1
+
+    # --- publishing --------------------------------------------------------------------
+    def _publish_cloud(self, scan, stamp):
+        cloud = np.zeros(len(scan.points), dtype=CLOUD_DTYPE)
+        cloud['x'], cloud['y'], cloud['z'] = scan.points[:, 0], scan.points[:, 1], scan.points[:, 2]
+        cloud['intensity'], cloud['ring'], cloud['time'] = scan.intensity, scan.ring, scan.time
+        msg = self.msg['PointCloud2']()
+        msg.header.stamp, msg.header.frame_id = stamp, self.config.frames['lidar']
+        msg.height, msg.width = 1, len(cloud)
+        msg.fields, msg.is_bigendian, msg.is_dense = self.fields, False, True
+        msg.point_step, msg.row_step = CLOUD_DTYPE.itemsize, CLOUD_DTYPE.itemsize * len(cloud)
+        # array.array skips rclpy's per-byte Python validation (78 M checks per 10 s of scans).
+        data = array.array('B')
+        data.frombytes(cloud.tobytes())
+        msg.data = data
+        self.pub['points'].publish(msg)
+
+    def _publish_scan(self, scan, stamp):
+        g = self.geometry
+        msg = self.msg['LaserScan']()
+        msg.header.stamp, msg.header.frame_id = stamp, self.config.frames['lidar']
+        msg.angle_min, msg.angle_max, msg.angle_increment = g.angle_min, g.angle_max, g.angle_increment
+        msg.time_increment = 0.0  # whole sweep cast from one pose (no motion distortion simulated)
+        msg.scan_time = 1.0 / self.config.lidar.scan_rate_hz
+        msg.range_min, msg.range_max = g.range_min, g.range_max
+        ranges = array.array('f')
+        ranges.frombytes(project(scan.points, g).astype('<f4').tobytes())
+        msg.ranges = ranges
+        self.pub['scan'].publish(msg)
+
+    def _publish_state(self, stamp):
+        f = self.config.frames
+        x, y, yaw = self.odom.x, self.odom.y, self.odom.yaw
+        self.tf.sendTransform(self._transform(f['odom'], f['base'], (x, y, 0.0), yaw, stamp))
+        odom = self.msg['Odometry']()
+        odom.header.stamp, odom.header.frame_id, odom.child_frame_id = stamp, f['odom'], f['base']
+        odom.pose.pose.position.x, odom.pose.pose.position.y = x, y
+        q = _quat(yaw)
+        (odom.pose.pose.orientation.x, odom.pose.pose.orientation.y,
+         odom.pose.pose.orientation.z, odom.pose.pose.orientation.w) = q
+        cov = [0.0] * 36
+        cov[0] = cov[7] = max(self.odom.var_xy, 1e-6)
+        cov[35] = max(self.odom.var_yaw, 1e-6)
+        cov[14] = cov[21] = cov[28] = 1e6  # z, roll, pitch not estimated
+        odom.pose.covariance = cov
+        odom.twist.twist.linear.x, odom.twist.twist.angular.z = self.odom.vx, self.odom.wz
+        self.pub['odom'].publish(odom)
+        gx, gy, gyaw = self.sim.pose
+        truth = self.msg['PoseStamped']()
+        truth.header.stamp, truth.header.frame_id = stamp, GROUND_TRUTH_FRAME
+        truth.pose.position.x, truth.pose.position.y = gx, gy
+        (truth.pose.orientation.x, truth.pose.orientation.y,
+         truth.pose.orientation.z, truth.pose.orientation.w) = _quat(gyaw)
+        self.pub['ground_truth'].publish(truth)
+        if self.logs:
+            self.logs['ground_truth'].write(f'{self.t:.3f},{gx:.5f},{gy:.5f},{gyaw:.6f}\n')
+            self.logs['odometry'].write(f'{self.t:.3f},{x:.5f},{y:.5f},{yaw:.6f}\n')
+
+    def status(self, achieved_rtf):
+        s = self.driver.state
+        return {'sim_time_s': round(self.t, 3), 'driver_event': s.last_event, 'collisions': s.collisions,
+                'command_timeouts': s.timeouts, 'route_active': self.driver.route_active,
+                'ignored_commands': self.ignored_commands, 'requested_rate': self.rate,
+                'achieved_rate': round(achieved_rtf, 3), 'odom_distance_m': round(self.odom.distance, 3),
+                'provenance': 'SIMULATION_ONLY'}
+
+    # --- main loop ---------------------------------------------------------------------
+    def run(self, duration=None, hold_after_route=3.0):
+        clock = self.msg['Clock']()
+        wall0, t0, k = time.monotonic(), self.t, 0
+        route_done_at = None
+        last_status = -1.0
+        try:
+            while self.rclpy.ok():
+                for _ in range(5):  # spin_once runs at most one callback per call
+                    self.rclpy.spin_once(self.node, timeout_sec=0.0)
+                self.t = t0 + (k + 1) * self.dt
+                k += 1
+                stamp = self._stamp()
+                clock.clock = stamp
+                self.pub['clock'].publish(clock)
+                state = self.driver.step(self.t, self.dt)
+                self.sim.place(state.x, state.y, state.yaw)
+                self.odom.step(state.vx, state.wz, self.dt)
+                self._publish_state(stamp)
+                if k % self.scan_every == 0:
+                    scan = self.lidar.scan(self.t)
+                    self._publish_cloud(scan, stamp)
+                    self._publish_scan(scan, stamp)
+                elapsed = time.monotonic() - wall0
+                rtf = (self.t - t0) / elapsed if elapsed > 0 else 0.0
+                if self.t - last_status >= 1.0:
+                    msg = self.msg['String']()
+                    msg.data = json.dumps(self.status(rtf))
+                    self.pub['status'].publish(msg)
+                    last_status = self.t
+                if self.route and not self.driver.route_active and route_done_at is None:
+                    route_done_at = self.t
+                if route_done_at is not None and self.t - route_done_at >= hold_after_route:
+                    break
+                if duration is not None and self.t - t0 >= duration:
+                    break
+                ahead = wall0 + (self.t - t0) / self.rate - time.monotonic()
+                if ahead > 0:
+                    time.sleep(ahead)
+        finally:
+            elapsed = time.monotonic() - wall0
+            summary = self.status((self.t - t0) / elapsed if elapsed > 0 else 0.0)
+            if self.out:
+                for handle in self.logs.values():
+                    handle.close()
+                (self.out / 'bridge_summary.json').write_text(json.dumps(summary, indent=2))
+            self.lidar.close()
+            self.node.get_logger().info('Bridge stopped: ' + json.dumps(summary))
+        return summary
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description='ULTRON lidar hall ROS 2 simulation bridge (simulation only)')
+    parser.add_argument('--config', type=Path, default=CONFIG_DIR / 'sim_slam.yaml')
+    parser.add_argument('--route', type=Path, help='Scripted route YAML; omit for cmd_vel control')
+    parser.add_argument('--rate', type=float, default=1.0, help='Simulation speed relative to wall time')
+    parser.add_argument('--duration', type=float, help='Stop after this many simulated seconds')
+    parser.add_argument('--out', type=Path, help='New folder for run metadata and evaluation logs')
+    args = parser.parse_args(argv)
+    config = load_sim_slam_config(args.config)
+    check_isolation(config)
+    route = load_route(args.route) if args.route else None
+    import rclpy
+    rclpy.init()
+    try:
+        bridge = SimBridge(config, route, args.rate, args.out)
+        bridge.run(args.duration)
+        bridge.node.destroy_node()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

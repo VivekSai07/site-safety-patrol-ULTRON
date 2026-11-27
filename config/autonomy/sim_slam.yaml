@@ -19,6 +19,7 @@ topics:
   ground_truth: /ultron/sim/ground_truth/pose
   cmd_vel: /ultron/sim/cmd_vel
   localization_state: /ultron/sim/localization_state
+  status: /ultron/sim/bridge_status
 self_filter:
   # Crop box in base_link removing returns from the robot's own body and legs,
   # as a real driver/filter would. Simulation choice; measure on the robot.
@@ -32,7 +33,8 @@ scan_projection:
   range_min_m: 0.3
   range_max_m: 30.0
 odometry:
-  # Simulated leg-odometry drift applied to true kinematic motion.
+  # Simulated leg-odometry drift applied to true kinematic motion. Noise terms are
+  # fractional (see src/ultron/autonomy/odometry.py); no drift while stationary.
   rate_hz: 50.0
   linear_scale_error: 0.03
   yaw_rate_bias_rad_s: 0.004

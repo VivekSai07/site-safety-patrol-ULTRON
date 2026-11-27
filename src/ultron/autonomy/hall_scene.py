@@ -278,6 +278,41 @@ def build_hall(mount_xyz=(0.342, 0.0, 0.18), mount_rpy=(0.0, 0.0, 0.0), people=T
     return ET.tostring(root, encoding='unicode'), objects
 
 
+TRAVERSABLE_KINDS = {'MAT'}
+
+
+def _segment_distance(px, py, a, b):
+    ax, ay = a
+    bx, by = b
+    dx, dy = bx - ax, by - ay
+    length2 = dx * dx + dy * dy
+    t = 0.0 if length2 == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length2))
+    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+
+
+def _inside(px, py, polygon):
+    inside = False
+    for (ax, ay), (bx, by) in zip(polygon, polygon[1:] + polygon[:1]):
+        if (ay > py) != (by > py) and px < ax + (py - ay) * (bx - ax) / (by - ay):
+            inside = not inside
+    return inside
+
+
+def footprint_free(objects, x, y, radius, bounds=(0.0, 0.0, 12.0, 10.0)):
+    """Circle footprint vs. object footprints and hall bounds (simulator physics, not a map)."""
+    x0, y0, x1, y1 = bounds
+    if not (x0 + radius <= x <= x1 - radius and y0 + radius <= y <= y1 - radius):
+        return False
+    for obj in objects:
+        if obj.kind in TRAVERSABLE_KINDS or not obj.footprint:
+            continue
+        poly = obj.footprint
+        if _inside(x, y, poly) or min(_segment_distance(x, y, a, b)
+                                      for a, b in zip(poly, poly[1:] + poly[:1])) < radius:
+            return False
+    return True
+
+
 class HallSim:
     """Kinematic B2 placement in the hall. Not a walking controller."""
 
@@ -302,6 +337,9 @@ class HallSim:
             if body == ancestor:
                 return True
         return False
+
+    def footprint_free(self, x, y, radius):
+        return footprint_free(self.objects, x, y, radius)
 
     def place(self, x, y, yaw):
         """Set the true base pose (simulation ground truth) and recompute kinematics."""
