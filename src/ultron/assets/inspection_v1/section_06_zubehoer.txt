@@ -1,0 +1,6 @@
+Section 6: Zubehör / accessories
+
+zubehoer.vollstaendigkeit — Vollständigkeit/Befestigung [mode=visual]
+Inspect applicable supports/extensions/stabilizers. Absence alone is not failure unless the required accessory is verified.
+
+Only verified applicability may yield N_A. Unseen components are UNKNOWN, not intact.

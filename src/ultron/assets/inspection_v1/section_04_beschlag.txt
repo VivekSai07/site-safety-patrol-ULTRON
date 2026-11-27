@@ -1,0 +1,18 @@
+Section 4: Beschlagteile / fittings
+
+beschlag.beschaedigung — Beschädigung/Korrosion [mode=visual]
+Describe visible rust, cracks or deformation on hinges/brackets without guessing hidden corrosion.
+
+beschlag.vollstaendigkeit — Vollständigkeit/Befestigung [mode=visual]
+Identify visibly absent fittings/fasteners; no torque or tightness claim.
+
+beschlag.funktion — Funktionsfähigkeit [mode=person]
+Do not claim moving mechanisms function from one or multiple static images.
+
+beschlag.abnutzung — Abnutzung [mode=visual]
+Inspect visible worn guides/hinges/contact faces; play is not inferred without a test.
+
+beschlag.schmierung — Schmierung (mechanische Teile) [mode=person]
+Neither shine nor a visible smear proves adequate lubrication or mechanism function.
+
+Only verified applicability may yield N_A. Unseen components are UNKNOWN, not intact.

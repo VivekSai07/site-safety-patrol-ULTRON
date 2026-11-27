@@ -17,6 +17,10 @@ class Simulation:
         (self.output/'scene.xml').write_text(self.xml)
         self.model=mujoco.MjModel.from_xml_string(self.xml)
         self.data=mujoco.MjData(self.model)
+        if viewer:
+            # Avoid large MSAA/shadow buffers on WSL/software GL.
+            self.model.vis.quality.offsamples=0
+            self.model.vis.quality.shadowsize=512
         self.renderer=mujoco.Renderer(self.model,360,640)
         self.camera_id=mujoco.mj_name2id(self.model,mujoco.mjtObj.mjOBJ_CAMERA,'inspection')
         self.t=0.
@@ -26,8 +30,9 @@ class Simulation:
         self.scene_logged=False
         self.viewer=None
         if viewer:
-            from mujoco import viewer as mjviewer
-            self.viewer=mjviewer.launch_passive(self.model,self.data)
+            import os
+            from .live_view import LiveView
+            self.viewer=LiveView(self.model,self.data,fps=float(os.environ.get('ULTRON_VIEWER_FPS','5')))
         self.place(self.pose)
 
     def place(self, pose):
@@ -145,6 +150,6 @@ class Simulation:
         return self.renderer.render().copy()
 
     def close(self):
-        self.renderer.close()
         if self.viewer:
             self.viewer.close()
+        self.renderer.close()

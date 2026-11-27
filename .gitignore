@@ -23,3 +23,7 @@ datasets/
 .env.*
 # nesseler form and other downloaded reference data stay local
 data/
+# Expanded prompt manifests are reproducible; keep the requested ZIP artifact.
+/deliverables/ULTRON_inspection_prompt_pack_v1/
+# Knowledge-graph data directory (generated)
+.ua/

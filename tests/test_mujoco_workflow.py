@@ -12,6 +12,21 @@ import unittest
 @unittest.skipUnless(os.environ.get('ULTRON_RENDER_TESTS')=='1' and importlib.util.find_spec('mujoco'),
                      'Set ULTRON_RENDER_TESTS=1 with MuJoCo available')
 class RenderedWorkflowTests(unittest.TestCase):
+    def test_full_height_360_capture_has_24_valid_views_and_returns_base(self):
+        from ultron.inspect360 import capture360
+        with tempfile.TemporaryDirectory() as tmp:
+            output=Path(tmp)/'full360'
+            with contextlib.redirect_stdout(io.StringIO()):
+                result=capture360(output)
+            self.assertTrue(result['coverage']['complete'])
+            self.assertEqual(result['coverage']['accepted_cells'],24)
+            self.assertEqual(len(result['views']),24)
+            self.assertEqual(len({v['sha256'] for v in result['views']}),24)
+            self.assertTrue(all(v['visible_band_pixels_oracle']>=20 for v in result['views']))
+            self.assertTrue(result['returned_to_base'])
+            self.assertEqual(result['camera_control'],'SIMULATED_VIRTUAL_PAN_TILT_NOT_B2_ACTUATION')
+            self.assertTrue((output/'keyframes.json').is_file())
+
     def test_two_patrols_reid_change_recovery_and_missing_asset(self):
         os.environ.setdefault('MUJOCO_GL','egl')
         from ultron.mission import run_demo
