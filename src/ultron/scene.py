@@ -14,12 +14,22 @@ def scenarios():
     ]
 
 
+def safety_assets():
+    return [
+        dict(key="ext_01", kind="extinguisher", position=[11.5, 8.4, 0.]),
+        dict(key="fa_01", kind="firstaid", position=[1.2, 8.4, 0.]),
+        dict(key="es_01", kind="escape_sign", position=[0.4, 1.6, 0.]),
+        dict(key="person_ok", kind="person", position=[10.5, 5.2, 0.], helmet=True, vest=True),
+        dict(key="person_nohelm", kind="person", position=[4.5, 5.0, 0.], helmet=False, vest=False),
+    ]
+
+
 def box(parent, name, pos, size, color):
     return ET.SubElement(parent,"geom",name=name,type="box",pos=" ".join(map(str,pos)),
                          size=" ".join(map(str,size)),rgba=color)
 
 
-def make_scene(ladders,clear_clutter=False):
+def make_scene(ladders,clear_clutter=False,safety_assets=None):
     root=ET.parse(ASSETS / "upstream.xml").getroot()
     root.set("model","ULTRON_B2_inspection_sim")
     root.find("compiler").attrib.pop("meshdir",None)
@@ -75,6 +85,31 @@ def make_scene(ladders,clear_clutter=False):
             box(body,f"{key}_hinge",[0,0,2.65],[.34,.08,.06],".9 .62 .12 1")
         else:
             box(world,key+'_support_wall',[x,y+.28,1.5],[.65,.08,1.5],".34 .39 .45 1")
+    for asset in safety_assets or []:
+        x, y, z = asset['position']; key = asset['key']; kind = asset['kind']
+        body = ET.SubElement(world, "body", name=key, pos=f"{x} {y} {z}")
+        if kind == 'extinguisher':
+            box(body, f"{key}_post", [0, .14, .6], [.05, .02, .6], ".45 .47 .5 1")
+            ET.SubElement(body, "geom", name=f"{key}_tank", type="cylinder",
+                          pos="0 0 .95", size=".085 .28", rgba=".82 .08 .06 1")
+            box(body, f"{key}_tag", [0, -.09, 1.08], [.05, .004, .06], ".95 .95 .92 1")
+        elif kind == 'firstaid':
+            box(body, f"{key}_post", [0, .08, .75], [.04, .02, .75], ".45 .47 .5 1")
+            box(body, f"{key}_box", [0, 0, 1.5], [.16, .05, .16], ".93 .95 .94 1")
+            box(body, f"{key}_cross_v", [0, -.055, 1.5], [.03, .004, .11], ".08 .62 .25 1")
+            box(body, f"{key}_cross_h", [0, -.055, 1.5], [.11, .004, .03], ".08 .62 .25 1")
+        elif kind == 'escape_sign':
+            box(body, f"{key}_post", [0, 0, 1.1], [.03, .03, 1.1], ".45 .47 .5 1")
+            box(body, f"{key}_plate", [0, 0, 2.3], [.22, .012, .11], ".06 .55 .25 1")
+        elif kind == 'person':
+            box(body, f"{key}_legs", [0, 0, .45], [.14, .1, .45], ".2 .22 .3 1")
+            vest_color = ".95 .5 .05 1" if asset.get('vest') else ".4 .42 .5 1"
+            box(body, f"{key}_torso", [0, 0, 1.2], [.2, .12, .3], vest_color)
+            ET.SubElement(body, "geom", name=f"{key}_head", type="sphere",
+                          pos="0 0 1.66", size=".11", rgba=".87 .72 .6 1")
+            if asset.get('helmet'):
+                ET.SubElement(body, "geom", name=f"{key}_helmet", type="sphere",
+                              pos="0 0 1.74", size=".115", rgba=".95 .8 .05 1")
     for ladder in ladders:
         body=world.find("body[@name='"+ladder['key']+"']")
         width=ladder.get('width_factor',1.);height=ladder.get('height_factor',1.)

@@ -65,5 +65,50 @@ class PackAwareAssessmentTests(unittest.TestCase):
         self.assertEqual(len(keys), 23)
 
 
+import hashlib
+import tempfile
+
+from ultron.scene import make_scene, safety_assets, scenarios
+from ultron.site_safety import KINDS, PRIMARY_GEOM, sweep_manifest
+
+
+class ScenePropTests(unittest.TestCase):
+    def test_defaults_cover_all_kinds_with_ppe_contrast_pair(self):
+        assets = safety_assets()
+        self.assertEqual({a['kind'] for a in assets}, set(KINDS))
+        persons = [a for a in assets if a['kind'] == 'person']
+        self.assertEqual(len(persons), 2)
+        self.assertEqual({p['helmet'] for p in persons}, {True, False})
+
+    def test_make_scene_renders_props_and_helmet_contrast(self):
+        xml = make_scene(scenarios(), safety_assets=safety_assets())
+        assets = safety_assets()
+        for a in assets:
+            self.assertIn(f"{a['key']}_{PRIMARY_GEOM[a['kind']]}", xml)
+        with_h = next(p for p in assets if p['kind'] == 'person' and p['helmet'])
+        without_h = next(p for p in assets if p['kind'] == 'person' and not p['helmet'])
+        self.assertIn(f"{with_h['key']}_helmet", xml)
+        self.assertNotIn(f"{without_h['key']}_helmet", xml)
+
+    def test_make_scene_without_safety_assets_is_unchanged(self):
+        self.assertEqual(make_scene(scenarios()), make_scene(scenarios(), safety_assets=None))
+        self.assertNotIn('ext_01_tank', make_scene(scenarios()))
+
+    def test_sweep_manifest_is_valid_for_assessment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jpg = Path(tmp) / 'f.jpg'
+            jpg.write_bytes(b'\xff\xd8fakejpegbytes')
+            views = [{'image_id': 'safety-ext_01-00001', 'path': 'frames/00001.jpg',
+                      'path_abs': str(jpg)}]
+            m = sweep_manifest('PATROL-01', views, '2026-11-28', [1., 2., 0.])
+        self.assertEqual(m['pack'], 'site_safety_v1')
+        self.assertEqual(m['asset_id'], 'SITE-SWEEP-PATROL-01')
+        v = m['views'][0]
+        self.assertEqual(v['sha256'], hashlib.sha256(b'\xff\xd8fakejpegbytes').hexdigest())
+        self.assertTrue(v['same_asset_confirmed'])
+        evidence_bundle_id(m)  # raises if identity/ids invalid
+        validate_proposal(review_proposal(m, 'MANUAL REVIEW: offline'), m)
+
+
 if __name__ == '__main__':
     unittest.main()
