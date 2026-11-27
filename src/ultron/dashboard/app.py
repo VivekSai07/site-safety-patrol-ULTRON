@@ -211,13 +211,6 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
             raise HTTPException(404, 'unknown alert')
         return alert
 
-    @app.get('/api/notify/config')
-    async def notify_config_view():
-        cfg = notifier.config
-        return {'escalate_after_s': cfg.get('escalate_after_s'), 'rules': cfg['rules'],
-                'channels': ['dashboard'] + [c.name for c in notifier.channels],
-                'recipients': [{k: r.get(k) for k in ('role', 'title', 'name', 'where')} for r in cfg['recipients']]}
-
     # Sites and history
     @app.get('/api/sites')
     async def sites():

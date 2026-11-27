@@ -14,7 +14,6 @@ function el(tag, attrs, ...children) {
   return node;
 }
 
-const STATUS_LABEL = new Proxy({}, {get: (_, key) => t(`status.${String(key)}`)});
 const SIM_ASCENT = {LEANING_SINGLE: 'Anlegeleiter', A_FRAME_STEPLADDER: 'Stehleiter'};
 const GROUP_KEYS = ['holme', 'sprossen', 'spreiz', 'beschlag', 'fuesse', 'zubehoer', 'kennzeichnung'];
 

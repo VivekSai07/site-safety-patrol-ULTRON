@@ -79,7 +79,6 @@ main { max-width: 1440px; margin: 0 auto; padding: 16px 20px 32px; display: flex
 .rail { position: sticky; top: 12px; }
 @media (max-width: 1100px) { .live-grid { grid-template-columns: minmax(0, 1fr); } .rail { position: static; } }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.card.attn { border: 2px solid var(--accent); }
 .card.now { border: 2px solid var(--live-dot); }
 .card-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; }
 .grid-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
@@ -95,11 +94,11 @@ main { max-width: 1440px; margin: 0 auto; padding: 16px 20px 32px; display: flex
 
 /* Status pills and tints */
 .pill { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
-.s-FLAGGED, .r-DEFECT, .sev-critical, .d-failed { background: var(--flag-bg); color: var(--flag-fg); }
-.s-MANUAL_REVIEW, .r-UNKNOWN, .sev-warning { background: var(--rev-bg); color: var(--rev-fg); }
-.s-AUTOMATED_PASS, .r-OK, .d-sent, .d-shown, .acked { background: var(--pass-bg); color: var(--pass-fg); }
+.s-FLAGGED, .r-DEFECT, .sev-critical { background: var(--flag-bg); color: var(--flag-fg); }
+.s-MANUAL_REVIEW, .r-UNKNOWN { background: var(--rev-bg); color: var(--rev-fg); }
+.s-AUTOMATED_PASS, .r-OK, .acked { background: var(--pass-bg); color: var(--pass-fg); }
 .s-INSPECTING, .r-PENDING { background: var(--live-bg); color: var(--live-fg); }
-.r-NOT_CHECKED, .r-N_A, .sev-info, .d-skipped, .s-WAIT { background: var(--mute-bg); color: var(--mute-fg); }
+.r-NOT_CHECKED, .r-N_A, .s-WAIT { background: var(--mute-bg); color: var(--mute-fg); }
 .edge-FLAGGED { border-top: 4px solid var(--flag-dot); } .edge-MANUAL_REVIEW { border-top: 4px solid var(--rev-dot); }
 .edge-AUTOMATED_PASS { border-top: 4px solid var(--pass-dot); } .edge-INSPECTING { border-top: 4px solid var(--live-dot); }
 
@@ -148,13 +147,11 @@ svg.map { width: 100%; height: auto; max-height: 380px; display: block; backgrou
 .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
 .tile .label { font-size: 12.5px; color: var(--muted); }
 .tile .value { font-family: Archivo, sans-serif; font-size: 28px; font-weight: 800; line-height: 1.1; }
-.tile .note { font-size: 12px; color: var(--muted); }
 .table-box { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 7px 9px; border-bottom: 1px solid var(--line); }
 td { padding: 9px; border-bottom: 1px solid var(--soft); vertical-align: top; }
 tr.flagged td { background: var(--flag-bg); }
-.rule { display: flex; flex-direction: column; gap: 3px; padding: 7px 0; border-bottom: 1px solid var(--soft); font-size: 13.5px; }
 .empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
 dialog { width: min(980px, 96vw); border: 0; border-radius: 12px; padding: 0; background: var(--surface); color: var(--ink); }
 dialog::backdrop { background: rgba(10, 11, 12, .6); }
