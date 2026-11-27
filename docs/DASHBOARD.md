@@ -7,6 +7,7 @@ Live view of the ladder patrol for the site manager. Runs on localhost.
 - Shows the patrol live: robot, map, front and depth camera, alerts.
 - Keeps **one report per ladder**: nesseler's ladder form, one column per patrol, a new sheet every 5 patrols.
 - Never marks a ladder safe. The qualified person signs each report.
+- Sim only: shows the SLAM/Nav2 occupancy map and sends navigation goals from the map (click and drag, like RViz's 2D Goal Pose). Off unless started with `--goals`. See [dashboard_nav_goal.md](dashboard_nav_goal.md).
 - Planned: email all ladder reports to the site manager when the robot is back home.
 
 ## Run it

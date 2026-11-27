@@ -1,52 +1,55 @@
-# Sending navigation goals to the dashboard
+# Sending navigation goals from the dashboard
 
-This works like RViz's 2D Goal Pose, but on the live dashboard. You set a goal on the dashboard map or with one HTTP call. `scripts/dashboard_bridge.py` turns it into a nav2 `NavigateToPose` goal and reports the result back. **Simulation only:** anyone who can open the dashboard with goals turned on can move the robot.
+This works like RViz's 2D Goal Pose, but on the live dashboard. You set a goal on the dashboard map or with one HTTP call. `scripts/dashboard_bridge.py` turns it into a nav2 `NavigateToPose` goal and shows the result on the map. **Simulation only:** anyone who can open the dashboard with goals turned on can move the robot.
 
+```text
+browser / curl ──HTTP──▶ dashboard ──live stream──▶ dashboard_bridge.py ──▶ nav2 navigate_to_pose
+               ◀─status─           ◀── status, /map, TF pose ──
 ```
-teammate laptop ──HTTP──▶ dashboard (robot laptop) ──live stream──▶ dashboard_bridge.py ──▶ nav2 navigate_to_pose
-                ◀─status─                          ◀──── status, /map, TF pose ─────────
-```
 
-## 1. On the robot laptop (runs the sim and Nav2)
+## 1. Run it next to your Nav2 + SLAM sim
+
+Check out the `feature/dashboard` branch. Install the extras once, with `pip install -e .[dashboard]` or into the repo's `.venv`. Then start your sim with Nav2 and SLAM (for example slam_toolbox publishing `/map`) and run:
 
 ```bash
 # terminal 1: the dashboard, with goals turned on (they are off by default)
-PYTHONPATH=src .venv/bin/python -m ultron.dashboard --goals            # this laptop only
-PYTHONPATH=src .venv/bin/python -m ultron.dashboard --goals --lan      # also reachable from other laptops
+PYTHONPATH=src .venv/bin/python -m ultron.dashboard --goals        # open http://127.0.0.1:8000
 
-# terminal 2: the bridge (ROS sourced; do NOT prefix PYTHONPATH=src, it hides rclpy)
+# terminal 2: the bridge, in a shell with ROS sourced (Humble or Jazzy)
 python3 scripts/dashboard_bridge.py --ros-args -p base_frame:=base_link
 ```
 
-The bridge parameters are `dashboard_url`, `map_topic`, `map_frame`, `base_frame`, `action_name`, `pose_rate_hz` and `map_min_period_s`. They are listed in `adapters/ros2/README.md`.
+Do **not** prefix the bridge with `PYTHONPATH=src`. That replaces ROS's `PYTHONPATH`, so `rclpy` is not found. The script finds `src/` itself.
 
-## 2. Connecting from a teammate's laptop
-
-There are two options. Pick based on the network you are on.
-
-**A. SSH tunnel (recommended on campus or event Wi-Fi).** The dashboard stays on `127.0.0.1` with no `--lan`, so nobody else on the network can reach it. The robot laptop needs an SSH server once: `sudo apt install openssh-server`. Then, on the teammate's laptop:
+The robot only shows on the map while a mission is running. The pose API is per mission. To start one by hand:
 
 ```bash
-ssh -N -L 8000:127.0.0.1:8000 <user>@<robot-laptop-ip>
-# leave it running; the teammate now uses http://127.0.0.1:8000 as if it were local
+curl -X POST http://127.0.0.1:8000/api/missions -H 'Content-Type: application/json' -d '{"mission_id":"NAV-01","site_id":"sim"}'
 ```
 
-**B. `--lan` (only on a private network, such as a phone hotspot or your own router).** Start the dashboard with `--goals --lan`. The teammate uses `http://<robot-laptop-ip>:8000` directly. To find the IP, run `ip -4 -br addr` on the robot laptop and use the Wi-Fi interface's address. If the address is not private (192.168.x.x, 10.x.x.x or 172.16–31.x.x), other people on that network can probably send goals too, so use option A.
+| Bridge parameter | Default | Purpose |
+| --- | --- | --- |
+| `dashboard_url` | `http://127.0.0.1:8000` | Where the dashboard runs |
+| `map_topic` | `/map` | OccupancyGrid from SLAM or map_server |
+| `map_frame` / `base_frame` | `map` / `base_link` | TF used for the robot pose; set `base_frame` to your robot's frame |
+| `action_name` | `navigate_to_pose` | nav2 action |
+| `pose_rate_hz` / `map_min_period_s` | `5` / `2` | Upload rates |
 
-Check the connection: `curl http://<host>:8000/api/goal` prints `null` or the current goal.
+Other people need `--lan` (dashboard on all network interfaces) to open it. Use that only on a private network: goals have no password.
 
-## 3. The API
+## 2. The API
 
-`<host>` is `127.0.0.1:8000` with the tunnel, or `<robot-laptop-ip>:8000` with `--lan`. Positions are in metres in the `map` frame. `yaw` is in radians, counter-clockwise from +x (0 faces +x, 1.57 faces +y).
+Positions are in metres in the `map` frame. `yaw` is in radians, counter-clockwise from +x (0 faces +x, 1.57 faces +y).
 
 | Call | Purpose |
-|---|---|
+| --- | --- |
 | `POST /api/goal` `{"x": 3.0, "y": 1.0, "yaw": 1.57}` | Send a goal. A new goal replaces and cancels the running one. Returns `201` and the goal with its `seq`. Returns `403` if the dashboard runs without `--goals`. |
 | `GET /api/goal` | The current goal and its `status`. |
 | `GET /api/stream` | Live events (Server-Sent Events). Each `goal` event carries the new status. |
 | `GET /api/map` / `GET /api/map.png` | Occupancy map metadata and image (from the bridge). |
 
 Goal `status` moves through these values:
+
 - `SENT`: the dashboard has the goal.
 - `ACCEPTED`: Nav2 took it.
 - One final value:
@@ -94,5 +97,4 @@ print(wait(goal['seq']))
 
 - Unit tests: `tests/test_dashboard.py` (goal and map endpoints) and `tests/test_ros_link.py` (map conversion, stream parsing).
 - End to end on ROS 2 Jazzy against a stand-in `navigate_to_pose` server, on an isolated ROS domain. Map and pose reached the dashboard. A single goal went `SENT` → `ACCEPTED` → `SUCCEEDED`. A goal replaced mid-run was `CANCELED`. With no server running, the goal was `FAILED`.
-- A goal posted to the robot laptop's Wi-Fi address with `--lan` returned `201`. That call came from the same laptop.
-- **Not yet checked:** real Nav2, the Humble Docker images, the B2's real base frame name, and a call from a second laptop through the tunnel or `--lan`.
+- **Not yet checked:** real Nav2 with SLAM, ROS Humble, and the B2's real base frame name.
