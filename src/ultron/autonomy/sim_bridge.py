@@ -147,7 +147,7 @@ class SimBridge:
             'config_sha256': self.config.sha256, 'lidar_profile_sha256': self.config.lidar.sha256,
             'lidar_unconfirmed_parameters': self.config.lidar.unconfirmed,
             'route': None if not self.route else {'name': self.route.name, 'sha256': self.route.sha256},
-            'rate': self.rate, 'clock_start_s': CLOCK_START_S,
+            'rate': self.rate, 'clock_start_s': CLOCK_START_S, 'noise_seed': self.config.odometry['seed'],
             'scan_geometry': {'angle_min': g.angle_min, 'angle_max': g.angle_max,
                               'angle_increment': g.angle_increment, 'bins': g.bins,
                               'z_band_base_link': [g.z_min, g.z_max]},
@@ -290,8 +290,12 @@ def main(argv=None):
     parser.add_argument('--rate', type=float, default=1.0, help='Simulation speed relative to wall time')
     parser.add_argument('--duration', type=float, help='Stop after this many simulated seconds')
     parser.add_argument('--out', type=Path, help='New folder for run metadata and evaluation logs')
+    parser.add_argument('--seed', type=int, help='Override odometry/lidar noise seed (recorded in run_meta)')
     args = parser.parse_args(argv)
     config = load_sim_slam_config(args.config)
+    if args.seed is not None:
+        import dataclasses
+        config = dataclasses.replace(config, odometry=dict(config.odometry, seed=args.seed))
     check_isolation(config)
     route = load_route(args.route) if args.route else None
     import rclpy

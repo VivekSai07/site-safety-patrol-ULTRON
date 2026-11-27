@@ -24,18 +24,24 @@ case "$action" in
         out="${1:?output folder}"; shift
         exec "$venv/bin/python" -m ultron.autonomy.sim_bridge \
             --route "$repo_root/config/autonomy/routes/hall_survey_loop.yaml" --out "$out" "$@" ;;
+    map)      # scripted mapping + save + evaluate: scripts/sim-slam.sh map OUT_DIR [--rate R] [--record]
+        exec "$venv/bin/python" -m ultron.autonomy.run_mapping "$@" ;;
+    eval)     # re-evaluate a mapping run folder: scripts/sim-slam.sh eval OUT_DIR
+        exec "$venv/bin/python" -m ultron.autonomy.eval_slam "$@" ;;
     record)   # scripts/sim-slam.sh record BAG_DIR  (new folder)
         bag="${1:?bag folder}"
         exec ros2 bag record -o "$bag" --use-sim-time /clock /tf /tf_static \
             /ultron/sim/lidar/points /ultron/sim/scan /ultron/sim/odom \
             /ultron/sim/ground_truth/pose /ultron/sim/bridge_status ;;
-    rviz)
-        exec rviz2 -d "$repo_root/config/autonomy/sim_slam.rviz" --ros-args -p use_sim_time:=true ;;
+    rviz)     # scripts/sim-slam.sh rviz [map]   ("map" layout while SLAM runs)
+        layout="$repo_root/config/autonomy/sim_slam.rviz"
+        [[ "${1:-}" == map ]] && layout="$repo_root/config/autonomy/sim_slam_map.rviz"
+        exec rviz2 -d "$layout" --ros-args -p use_sim_time:=true ;;
     env)      # print the environment for manual ros2 commands
         printf 'ROS_DOMAIN_ID=%s ROS_LOCALHOST_ONLY=1\n' "$ROS_DOMAIN_ID" ;;
     exec)     # run any command inside the isolated environment
         exec "$@" ;;
     *)
-        echo 'Usage: scripts/sim-slam.sh {bridge|survey|record|rviz|env|exec} [args]' >&2
+        echo 'Usage: scripts/sim-slam.sh {bridge|survey|map|eval|record|rviz|env|exec} [args]' >&2
         exit 2 ;;
 esac

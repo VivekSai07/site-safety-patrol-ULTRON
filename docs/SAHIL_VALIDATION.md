@@ -69,3 +69,31 @@ Findings fixed during the phase:
 2. A queued `cmd_vel` subscription applied stale commands late (base moved 0.86 s after the last command). Latest-only queue (depth 1) plus servicing several callbacks per step: 0.48 s.
 
 Limitations: kinematic base (no walking dynamics, flat floor, no body roll/pitch); odometry error model is synthetic (yaw bias 0.004 rad/s dominates drift); no IMU topic; no motion distortion (`time_increment = 0`); bags are large (≈7.6 MiB/s) and stay local.
+
+## Phase 3 — Online 2D mapping with slam_toolbox
+
+**Date:** 2026-11-28 · **Backend:** slam_toolbox 2.6.10 (Humble binary), online async, `config/autonomy/slam_toolbox_mapping.yaml` (package defaults; changes commented) · **Code:** `src/ultron/autonomy/{run_mapping,slam_logger,eval_slam,tf_filter}.py` · **Command:** `scripts/sim-slam.sh map OUT [--rate R] [--record] [--seed N] [--replay RUN]`
+
+Estimator inputs: `/ultron/sim/scan`, `/ultron/sim/odom`, TF `odom -> base_link`, `base_link -> lidar_link`. Ground truth is used only by `eval_slam.py` (`map_meta.json`: `ground_truth_used_by_estimator: false`). Trajectory error is **start-anchored** (map origin = start pose; no best-fit alignment). Map reference = noise-free lidar hits from the true trajectory inside the scan band/open sector. Thresholds fixed in the plan before evaluation.
+
+| Run (`hall_survey_loop`, 31.7 m, 1.5×) | ATE RMSE / max | Yaw RMSE | Odometry-only RMSE / final | Precision | Wall recall | All-surface recall | Verdict |
+|---|---|---|---|---|---|---|---|
+| seed 7 (acceptance, `runs/phase3/accept_seed7`) | 0.048 / 0.097 m | 0.85° | 1.25 / 2.02 m | 0.996 | 0.964 | 0.913 | PASS |
+| seed 21 | 0.053 / 0.140 m | 0.87° | 1.24 / 2.10 m | 1.000 | 0.956 | — | PASS |
+| seed 99 | 0.039 / 0.079 m | 0.54° | 1.27 / 2.14 m | 1.000 | 0.957 | — | PASS |
+| Thresholds | ≤ 0.10 / ≤ 0.25 m | ≤ 2° | ≥ 2× SLAM RMSE | reported | ≥ 0.85 | reported | |
+
+| Check | Result | Evidence |
+|---|---|---|
+| Map saved (`map.pgm/.yaml`) and pose graph serialized (`map.posegraph/.data`); `map_meta.json` with map ID/version, config hashes, file hashes | PASS | `runs/phase3/accept_seed7/map_meta.json` (`ultron-hall-be73b8cbf8bf`, v1) |
+| Replay of the recorded bag into a fresh slam_toolbox (old `map -> odom` filtered out: 3,439 dropped, 5,014 relayed) | PASS: identical occupancy grid (0 differing cells); 4,853 / 5,001 poses identical, rest ≤ 1.6 cm | `runs/phase3/replay_r1` |
+| Saved map loads in `nav2_map_server` with unknown space preserved | PASS after fix: −1: 3,259, 0: 44,138, 100: 2,787 (matches the image) | manual map_server check |
+| Evaluation maths: start anchoring exact, offsets not hidden, map precision/recall, trinary loading | PASS | `tests/test_autonomy_slam_eval.py` (5 tests) |
+| End-to-end mapping run meets acceptance (opt-in, 2×) | PASS: RMSE 0.048 m, wall recall 0.964 | `ULTRON_SLAM_TESTS=1 … MappingRunTest` |
+| Full suites | PASS | System Python 86 (15 skipped); `.venv-ros` rendered 86 (4 skipped); ROS/SLAM opt-in 8 |
+
+Finding fixed: `map_saver` (via slam_toolbox) writes `free_thresh: 0.25`, so `nav2_map_server` loaded every unknown cell (pixel 205 = 0.196) as **free** — 3,259 cells in this map. `run_mapping` now rewrites it to 0.196 (recorded in `map_meta.json`), and `load_map` reports `unknown_reads_as_free`.
+
+Review images (local): `runs/phase3/*/overlay.png` — SLAM path on truth, odometry drifting ~2 m, occupied cells on reference surfaces; ladders appear as small rail clusters.
+
+Limitations: one scripted route in one synthetic hall; kinematic motion on a flat floor; no dynamic obstacles; wall recall excludes surfaces never observed in the scan band; replay determinism shown for one bag; map ID/version are per-run metadata (versioning on map updates is Phase 4).
