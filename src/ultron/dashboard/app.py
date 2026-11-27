@@ -13,7 +13,7 @@ from PIL import Image
 
 from . import checklist, protocol_pdf
 from .bus import Bus, sse_stream
-from .models import Event, Inspection, MissionEnd, MissionStart, Pose, safe_id
+from .models import Event, Goal, GoalUpdate, Inspection, MissionEnd, MissionStart, Pose, safe_id
 from .notify import Notifier, load_config
 from .store import Duplicate, Store
 
@@ -23,11 +23,12 @@ TRAIL_POINTS = 2000
 
 
 def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_config=None, channels=None,
-               escalation_period_s=5.0):
+               escalation_period_s=5.0, allow_goals=False):
+    """allow_goals: accept navigation goals from the map. Off by default: a goal is motion authority."""
     store, bus = Store(db_path), Bus()
     media = Path(media_dir)
     notifier = Notifier(store, bus, notify_config or load_config(), channels)
-    live = {'pose': {}, 'trail': {}, 'frames': {}}
+    live = {'pose': {}, 'trail': {}, 'frames': {}, 'map': None, 'goal': None}
 
     @contextlib.asynccontextmanager
     async def lifespan(_app):
@@ -110,15 +111,20 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
     async def get_mission(mission_id: str):
         return {**require_mission(mission_id), 'inspections': store.inspections(mission_id)}
 
+    def map_meta():
+        m = live['map']
+        return None if m is None else {k: v for k, v in m.items() if k != 'png'}
+
     @app.get('/api/live')
     async def live_state():
         missions = store.missions()
         running = [m for m in missions if m['status'] == 'RUNNING']
         mission = (running or missions or [None])[0]
+        nav = {'grid': map_meta(), 'goal': live['goal'], 'goals_enabled': allow_goals}
         if mission is None:
-            return {'mission': None}
+            return {'mission': None, **nav}
         mid = mission['id']
-        return {'mission': mission, 'inspections': store.inspections(mid), 'alerts': store.alerts(mid),
+        return {**nav, 'mission': mission, 'inspections': store.inspections(mid), 'alerts': store.alerts(mid),
                 'events': store.events(mid)[-60:], 'pose': live['pose'].get(mid),
                 'trail': list(live['trail'].get(mid, [])),
                 'cameras': {name: {'seq': f['seq']} for name, f in live['frames'].items() if f['mission_id'] == mid}}
@@ -147,6 +153,60 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
         if not frame:
             raise HTTPException(404, 'no frame yet')
         return Response(frame['jpeg'], media_type='image/jpeg', headers={'Cache-Control': 'no-store'})
+
+    # Occupancy map (robot side -> browsers): a PNG of the ROS OccupancyGrid, top row = largest y
+    @app.post('/api/map', status_code=204)
+    async def set_map(request: Request, resolution: float, origin_x: float, origin_y: float):
+        if request.headers.get('content-type') != 'image/png':
+            raise HTTPException(415, 'send the map as image/png')
+        if not 0 < resolution <= 10:
+            raise HTTPException(400, 'resolution must be metres per pixel, 0 < r <= 10')
+        data = await request.body()
+        if not data or len(data) > MAX_IMAGE_BYTES or not data.startswith(b'\x89PNG'):
+            raise HTTPException(400, 'expected a PNG under 5 MB')
+        try:
+            with Image.open(io.BytesIO(data)) as image:
+                width, height = image.size
+                image.verify()
+        except Exception:
+            raise HTTPException(400, 'the PNG could not be decoded')
+        seq = (live['map'] or {}).get('seq', 0) + 1
+        live['map'] = {'seq': seq, 'resolution': resolution, 'origin': [origin_x, origin_y],
+                       'width': width, 'height': height, 'png': data}
+        bus.publish('map', map_meta())
+
+    @app.get('/api/map')
+    async def get_map():
+        return map_meta()
+
+    @app.get('/api/map.png')
+    async def get_map_png():
+        if live['map'] is None:
+            raise HTTPException(404, 'no map yet')
+        return Response(live['map']['png'], media_type='image/png', headers={'Cache-Control': 'no-store'})
+
+    # Navigation goal (browser -> robot side). One current goal; a new one replaces it, like RViz.
+    @app.post('/api/goal', status_code=201)
+    async def set_goal(body: Goal):
+        if not allow_goals:
+            raise HTTPException(403, 'goals are disabled; start the dashboard with --goals')
+        seq = (live['goal'] or {}).get('seq', 0) + 1
+        live['goal'] = {'seq': seq, **body.model_dump(), 'status': 'SENT', 'detail': ''}
+        bus.publish('goal', live['goal'])
+        return live['goal']
+
+    @app.get('/api/goal')
+    async def get_goal():
+        return live['goal']
+
+    @app.post('/api/goal/status')
+    async def goal_status(body: GoalUpdate):
+        goal = live['goal']
+        if goal is None or goal['seq'] != body.seq:
+            raise HTTPException(409, 'that goal is no longer the current one')
+        goal.update(status=body.status.value, detail=body.detail[:200])
+        bus.publish('goal', goal)
+        return goal
 
     @app.post('/api/events', status_code=201)
     async def add_event(body: Event):

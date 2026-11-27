@@ -1,6 +1,7 @@
 // Live page: loads the current mission, then follows the server's event stream.
 const S = {mission: null, inspections: new Map(), confirmed: new Map(), photos: new Map(), order: [], alerts: new Map(),
-  events: [], pose: null, trail: [], checklist: [], history: {}, clock: null};
+  events: [], pose: null, trail: [], checklist: [], history: {}, clock: null,
+  grid: null, goal: null, goalsEnabled: false, picking: false, drag: null, frame: null};
 const $ = id => document.getElementById(id);
 const SVG = 'http://www.w3.org/2000/svg';
 const DOT = {FLAGGED: 'var(--flag-dot)', MANUAL_REVIEW: 'var(--rev-dot)', AUTOMATED_PASS: 'var(--pass-dot)', INSPECTING: 'var(--live-dot)'};
@@ -28,6 +29,7 @@ async function loadHistory() {
 async function load() {
   const live = await getJSON('/api/live');
   S.mission = live.mission;
+  S.grid = live.grid; S.goal = live.goal; S.goalsEnabled = !!live.goals_enabled;
   S.inspections = new Map((live.inspections || []).map(i => [i.asset_id, i]));
   S.alerts = new Map((live.alerts || []).map(a => [a.id, a]));
   S.confirmed = new Map(); S.photos = new Map(); S.order = [];
@@ -156,16 +158,39 @@ function renderLog() {
   }));
 }
 
+// World (map frame, metres, y up) <-> SVG user units (y down). The occupancy grid, when the robot
+// side has sent one, defines the extent; otherwise the mission's site map does.
+function mapBounds() {
+  const g = S.grid, m = S.mission;
+  if (g) return [g.origin[0], g.origin[1], g.origin[0] + g.width * g.resolution, g.origin[1] + g.height * g.resolution];
+  return (m && m.map && m.map.bounds) || [0, 0, 12, 9];
+}
+
+function arrow(x, y, yaw, length, style) {
+  const tip = [x + length * Math.cos(yaw), y - length * Math.sin(yaw)];
+  const g = svg('g', {}, style);
+  g.append(svg('line', {x1: x, y1: y, x2: tip[0], y2: tip[1], 'stroke-width': 0.08, 'stroke-linecap': 'round'}));
+  g.append(svg('circle', {cx: x, cy: y, r: 0.12, 'stroke-width': 0}));
+  const a = 0.5, s = 0.25;  // head: two short strokes back from the tip
+  for (const d of [a, -a]) g.append(svg('line', {x1: tip[0], y1: tip[1], x2: tip[0] - s * Math.cos(yaw + d), y2: tip[1] + s * Math.sin(yaw + d), 'stroke-width': 0.08, 'stroke-linecap': 'round'}));
+  return g;
+}
+
 function renderMap() {
   const map = $('map');
   const m = S.mission;
-  const b = (m && m.map && m.map.bounds) || [0, 0, 12, 9];
-  const pad = 0.4, w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad;
+  const b = mapBounds();
+  const pad = S.grid ? 0 : 0.4, w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad;
   const X = x => x - b[0] + pad, Y = y => b[3] + pad - y;
+  S.frame = {b, pad};
   map.setAttribute('viewBox', `0 0 ${w} ${h}`);
   map.replaceChildren();
-  map.append(svg('rect', {x: X(b[0]), y: Y(b[3]), width: b[2] - b[0], height: b[3] - b[1], 'stroke-width': 0.04}, 'fill: var(--surface); stroke: var(--map-line)'));
-  for (const k of (m && m.map && m.map.keepouts) || []) {
+  if (S.grid) {
+    map.append(svg('image', {href: `/api/map.png?v=${S.grid.seq}`, x: 0, y: 0, width: w, height: h, preserveAspectRatio: 'none'}));
+  } else {
+    map.append(svg('rect', {x: X(b[0]), y: Y(b[3]), width: b[2] - b[0], height: b[3] - b[1], 'stroke-width': 0.04}, 'fill: var(--surface); stroke: var(--map-line)'));
+  }
+  for (const k of (!S.grid && m && m.map && m.map.keepouts) || []) {
     map.append(svg('rect', {x: X(k[0]), y: Y(k[3]), width: k[2] - k[0], height: k[3] - k[1], 'stroke-width': 0.03, 'stroke-dasharray': '0.1 0.08'}, 'fill: var(--hatch); stroke: var(--muted)'));
   }
   const base = m && m.map && m.map.base;
@@ -197,7 +222,53 @@ function renderMap() {
     robot.append(svg('path', {d: 'M0.18,-0.12 L0.42,0 L0.18,0.12 Z'}, 'fill: var(--live-dot)'));
     map.append(robot);
   }
+  const done = S.goal && ['SUCCEEDED', 'FAILED', 'CANCELED'].includes(S.goal.status);
+  if (S.goal && !done) map.append(arrow(X(S.goal.x), Y(S.goal.y), S.goal.yaw, 0.7, 'stroke: var(--accent); fill: var(--accent)'));
+  if (S.drag) map.append(arrow(S.drag.sx, S.drag.sy, S.drag.yaw, 0.7, 'stroke: var(--accent); fill: var(--accent); opacity: .6'));
+  map.classList.toggle('picking', S.picking);
   $('map-info').textContent = `${(b[2] - b[0]).toFixed(1)} × ${(b[3] - b[1]).toFixed(1)} m`;
+  $('goal-btn').hidden = !S.goalsEnabled;
+  $('goal-btn').setAttribute('aria-pressed', String(S.picking));
+  $('goal-info').textContent = S.picking ? t('goal.pick') : S.goal ? `${t(`goal.${S.goal.status}`)} · ${S.goal.x.toFixed(1)} / ${S.goal.y.toFixed(1)} m` : '';
+}
+
+// 2D Goal Pose, as in RViz: press "Set goal", press on the map for the position, drag toward the
+// heading, release to send. One goal per button press; Escape cancels picking.
+function svgPoint(event) {
+  const pt = $('map').createSVGPoint();
+  pt.x = event.clientX; pt.y = event.clientY;
+  return pt.matrixTransform($('map').getScreenCTM().inverse());
+}
+
+function initGoalPicking() {
+  const map = $('map');
+  $('goal-btn').addEventListener('click', () => { S.picking = !S.picking; S.drag = null; scheduleRender(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.picking) { S.picking = false; S.drag = null; scheduleRender(); } });
+  map.addEventListener('pointerdown', e => {
+    if (!S.picking) return;
+    e.preventDefault();
+    map.setPointerCapture(e.pointerId);
+    const p = svgPoint(e);
+    S.drag = {sx: p.x, sy: p.y, yaw: 0};
+    scheduleRender();
+  });
+  map.addEventListener('pointermove', e => {
+    if (!S.drag) return;
+    const p = svgPoint(e), dx = p.x - S.drag.sx, dy = S.drag.sy - p.y;  // flip y: SVG down, map up
+    if (Math.hypot(dx, dy) > 0.05) S.drag.yaw = Math.atan2(dy, dx);
+    scheduleRender();
+  });
+  map.addEventListener('pointerup', async () => {
+    if (!S.drag) return;
+    const {b, pad} = S.frame, d = S.drag;
+    const goal = {x: d.sx + b[0] - pad, y: b[3] + pad - d.sy, yaw: d.yaw, frame_id: 'map'};
+    S.drag = null; S.picking = false;
+    const response = await fetch('/api/goal', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(goal)}).catch(() => null);
+    if (response && response.ok) S.goal = await response.json();
+    else $('goal-info').textContent = t('goal.failed');
+    scheduleRender();
+  });
+  map.addEventListener('pointercancel', () => { S.drag = null; scheduleRender(); });
 }
 
 // Camera frames: fetch the newest JPEG when told one exists; never queue old frames.
@@ -234,12 +305,15 @@ function connect() {
   on('alert', a => { if (mine(a)) { S.alerts.set(a.id, a); scheduleRender(); } });
   on('pose', p => { if (!mine(p)) return; S.pose = p; S.trail.push([p.x, p.y]); S.clock = Math.max(S.clock || 0, p.time); scheduleRender(); });
   on('frame', f => { if (mine(f)) showFrame(f.camera); });
+  on('map', g => { S.grid = g; scheduleRender(); });
+  on('goal', g => { if (!S.goal || g.seq >= S.goal.seq) { S.goal = g; scheduleRender(); } });
   source.onerror = () => { $('live-chip').className = 'live-chip idle'; $('live-chip').textContent = '…'; };
   source.onopen = () => load();
 }
 
 (async () => {
   initChrome(render);
+  initGoalPicking();
   S.checklist = await getJSON('/api/checklist');
   await load();
   connect();

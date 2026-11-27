@@ -62,7 +62,13 @@
       </section>
 
       <section class="card" aria-label="Map">
-        <div class="card-head"><h2 data-i18n="map">Lageplan</h2><span class="sub mono" id="map-info"></span></div>
+        <div class="card-head"><h2 data-i18n="map">Lageplan</h2>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <span class="sub mono" id="goal-info"></span>
+            <span class="sub mono" id="map-info"></span>
+            <button type="button" id="goal-btn" aria-pressed="false" hidden data-i18n="goal.set">Ziel setzen</button>
+          </div>
+        </div>
         <svg class="map" id="map" role="img" aria-label="Map"></svg>
       </section>
     </div>

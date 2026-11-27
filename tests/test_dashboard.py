@@ -394,5 +394,62 @@ class NtfyChannelTest(unittest.TestCase):
         self.assertEqual(channel.send(alert, {'role': 'x', 'ntfy_topic': None})[0], 'skipped')
 
 
+@unittest.skipUnless(HAVE_DASHBOARD, 'dashboard extras not installed')
+class NavigationTest(unittest.TestCase):
+    """Occupancy map in from the robot side, 2D goal pose out from the map."""
+
+    def make(self, allow_goals=True):
+        app = create_app(':memory:', allow_goals=allow_goals)
+        published = []
+        app.state.bus.publish = lambda kind, data: published.append((kind, data))
+        return TestClient(app), published
+
+    def png(self, size=(40, 20)):
+        import io as _io
+        from PIL import Image as _Image
+        out = _io.BytesIO()
+        _Image.new('L', size, 205).save(out, 'PNG')
+        return out.getvalue()
+
+    def test_map_upload_is_served_and_announced(self):
+        client, published = self.make()
+        r = client.post('/api/map?resolution=0.05&origin_x=-1&origin_y=-0.5', content=self.png(),
+                        headers={'content-type': 'image/png'})
+        self.assertEqual(r.status_code, 204)
+        meta = client.get('/api/map').json()
+        self.assertEqual((meta['width'], meta['height'], meta['resolution'], meta['origin'], meta['seq']), (40, 20, 0.05, [-1, -0.5], 1))
+        self.assertEqual(client.get('/api/map.png').content, self.png())
+        self.assertEqual(published[-1], ('map', meta))
+        self.assertEqual(client.get('/api/live').json()['grid'], meta)
+
+    def test_map_rejects_bad_input(self):
+        client, _ = self.make()
+        q = '/api/map?resolution=0.05&origin_x=0&origin_y=0'
+        self.assertEqual(client.post(q, content=JPEG, headers={'content-type': 'image/jpeg'}).status_code, 415)
+        self.assertEqual(client.post(q, content=b'\x89PNG broken', headers={'content-type': 'image/png'}).status_code, 400)
+        self.assertEqual(client.post('/api/map?resolution=0&origin_x=0&origin_y=0', content=self.png(),
+                                     headers={'content-type': 'image/png'}).status_code, 400)
+        self.assertEqual(client.get('/api/map.png').status_code, 404)
+
+    def test_goals_are_off_unless_enabled(self):
+        client, published = self.make(allow_goals=False)
+        self.assertEqual(client.post('/api/goal', json={'x': 1, 'y': 2, 'yaw': 0}).status_code, 403)
+        self.assertIsNone(client.get('/api/goal').json())
+        self.assertFalse(client.get('/api/live').json()['goals_enabled'])
+        self.assertEqual(published, [])
+
+    def test_goal_round_trip(self):
+        client, published = self.make()
+        goal = client.post('/api/goal', json={'x': 3.5, 'y': -1.0, 'yaw': 1.57}).json()
+        self.assertEqual(goal, {'seq': 1, 'x': 3.5, 'y': -1.0, 'yaw': 1.57, 'frame_id': 'map', 'status': 'SENT', 'detail': ''})
+        self.assertEqual(published[-1], ('goal', goal))
+        # the bridge reports progress on the current goal; a newer goal replaces it
+        self.assertEqual(client.post('/api/goal/status', json={'seq': 1, 'status': 'ACCEPTED'}).json()['status'], 'ACCEPTED')
+        client.post('/api/goal', json={'x': 0, 'y': 0})
+        self.assertEqual(client.post('/api/goal/status', json={'seq': 1, 'status': 'SUCCEEDED'}).status_code, 409)
+        self.assertEqual(client.post('/api/goal/status', json={'seq': 2, 'status': 'BOGUS'}).status_code, 422)
+        self.assertEqual(client.get('/api/goal').json()['seq'], 2)
+
+
 if __name__ == '__main__':
     unittest.main()

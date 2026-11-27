@@ -68,6 +68,28 @@ class Pose(BaseModel):
     state: str = ''
 
 
+class Goal(BaseModel):
+    """A navigation goal set on the dashboard map, like RViz's 2D Goal Pose (map frame, yaw in radians)."""
+    x: float
+    y: float
+    yaw: float = 0.0
+    frame_id: str = 'map'
+
+
+class GoalStatus(str, Enum):
+    SENT = 'SENT'            # dashboard has it, no bridge has picked it up yet
+    ACCEPTED = 'ACCEPTED'    # the ROS bridge published it to the navigation stack
+    SUCCEEDED = 'SUCCEEDED'
+    FAILED = 'FAILED'
+    CANCELED = 'CANCELED'
+
+
+class GoalUpdate(BaseModel):
+    seq: int
+    status: GoalStatus
+    detail: str = ''
+
+
 class LadderData(BaseModel):
     """Page 1 of the nesseler form. Unread fields stay None and print as blank."""
     inventory_no: str | None = None

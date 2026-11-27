@@ -29,6 +29,8 @@ def main(argv=None):
     parser.add_argument('--port', type=int, default=8000)
     parser.add_argument('--lan', action='store_true',
                         help='listen on all network interfaces so phones and other laptops can connect')
+    parser.add_argument('--goals', action='store_true',
+                        help='let the map send navigation goals (simulation only; anyone who can open the page can move the robot)')
     parser.add_argument('--notify', help='notification config JSON (see config/notify.example.json)')
     args = parser.parse_args(argv)
 
@@ -39,7 +41,7 @@ def main(argv=None):
     config = load_config(args.notify)
     if args.notify is None:
         config['public_url'] = f'http://127.0.0.1:{args.port}'
-    uvicorn.run(create_app(args.db, args.media, config), host='0.0.0.0' if args.lan else '127.0.0.1', port=args.port)
+    uvicorn.run(create_app(args.db, args.media, config, allow_goals=args.goals), host='0.0.0.0' if args.lan else '127.0.0.1', port=args.port)
 
 
 if __name__ == '__main__':
