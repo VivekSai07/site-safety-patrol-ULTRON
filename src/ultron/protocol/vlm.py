@@ -146,6 +146,11 @@ class OpenAIVlm:
         prompt = inspection_prompt(len(frames), self.language)
         return self._ask(self.model, prompt, frames, "inspection", INSPECTION_SCHEMA, detail="high")
 
+    def ask(self, prompt, frames, name, schema, quick=True):
+        """Any other structured question about some frames; `quick` uses the triage model."""
+        return self._ask(self.triage_model if quick else self.model, prompt, frames, name, schema,
+                         detail="low" if quick else "high")
+
     def _ask(self, model, prompt, frames, name, schema, detail):
         jpegs = [frame.jpeg() for frame in frames]
         key = hashlib.sha256("\0".join([model, prompt]).encode() + b"".join(jpegs)).hexdigest()[:32]
@@ -207,6 +212,13 @@ class ReplayVlm:
     def triage(self, frame):
         return self.recorded.get("triage", {}).get(frame.name) or {
             "ladder_present": False, "view": "none", "box": None, "id_text": None, "note": "not recorded"}
+
+    def ask(self, prompt, frames, name, schema, quick=True):
+        key = "+".join(frame.name for frame in frames)
+        try:
+            return self.recorded[name][key]
+        except KeyError:
+            raise VlmError(f"No recorded {name} answer for {key}") from None
 
     def inspect(self, frames):
         key = "+".join(frame.name for frame in frames)

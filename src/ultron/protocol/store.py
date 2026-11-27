@@ -120,13 +120,17 @@ class Store:
         return None
 
     # --- writing ----------------------------------------------------------------
-    def record(self, inspection, frames, position=None, mission=None, model=None):
-        """Append one inspection column to the right ladder's sheet and save its evidence."""
+    def record(self, inspection, frames, position=None, mission=None, model=None, ladder_id=None):
+        """Append one inspection column to the right ladder's sheet and save its evidence.
+
+        `ladder_id` names the sheet when the caller already knows which ladder this is
+        (the pipeline's object map); otherwise it is found by marking or position.
+        """
         with self._lock:
             master = inspection.pop("master")
-            sheet = self.find(master.get("inventar_nummer"), position)
+            sheet = self.ladder(ladder_id) if ladder_id else self.find(master.get("inventar_nummer"), position)
             if sheet is None:
-                sheet = {"id": f"LAD-{len(self.ladders()) + 1:03}", "master": dict.fromkeys(
+                sheet = {"id": ladder_id or f"LAD-{len(self.ladders()) + 1:03}", "master": dict.fromkeys(
                     (key for key, _ in form.MASTER_DATA)), "position": None, "inspections": []}
                 sheet["master"]["naechste_pruefung"] = "Siehe Prüfplakette"
             for key, value in master.items():  # the label does not change: keep what was read first

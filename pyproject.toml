@@ -27,6 +27,7 @@ training-vlm = ["transformers>=4.57,<5", "accelerate>=1", "Pillow>=9", "torch>=2
 [project.scripts]
 ultron = "ultron.__main__:main"
 ultron-protocol = "ultron.protocol.__main__:main"
+ultron-pipeline = "ultron.pipeline.__main__:main"
 safety-patrol = "site_safety_patrol.cli:main"
 
 [tool.setuptools.packages.find]

@@ -17,6 +17,7 @@ class Frame:
     stamp: float = field(default_factory=time.time)
     pose: tuple = None      # robot (x, y, yaw) in the map frame, if localisation is available
     points: object = None   # lidar points, Nx3 array in the lidar frame, if available
+    depth: object = None    # depth image in metres aligned to `image`, HxW array, if available
 
     @classmethod
     def from_bytes(cls, data, **kwargs):
