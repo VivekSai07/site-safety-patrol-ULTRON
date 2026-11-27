@@ -15,10 +15,19 @@ class InspectionTests(unittest.TestCase):
 
     def test_pass_is_scoped_and_unknowns_abstain(self):
         self.assertEqual(verdict({'feet':'PASS'},['feet'],'VALID')['status'],'AUTOMATED_PASS')
+        self.assertEqual(verdict({'feet':'PASS'},iter(['feet']),'VALID')['status'],'AUTOMATED_PASS')
         result=verdict({},['feet'],'VALID')
         self.assertEqual(result['status'],'MANUAL_REVIEW')
         self.assertIn('feet',result['missing'])
         self.assertFalse(result['safe_to_use'])
+
+    def test_empty_inspection_scope_cannot_pass_and_fail_still_dominates(self):
+        for required in ([], (), iter(())):
+            with self.subTest(required=required):
+                result=verdict({},required,'VALID')
+                self.assertEqual(result['status'],'MANUAL_REVIEW')
+                self.assertFalse(result['safe_to_use'])
+        self.assertEqual(verdict({'feet':'FAIL'},iter(()),'VALID')['status'],'FLAGGED')
 
     def test_fusion_never_erases_fail(self):
         self.assertEqual(fuse({'feet':'FAIL'},{'feet':'PASS'})['feet'],'FAIL')

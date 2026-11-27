@@ -25,11 +25,15 @@ def fuse(previous, new):
 
 
 def verdict(checks, required, label_status):
+    required = tuple(required)
     failures = [k for k,v in checks.items() if v == "FAIL"]
     missing = [k for k in required if checks.get(k) != "PASS"]
     if failures or label_status == "OVERDUE":
         status = "FLAGGED"
         reason = "Visible defect: " + ", ".join(failures) if failures else "Inspection label overdue"
+    elif not required:
+        status = "MANUAL_REVIEW"
+        reason = "No required components configured"
     elif missing or label_status != "VALID":
         status = "MANUAL_REVIEW"
         reason = "Unresolved: " + ", ".join(missing + ([] if label_status == "VALID" else ["label"]))

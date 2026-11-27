@@ -77,6 +77,37 @@ class EvidenceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_findings({'components':components,'label_status':'VALID'},['feet'],'v')
 
+    def test_confirmed_failure_outside_template_still_flags(self):
+        doc={'components':[
+            {'component':'stiles','state':'PASS','confidence':.95,'visible':True,'reason':'intact'},
+            {'component':'wheel_brakes_visual','state':'FAIL','confidence':.95,'visible':True,'reason':'broken'},
+        ], 'label_status':'UNKNOWN'}
+        view=validate_findings(doc,['stiles'],'v1')
+        self.assertEqual(view['checks']['wheel_brakes_visual'],'FAIL')
+        self.assertEqual(evidence_gate([view],['stiles'])['status'],'FLAGGED')
+
+    def test_unconfirmed_outside_template_failure_does_not_flag(self):
+        for confidence,visible in ((.84,True),(.95,False)):
+            doc={'components':[
+                {'component':'wheel_brakes_visual','state':'FAIL','confidence':confidence,
+                 'visible':visible,'reason':'uncertain'},
+            ], 'label_status':'UNKNOWN'}
+            view=validate_findings(doc,['stiles'],'v1')
+            self.assertNotEqual(view['checks'].get('wheel_brakes_visual'),'FAIL')
+            self.assertEqual(evidence_gate([view],['stiles'])['status'],'MANUAL_REVIEW')
+
+    def test_outside_template_pass_cannot_fill_required_evidence(self):
+        doc={'components':[
+            {'component':'wheel_brakes_visual','state':'PASS','confidence':.95,
+             'visible':True,'reason':'appears intact'},
+        ], 'label_status':'VALID'}
+        result=evidence_gate([validate_findings(doc,['stiles'],'v1')],['stiles'])
+        self.assertEqual(result['status'],'MANUAL_REVIEW')
+        self.assertIn('stiles',result['missing'])
+        doc['components'][0]['component']='unrecognized_part'
+        with self.assertRaises(ValueError):
+            validate_findings(doc,['stiles'],'v1')
+
 
 class StreamTests(unittest.TestCase):
     def test_idle_follow_can_observe_terminal_events_without_another_frame(self):
@@ -103,4 +134,28 @@ class ViewTests(unittest.TestCase):
 
     def test_blocked_views_are_rejected(self):
         grid=Grid((0,0,12,12),[(0,0,12,12)])
-        self.assertEqual(candidate_views((6,6),'A_FRAME_STEPLADDER',grid,full_orbit=True),[])
+        self.assertEqual(candidate_views((6,6),'A_FRAME_STEPLADDER',grid,full_orbit=True,
+                                         open_space_confirmed=True,rear_evidence_missing=True),[])
+
+    def test_rear_views_require_a_frame_and_both_explicit_attestations(self):
+        grid=Grid((0,0,12,12),[])
+        defaults=candidate_views((6,6),'A_FRAME_STEPLADDER',grid,full_orbit=True)
+        self.assertTrue(all(v['position'][1]<6 for v in defaults))
+        for ladder_type,clear,missing in (
+            ('A_FRAME_STEPLADDER',False,True),
+            ('A_FRAME_STEPLADDER',True,False),
+            ('PLATFORM_PODEST',True,True),
+            ('LEANING_SINGLE',True,True),
+        ):
+            with self.subTest(ladder_type=ladder_type,clear=clear,missing=missing):
+                views=candidate_views((6,6),ladder_type,grid,full_orbit=True,
+                                      open_space_confirmed=clear,rear_evidence_missing=missing)
+                self.assertTrue(views)
+                self.assertTrue(all(v['position'][1]<6 for v in views))
+
+    def test_confirmed_open_a_frame_with_missing_rear_evidence_allows_simulated_candidates(self):
+        grid=Grid((0,0,12,12),[])
+        views=candidate_views((6,6),'A_FRAME_STEPLADDER',grid,full_orbit=True,
+                              open_space_confirmed=True,rear_evidence_missing=True)
+        self.assertTrue(any(v['position'][1]>6 for v in views))
+        self.assertTrue(all(v['validated_for']=='SIMULATION_GRID_ONLY' for v in views))

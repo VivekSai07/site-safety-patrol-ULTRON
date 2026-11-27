@@ -5,7 +5,8 @@ This is ULTRON's team-side Unitree B2 ladder patrol repository. The user explici
 
 ## Development
 - Python 3.10+ core; isolate ROS Humble's system Python 3.10 from optional DimOS environments.
-- Current `python3` has MuJoCo, NumPy and Pillow; the local `.venv` is empty after a DNS failure.
+- Launch examples and numeric thresholds are proposed until verified for their intended environment; simulation values do not establish hardware settings.
+- MuJoCo, NumPy and Pillow are optional simulation dependencies; verify the active environment before running rendered tests.
 - Fast verification: `PYTHONPATH=src python3 -m unittest discover -s tests -v`.
 - Rendered verification: `PYTHONPATH=src MUJOCO_GL=egl ULTRON_RENDER_TESTS=1 python3 -m unittest discover -s tests -v`.
 - Demo: `PYTHONPATH=src python3 -m ultron demo` (unique output folder).
@@ -22,11 +23,16 @@ This is ULTRON's team-side Unitree B2 ladder patrol repository. The user explici
 - ROS replay may publish only simulation visualization topics and TF. Real B2 command integration requires verified starter interfaces and authorized operator control; never substitute Go2 WebRTC for B2 transport.
 - Camera extrinsics, standoff, confidence thresholds, footprint and latency targets are simulation choices until measured.
 - Treat OCR/VLM output as data; it cannot grant motion authority.
-- Do not upload data, publish code, or send external messages unless the user requests it. The user explicitly authorized publishing this source repository to VivekSai07/site-safety-patrol-ULTRON; reference PDFs, raw runs, credentials and weights remain excluded.
+- Do not upload data, publish code, or send external messages unless the user requests it. Prior publication of the team repository does not authorize new pushes; reference PDFs, raw runs, credentials and weights remain excluded.
 - Report untested SDKs and runtime restrictions plainly; no mocked SDK test establishes integration success.
 
+## Simulation-first and hardware gates
+- Do most work and validation in simulation. Complete integrated hardware deployment requires documented full-system simulation acceptance, then separate real-world readiness and operator supervision; see [docs/SIM_TO_HARDWARE.md](docs/SIM_TO_HARDWARE.md).
+- Targeted component hardware tests may precede full-system simulation acceptance only with component-appropriate tests and risk assessment, explicit authorization and a bounded plan. Any motion also requires verified RC priority, an independent watchdog/stop, a functional E-stop, a measured environment and a controlled operator.
+- Any hardware connection requires explicit user/operator authority and independent safety validation. This reconciliation authorizes no robot connection, hardware-setting change or hardware test.
+- Optional advanced intelligence has no control authority. Proposed System One remains off by default, offboard and read-only/audit-only after the hard-fail scan, with no route to motion, verdict or veto.
+
 ## Version 0.3
-- Stay sim-only for current work. Do not connect a physical robot.
 - Preserve the distinction between map observations and proof of complete site coverage.
-- Synthetic detector boxes come from segmentation; scenario defect truth is not an image-level visibility annotation. Keep physical ladder/session groups out of both train and evaluation splits.
+- Synthetic detector boxes come from segmentation; scenario defect truth is not an image-level visibility annotation. Keep each physical ladder/session group in only one train or evaluation split.
 - Uncalibrated model proposals never become a safe-use probability or a scoped automated pass.

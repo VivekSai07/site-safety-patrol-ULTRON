@@ -2,12 +2,15 @@
 import math
 
 
-def candidate_views(target,ladder_type,grid,*,full_orbit=False,start=None,radius=2.):
+def candidate_views(target,ladder_type,grid,*,full_orbit=False,start=None,radius=2.,
+                    open_space_confirmed=False,rear_evidence_missing=False):
+    """Generate fixed-axis simulation candidates; attestations do not prove physical clearance."""
     if not math.isfinite(radius) or radius<1.:
         raise ValueError('Observation radius must be finite and at least 1 m')
     x,y=target[:2]
     angles=(-90,-140,-40)
-    if full_orbit and ladder_type in ('A_FRAME_STEPLADDER','PLATFORM_PODEST'):
+    if (full_orbit is True and ladder_type=='A_FRAME_STEPLADDER'
+            and open_space_confirmed is True and rear_evidence_missing is True):
         angles=(-90,-45,0,45,90,135,180,225)
     result=[]
     for degrees in angles:

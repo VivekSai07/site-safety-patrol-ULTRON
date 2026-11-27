@@ -4,20 +4,29 @@
 
 ![ULTRON B2 patrol preview](docs/images/ultron-patrol.gif)
 
-This is ULTRON's team-side working repository. The organizer starter remains the integration authority for real hardware. Nothing contacts organizers or sends robot commands.
+This is ULTRON's team-side working repository. The organizer starter remains the integration authority for real hardware. The simulation demo does not contact organizers or send robot commands; the optional hardware hook is not verified for real operation.
 
-## Run on this machine
+## Simulation-first; hardware is separately gated
 
-The existing `python3` environment already has MuJoCo, NumPy and Pillow:
+Do most development and validation in simulation. Complete integrated hardware deployment requires documented full-system simulation acceptance, followed by separate real-world readiness, explicit authorization and operator supervision. Simulation acceptance records unresolved assumptions; it does not validate physical locomotion, real sensors or optional SDKs.
+
+Targeted component hardware tests may happen before full-system simulation acceptance, but only with component-appropriate tests and risk assessment, authorization and a bounded plan. Any motion also requires verified RC priority, an independent watchdog/stop, a functional E-stop, a measured environment and a controlled operator. Any hardware connection requires explicit user/operator authority and independent safety validation; this reconciliation authorizes none. See [simulation-to-hardware gates](docs/SIM_TO_HARDWARE.md).
+
+Optional advanced intelligence has no control authority. Proposed System One remains off by default, offboard and read-only/audit-only after the hard-fail scan, with no route to motion, verdict or veto. Inspection verdicts are prescreening, never safe-to-use certification.
+
+Numeric thresholds and launch, network and device details in plans or examples are proposed until verified for their intended environment; simulation settings are not hardware approvals. The [Pass 7 Build Bible](docs/bible/BUILD_BIBLE_PASS7.md) and [reconciliation record](docs/RECONCILIATION_PASS7.md) distinguish current implementation from proposed work; neither authorizes hardware operation.
+
+## Run the simulation
+
+From the repository root, on a machine with MuJoCo, NumPy and Pillow (verify dependencies and launch details locally):
 
 ```bash
-cd /home/vivek/ULTRON
-PYTHONPATH=src MUJOCO_GL=egl python3 -m ultron demo --out runs/my-demo
+PYTHONPATH=src MUJOCO_GL=egl python3 -m ultron demo --out runs/ultron-demo
 ```
 
 Omit `--out` for a unique run folder. Existing folders are refused. Default: two patrols with acceleration-limited motion; simulated duration follows the route and turn profile, and rendering speed depends on the machine. Run data is roughly 200–300 MB because depth arrays are preserved.
 
-A generated example lives in `runs/ultron-demo/`. Open `report.html` directly, or serve it:
+After generating a run at `runs/ultron-demo/`, open `report.html` directly, or serve it:
 
 ```bash
 python3 -m http.server 8000 --bind 127.0.0.1 --directory runs/ultron-demo
@@ -34,7 +43,7 @@ python -m pip install -e '.[sim,rerun]'
 ultron demo --out runs/demo
 ```
 
-The local `.venv` created during preparation is empty: package downloads failed on DNS. Use the already installed `python3` command above here, or install extras when networking is available.
+Install the simulation extra in a suitable isolated environment if those dependencies are not already available.
 
 ## What to demonstrate
 
@@ -73,7 +82,7 @@ scripts/rviz.sh runs/ultron-demo
 
 Rerun logs the B2, site primitives, route, camera transforms, RGB/depth, spatial asset pins, and events. RViz replay publishes only `/ultron/sim/*` visualization topics and TF. It publishes **no `/cmd_vel`, DDS low-level commands or hardware goals**. Primitive capsule visuals are approximated by bounding boxes in Rerun and cylinders in RViz; MuJoCo renders original primitives.
 
-**Verification limits here:** headless EGL rendering and SQLite workflows were executed. Rerun/DimOS SDKs are absent and cannot be downloaded in this restricted shell. Their adapters are based on inspected upstream APIs but remain unverified end to end. ROS Humble/RViz are installed; ROS node creation and interactive windows are blocked by session socket/display restrictions. Portable recordings remain available for all viewers.
+**Verification limits:** headless EGL rendering and SQLite workflows have been exercised in simulation. Rerun/DimOS adapters were not verified end to end in the recorded validation; their availability and graphical/ROS restrictions vary by environment. Portable recordings remain available for supported viewers.
 
 ## What is real in the simulation
 
@@ -110,7 +119,7 @@ PYTHONPATH=src python3 -m ultron rerun runs/live-patrol --spawn --follow
 
 A normal COCO YOLO checkpoint lacks a ladder class; use a ladder-trained checkpoint or open-vocabulary YOLOE/YOLO-World. Model confidence is not a calibrated safety probability. Unseen/weak evidence is UNKNOWN, and unvalidated model PASS proposals require human review. Synthetic defect metadata does not establish pixel visibility. See [motion/perception](docs/PERCEPTION_MOTION.md), [supervisor architecture](docs/AUTONOMOUS_SUPERVISOR.md), and [data collection](docs/DATA_COLLECTION.md).
 
-Start with [source review](docs/SOURCE_REVIEW.md), [jury strategy](docs/JURY_STRATEGY.md), [B2/DimOS integration](docs/INTEGRATION.md), [handoff](docs/EVENT_HANDOFF.md) and [pitch/video plan](docs/PITCH.md). Organizer and teammate PDFs are preserved locally in `docs/` and ignored by Git; these notes identify exact pages. No dataset or repository has been uploaded.
+Start with [source review](docs/SOURCE_REVIEW.md), [jury strategy](docs/JURY_STRATEGY.md), [B2/DimOS integration](docs/INTEGRATION.md), [handoff](docs/EVENT_HANDOFF.md) and [pitch/video plan](docs/PITCH.md). The referenced organizer and teammate PDFs are not included in this checkout; locally supplied PDFs are ignored by Git. These notes identify source pages to verify.
 
 ## Verify
 
