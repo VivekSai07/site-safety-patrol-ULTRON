@@ -11,16 +11,27 @@ import math
 from pathlib import Path
 import re
 
-ASSETS=Path(__file__).parent/'assets/inspection_v1'
 SAFE_ID=re.compile(r'^[A-Za-z0-9_.-]{1,64}$')
+PACKS=('inspection_v1','site_safety_v1')
+SCHEMA_NAMES={'inspection_v1':'ultron_seven_sections_v1','site_safety_v1':'ultron_site_safety_v1'}
 
 
-def rubric():
-    return json.loads((ASSETS/'rubric.json').read_text())
+def _pack(manifest):
+    pack=manifest.get('pack','inspection_v1')
+    if pack not in PACKS:raise ValueError('Unknown checklist pack')
+    return pack
 
 
-def _criteria():
-    return {c['key']:c for s in rubric()['sections'] for c in s['criteria']}
+def _assets(pack='inspection_v1'):
+    return Path(__file__).parent/'assets'/pack
+
+
+def rubric(pack='inspection_v1'):
+    return json.loads((_assets(pack)/'rubric.json').read_text())
+
+
+def _criteria(pack='inspection_v1'):
+    return {c['key']:c for s in rubric(pack)['sections'] for c in s['criteria']}
 
 
 def _identity(manifest):
@@ -36,11 +47,13 @@ def _identity(manifest):
 def evidence_bundle_id(manifest):
     """Bind the immutable job context and pixel hashes to the exact prompt/schema."""
     _identity(manifest)
+    pack=_pack(manifest)
     context={k:manifest.get(k) for k in ('mission_id','asset_id','map_version','inspection_date',
         'ladder_type','position','verified_not_applicable','synthetic')}
+    if pack!='inspection_v1':context['pack']=pack
     context['views']=manifest.get('views',[])
     context['prompt_fingerprints']={p.name:hashlib.sha256(p.read_bytes()).hexdigest()
-        for p in sorted(ASSETS.iterdir()) if p.suffix in ('.txt','.json')}
+        for p in sorted(_assets(pack).iterdir()) if p.suffix in ('.txt','.json')}
     raw=json.dumps(context,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
     return hashlib.sha256(raw).hexdigest()
 
@@ -72,6 +85,7 @@ def assess_coverage(manifest):
 def build_request(manifest,root,model):
     """Read verified local JPEGs, attach explicit IDs and require all 23 criteria."""
     _identity(manifest)
+    pack=_pack(manifest);assets=_assets(pack)
     if not manifest.get('views'):raise ValueError('At least one keyframe is required')
     if len(manifest['views'])>32:raise ValueError('At most 32 selected keyframes per request')
     if not model or not isinstance(model,str):raise ValueError('An explicit tested model ID is required')
@@ -92,14 +106,14 @@ def build_request(manifest,root,model):
     metadata={k:manifest.get(k) for k in ('asset_id','mission_id','map_version','ladder_type','inspection_date','verified_not_applicable')}
     metadata['bundle_id']=evidence_bundle_id(manifest)
     content.insert(0,{'type':'input_text','text':'Inspect only this evidence bundle: '+json.dumps(metadata)})
-    prompt=(ASSETS/'system.txt').read_text()+'\n'+'\n'.join(p.read_text() for p in sorted(ASSETS.glob('section_*.txt')))
+    prompt=(assets/'system.txt').read_text()+'\n'+'\n'.join(p.read_text() for p in sorted(assets.glob('section_*.txt')))
     return {'model':model,'store':False,'instructions':prompt,'input':[{'role':'user','content':content}],
-        'text':{'format':{'type':'json_schema','name':'ultron_seven_sections_v1','strict':True,
-                         'schema':json.loads((ASSETS/'response_schema.json').read_text())}}}
+        'text':{'format':{'type':'json_schema','name':SCHEMA_NAMES[pack],'strict':True,
+                         'schema':json.loads((assets/'response_schema.json').read_text())}}}
 
 
 def validate_proposal(proposal,manifest):
-    ids=_identity(manifest);criteria=_criteria()
+    ids=_identity(manifest);criteria=_criteria(_pack(manifest))
     if not isinstance(proposal,dict) or set(proposal)!={'bundle_id','asset_id','criteria','label','summary'}:
         raise ValueError('Invalid proposal fields')
     if proposal['bundle_id']!=evidence_bundle_id(manifest):raise ValueError('Stale or mismatched evidence bundle')
@@ -132,6 +146,8 @@ def validate_proposal(proposal,manifest):
 
 def dashboard_payload(proposal,manifest):
     """Exact current dashboard field names; model-only no-defect always needs review."""
+    if _pack(manifest)!='inspection_v1':
+        raise ValueError('dashboard_payload supports the ladder pack only; site safety publishes events')
     validate_proposal(proposal,manifest)
     photo_ids={p['image_id']:p['photo_id'] for p in photo_upload_plan(manifest)}
     position=manifest.get('position')
@@ -179,7 +195,7 @@ def review_proposal(manifest,reason):
     """Explicit conservative fallback for network/refusal/validation failure."""
     return {'bundle_id':evidence_bundle_id(manifest),'asset_id':manifest['asset_id'],'criteria':{key:{
         'state':'NOT_CHECKED' if c['mode']=='person' else 'UNKNOWN',
-        'reason':reason,'confidence':0.,'evidence_ids':[]} for key,c in _criteria().items()},
+        'reason':reason,'confidence':0.,'evidence_ids':[]} for key,c in _criteria(_pack(manifest)).items()},
         'label':{'raw_text':None,'due_date_iso':None,'due_date_explicit':False,'evidence_ids':[]},
         'summary':reason}
 
