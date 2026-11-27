@@ -11,6 +11,8 @@ dependencies = []
 
 [project.optional-dependencies]
 sim = ["mujoco>=3.3,<4", "numpy>=1.24", "Pillow>=9"]
+# 2D SLAM simulation; ROS 2 Humble rclpy comes from the system (see scripts/setup-ros-venv.sh).
+autonomy = ["mujoco>=3.3,<4", "numpy>=1.24", "Pillow>=9", "PyYAML>=5.4"]
 rerun = ["rerun-sdk==0.32.0", "numpy>=1.24", "Pillow>=9"]
 
 # Model extras are intentionally separate from the simulation and ROS interpreter.

@@ -1,0 +1,43 @@
+# ULTRON 2D SLAM simulation configuration. SIMULATION ONLY: no hardware topics or
+# command paths. Simulation-chosen values; not physical robot settings.
+schema: ultron.sim_slam/v1
+lidar_profile: lidar_helios32.yaml
+ros:
+  domain_id: 71
+  localhost_only: true
+  use_sim_time: true
+frames:
+  map: map
+  odom: odom
+  base: base_link
+  lidar: lidar_link
+topics:
+  clock: /clock
+  points: /ultron/sim/lidar/points
+  scan: /ultron/sim/scan
+  odom: /ultron/sim/odom
+  ground_truth: /ultron/sim/ground_truth/pose
+  cmd_vel: /ultron/sim/cmd_vel
+  localization_state: /ultron/sim/localization_state
+scan_projection:
+  # Points between these heights in base_link are flattened into the 2D scan.
+  z_min_m: -0.45
+  z_max_m: 0.60
+  angle_increment_deg: 0.5
+  range_min_m: 0.3
+  range_max_m: 30.0
+odometry:
+  # Simulated leg-odometry drift applied to true kinematic motion.
+  rate_hz: 50.0
+  linear_scale_error: 0.03
+  yaw_rate_bias_rad_s: 0.004
+  linear_noise_std: 0.02
+  angular_noise_std: 0.02
+  seed: 7
+driver:
+  max_linear_m_s: 0.6
+  max_angular_rad_s: 0.8
+  max_linear_accel_m_s2: 0.5
+  max_angular_accel_rad_s2: 1.0
+  command_timeout_s: 0.5
+  footprint_radius_m: 0.55
