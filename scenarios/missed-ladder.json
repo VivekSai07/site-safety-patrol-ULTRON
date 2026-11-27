@@ -1,0 +1,147 @@
+{
+  "name": "Synthetic coverage failure",
+  "synthetic": true,
+  "sensor": {
+    "range_m": 3.5,
+    "fov_degrees": 100
+  },
+  "route": [
+    [
+      0,
+      0,
+      20
+    ],
+    [
+      1,
+      0,
+      20
+    ],
+    [
+      3,
+      0,
+      20
+    ],
+    [
+      6,
+      0,
+      20
+    ],
+    [
+      9,
+      0,
+      20
+    ],
+    [
+      12,
+      0,
+      20
+    ],
+    [
+      15,
+      0,
+      160
+    ]
+  ],
+  "ladders": [
+    {
+      "id": "L01",
+      "position": [
+        2,
+        1
+      ],
+      "checks": {
+        "rails": "pass",
+        "rungs": "pass",
+        "feet": "pass",
+        "spreaders": "pass"
+      },
+      "label": {
+        "asset_id": "DEMO-01",
+        "readable": true,
+        "valid_until": "2027-12-31"
+      },
+      "confidence": 0.96,
+      "detectable": true
+    },
+    {
+      "id": "L02",
+      "position": [
+        5,
+        1
+      ],
+      "checks": {
+        "rails": "pass",
+        "rungs": "fail",
+        "feet": "pass",
+        "spreaders": "pass"
+      },
+      "label": {
+        "asset_id": "DEMO-02",
+        "readable": true,
+        "valid_until": "2027-12-31"
+      },
+      "confidence": 0.97,
+      "detectable": true
+    },
+    {
+      "id": "L03",
+      "position": [
+        8,
+        1
+      ],
+      "checks": {
+        "rails": "pass",
+        "rungs": "pass",
+        "feet": "pass",
+        "spreaders": "pass"
+      },
+      "label": {
+        "asset_id": "DEMO-03",
+        "readable": true,
+        "valid_until": "2026-01-01"
+      },
+      "confidence": 0.94,
+      "detectable": true
+    },
+    {
+      "id": "L04",
+      "position": [
+        11,
+        1
+      ],
+      "checks": {
+        "rails": "pass",
+        "rungs": "pass",
+        "feet": "unknown",
+        "spreaders": "pass"
+      },
+      "label": {
+        "asset_id": "DEMO-04",
+        "readable": false,
+        "valid_until": "2027-12-31"
+      },
+      "confidence": 0.6,
+      "detectable": true
+    },
+    {
+      "id": "L05",
+      "position": [
+        14,
+        1
+      ],
+      "checks": {
+        "rails": "pass",
+        "rungs": "pass",
+        "feet": "pass",
+        "spreaders": "pass"
+      },
+      "label": {
+        "asset_id": "DEMO-05",
+        "readable": true,
+        "valid_until": "2027-12-31"
+      },
+      "confidence": 0.95,
+      "detectable": false
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+# Preserve exact upstream model whitespace for provenance.
+src/ultron/assets/b2/upstream.xml -whitespace

@@ -1,0 +1,72 @@
+"""Opt-in rendered integration suite. Run with ULTRON_RENDER_TESTS=1."""
+import contextlib
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import tempfile
+import unittest
+
+
+@unittest.skipUnless(os.environ.get('ULTRON_RENDER_TESTS')=='1' and importlib.util.find_spec('mujoco'),
+                     'Set ULTRON_RENDER_TESTS=1 with MuJoCo available')
+class RenderedWorkflowTests(unittest.TestCase):
+    def test_two_patrols_reid_change_recovery_and_missing_asset(self):
+        os.environ.setdefault('MUJOCO_GL','egl')
+        from ultron.mission import run_demo
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as tmp:
+            output=Path(tmp)/'run'
+            with contextlib.redirect_stdout(io.StringIO()):
+                result=run_demo(output,variant='missing')
+            first,second=result['missions']
+            self.assertEqual(first['found'],3)
+            self.assertEqual(first['status'],'MISSION_COMPLETE')
+            self.assertEqual(second['found'],2)
+            self.assertEqual(second['status'],'COVERAGE_INCOMPLETE')
+            self.assertEqual(second['missing_expected'],['LAD-003'])
+            self.assertEqual(len(result['assets']),3)
+            history=result['assets'][0]['history']
+            self.assertEqual([e['payload']['status'] for e in history],['AUTOMATED_PASS','FLAGGED'])
+            self.assertTrue(result['assets'][0]['status_changed'])
+            aframe=first['records'][2]
+            self.assertEqual(aframe['retry_count'],1)
+            self.assertEqual(aframe['status'],'AUTOMATED_PASS')
+            self.assertEqual(len(aframe['views']),3)
+            rung=first['records'][1]
+            self.assertEqual(rung['stop_reason'],'HARD_FAIL_EARLY_EXIT')
+            self.assertEqual(rung['retry_count'],0)
+            self.assertTrue((output/'preview.gif').is_file())
+            for mission in result['missions']:
+                self.assertEqual(mission['operator_interventions'],0)
+                for record in mission['records']:
+                    self.assertFalse(record['safe_to_use'])
+                    for view in record['views']:
+                        with Image.open(output/view['rgb']) as image:
+                            self.assertEqual(image.size,(640,360))
+            telemetry=[json.loads(line) for line in (output/'telemetry.jsonl').read_text().splitlines()]
+            self.assertTrue(telemetry[0]['robot_geoms'])
+            self.assertTrue(telemetry[0]['scene_geoms'])
+            self.assertTrue(all(g['kind']!=0 for g in telemetry[0]['robot_geoms']))
+
+    def test_blocked_closeup_never_passes_unseen_feet(self):
+        os.environ.setdefault('MUJOCO_GL','egl')
+        from ultron.mission import run_demo
+        with tempfile.TemporaryDirectory() as tmp:
+            with contextlib.redirect_stdout(io.StringIO()):
+                result=run_demo(Path(tmp)/'blocked-closeup',patrols=1,variant='blocked-closeup')
+            record=next(r for r in result['missions'][0]['records'] if r['oracle_key']=='ladder_a')
+            self.assertEqual(record['status'],'MANUAL_REVIEW')
+            self.assertIn('bottom_feet',record['missing'])
+            self.assertEqual(record['stop_reason'],'NEXT_POSE_UNSAFE_BLOCKED')
+
+    def test_blocked_inspection_cannot_emit_scoped_pass(self):
+        os.environ.setdefault('MUJOCO_GL','egl')
+        from ultron.mission import run_demo
+        with tempfile.TemporaryDirectory() as tmp:
+            with contextlib.redirect_stdout(io.StringIO()):
+                result=run_demo(Path(tmp)/'blocked',patrols=1,variant='blocked')
+            record=next(r for r in result['missions'][0]['records'] if r['ladder_type']=='A_FRAME_STEPLADDER')
+            self.assertEqual(record['status'],'MANUAL_REVIEW')
+            self.assertEqual(record['stop_reason'],'NEXT_POSE_UNSAFE_BLOCKED')

@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+runs/
+.pytest_cache/
+# Organizer/team reference PDFs remain local; summaries cite page numbers.
+docs/*.pdf
+.ruff_cache/
+# Model assets, local datasets and service secrets stay out of source publication.
+datasets/
+*.pt
+*.pth
+*.safetensors
+*.onnx
+*.rrd
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.env
+.env.*

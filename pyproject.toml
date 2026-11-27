@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ultron-site-safety-patrol"
+version = "0.3.0"
+description = "ULTRON B2 MuJoCo ladder patrol, persistent evidence memory and Rerun/RViz replay"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+sim = ["mujoco>=3.3,<4", "numpy>=1.24", "Pillow>=9"]
+rerun = ["rerun-sdk==0.32.0", "numpy>=1.24", "Pillow>=9"]
+
+# Model extras are intentionally separate from the simulation and ROS interpreter.
+# Check upstream licensing before distributing weights or commercial deployment.
+perception-yolo = ["ultralytics>=8.3.0", "Pillow>=9"]
+perception-vlm = ["transformers>=4.57,<5", "accelerate>=1", "Pillow>=9", "torch>=2.2"]
+
+[project.scripts]
+ultron = "ultron.__main__:main"
+safety-patrol = "site_safety_patrol.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ultron = ["assets/b2/*.xml", "assets/b2/LICENSE", "assets/b2/PROVENANCE.md"]
