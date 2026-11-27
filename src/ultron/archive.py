@@ -16,7 +16,7 @@ def export_history(assets, output):
             if Path(run_id).name!=run_id or run_id in ('.','..'):
                 raise ValueError('Invalid history run ID')
             for view in payload.get('views',[]):
-                for field in ('rgb','depth','overview'):
+                for field in ('rgb','depth','overview','inspection_crop','model_response'):
                     if field not in view:
                         continue
                     relative=Path(view[field])

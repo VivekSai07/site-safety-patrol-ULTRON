@@ -1,5 +1,7 @@
 # Source review and decision log
 
+Update: the organizer's actual checklist, photos and simulator are now reviewed in [organizer alignment](ORGANIZER_ALIGNMENT.md). This supersedes the earlier “official template unknown” statements below. Original planning evidence is retained for comparison.
+
 Reviewed 27 November 2026. Source PDFs remain unmodified under `docs/`; extracted text was read page by page for the organizer documents and teammate build bible, with the DGUV scope and inspection/checklist sections checked directly. Figures are illustrative planning material, not hardware verification. Sources have distinct authority: organizer facts; teammate proposals; manufacturer/library interfaces; DGUV guidance.
 
 ## Organizer evidence

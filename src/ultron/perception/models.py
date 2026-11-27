@@ -12,11 +12,11 @@ class YoloLadderDetector:
             os.environ['HF_HUB_OFFLINE']='1'
             os.environ['YOLO_AUTOINSTALL']='false'
         try:
-            from ultralytics import YOLOE,YOLOWorld
+            from ultralytics import YOLO,YOLOE,YOLOWorld
         except ImportError as exc:
             raise RuntimeError('Install the perception-yolo extra in a supported model environment') from exc
-        self.model=(YOLOE if family=='yoloe' else YOLOWorld)(str(weights))
-        if allow_download:
+        self.model={'yoloe':YOLOE,'world':YOLOWorld,'custom':YOLO}[family](str(weights))
+        if allow_download and family!='custom':
             self.model.set_classes(['ladder','stepladder'])
         else:
             names=self.model.names
@@ -30,8 +30,11 @@ class YoloLadderDetector:
         result=self.model.predict(image,conf=.15,device=self.device,verbose=False)[0]
         detections=[]
         for box in result.boxes:
+            label=result.names[int(box.cls[0])]
+            if 'ladder' not in str(label).lower():
+                continue
             detections.append({'box_xyxy':box.xyxy[0].cpu().tolist(),
-                'confidence':float(box.conf[0]),'label':result.names[int(box.cls[0])],
+                'confidence':float(box.conf[0]),'label':label,
                 'source':'ULTRALYTICS_MODEL','checkpoint':self.weights})
         return detections
 

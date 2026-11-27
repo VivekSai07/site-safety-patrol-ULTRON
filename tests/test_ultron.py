@@ -95,12 +95,17 @@ class MemoryTests(unittest.TestCase):
             old=Path(tmp)/'old'; new=Path(tmp)/'new'
             (old/'frames').mkdir(parents=True);(new/'frames').mkdir(parents=True)
             (old/'frames/00000.jpg').write_bytes(b'old evidence')
+            (old/'frames/crop.jpg').write_bytes(b'target crop')
+            (old/'frames/qwen.txt').write_text('raw model response')
             (new/'frames/00000.jpg').write_bytes(b'new evidence')
             assets=[{'history':[{'payload':{'run_id':'old-run','evidence_root':str(old),
-                         'views':[{'rgb':'frames/00000.jpg'}]}}]}]
+                         'views':[{'rgb':'frames/00000.jpg','inspection_crop':'frames/crop.jpg','model_response':'frames/qwen.txt'}]}}]}]
             export_history(assets,new)
             copied=assets[0]['history'][0]['payload']['views'][0]['rgb']
             self.assertEqual((new/copied).read_bytes(),b'old evidence')
+            view=assets[0]['history'][0]['payload']['views'][0]
+            self.assertEqual((new/view['inspection_crop']).read_bytes(),b'target crop')
+            self.assertEqual((new/view['model_response']).read_text(),'raw model response')
             self.assertEqual((new/'frames/00000.jpg').read_bytes(),b'new evidence')
 
     def test_ambiguous_neighbors_not_silently_merged(self):

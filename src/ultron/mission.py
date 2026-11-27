@@ -14,7 +14,9 @@ from .planning import Grid
 from .scene import scenarios
 
 
-def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, viewer=False, motion='smooth'):
+def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, viewer=False, motion='smooth', view_policy='bounded', detector='oracle', weights=None, inspector='oracle', qwen=None, allow_download=False, device='cpu', detector_family='yoloe'):
+    from .runtime_perception import RuntimePerception
+    perception=RuntimePerception(detector=detector,weights=weights,inspector=inspector,qwen=qwen,allow_download=allow_download,device=device,family=detector_family)
     output=Path(output)
     output.mkdir(parents=True,exist_ok=False)
     (output/'frames').mkdir()
@@ -28,16 +30,18 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
     try:
         for patrol in range(patrols):
             ladders=scenarios()
+            if variant=='open-orbit':
+                ladders=[dict(ladders[2],position=[6.,4.5,0.])]
             if patrol>0:
                 ladders[0]['defect']='bottom_feet'
                 if variant=='missing':
                     ladders=ladders[:-1]
-            sim=Simulation(ladders,output,viewer)
+            sim=Simulation(ladders,output,viewer,clear_clutter=variant=='open-orbit')
             sim.frames=len(all_frames)
             sim.t=clock
-            obstacles=[(4.2,2.45,5.0,3.55),(10.4,2.6,11.4,4.2)]
-            obstacles += [(a['position'][0]-.4,5.8,a['position'][0]+.4,
-                           7.15 if a['type']=='A_FRAME_STEPLADDER' else 6.4) for a in ladders]
+            obstacles=[] if variant=='open-orbit' else [(4.2,2.45,5.0,3.55),(10.4,2.6,11.4,4.2)]
+            obstacles += [(a['position'][0]-.4,a['position'][1]-.2,a['position'][0]+.4,
+                           a['position'][1]+(1.15 if a['type']=='A_FRAME_STEPLADDER' else .4)) for a in ladders]
             if variant=='blocked':
                 obstacles.append((7.7,4.15,10.3,5.15))
             if variant=='blocked-closeup':
@@ -112,7 +116,7 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                     for burst in range(3):
                         sim.t+=.2
                         frame,rgb,depth,seg=capture('DISCOVER')
-                        for detection in sim.oracle_detections(frame,depth,seg):
+                        for detection in perception.detections(sim,frame,rgb,depth,seg):
                             key=detection['oracle_key']
                             seen[key]+=1
                             if seen[key]>=3 and key not in inspected:
@@ -122,7 +126,9 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                         if key in inspected:
                             continue
                         inspected.add(key)
-                        fixture=next(a for a in ladders if a['key']==key)
+                        fixture=next((a for a in ladders if a['key']==key),
+                                     dict(key=key,type=detection['type'],due=None,defect=None))
+                        perception.reset(key)
                         asset,reid=db.associate(detection['position'],detection['type'],'ultron_mock_site_v1')
                         emit('LADDER_CONFIRMED',asset_id=asset,association=reid,observation=detection)
                         emit('SUPERVISOR_TARGET_SELECTED',asset_id=asset,decision=selection)
@@ -144,24 +150,50 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                             sim.t+=.8
                             frame,rgb,depth,seg=capture('INSPECT_'+name)
                             views.append(frame)
-                            # Findings are scripted sensor-oracle outputs, not visual inference.
-                            new={c:'PASS' for c in REQUIRED[fixture['type']]}
-                            if name=='OVERVIEW':
-                                for component in ('bottom_feet','front_feet'):
-                                    if component in new:
-                                        new[component]='UNKNOWN'
-                            if fixture['type']=='A_FRAME_STEPLADDER':
-                                new.update(rear_feet='UNKNOWN',spreader='UNKNOWN')
-                            if fixture.get('defect') and (name=='CLOSEUP' or fixture['defect']=='rungs'):
-                                new[fixture['defect']]='FAIL'
-                            checks=fuse(checks,new)
-                            label='OVERDUE' if date.fromisoformat(fixture['due'])<date(2026,11,27) else 'VALID'
-                            result=verdict(checks,REQUIRED[fixture['type']],label)
-                            emit('EVIDENCE_CAPTURED',asset_id=asset,view=name,checks=checks.copy(),label=label)
+                            if perception.inspector is not None:
+                                checks,label,result=perception.read(sim,key,detection['position'],frame,rgb,depth,seg,views,REQUIRED[fixture['type']])
+                            else:
+                                # Findings are scripted sensor-oracle outputs, not visual inference.
+                                new={c:('PASS' if detector=='oracle' else 'UNKNOWN') for c in REQUIRED[fixture['type']]}
+                                if name=='OVERVIEW':
+                                    for component in ('bottom_feet','front_feet'):
+                                        if component in new:
+                                            new[component]='UNKNOWN'
+                                if fixture['type']=='A_FRAME_STEPLADDER':
+                                    new.update(rear_feet='UNKNOWN',spreader='UNKNOWN')
+                                if fixture.get('defect') and (name=='CLOSEUP' or fixture['defect']=='rungs'):
+                                    new[fixture['defect']]='FAIL'
+                                checks=fuse(checks,new)
+                                label=('OVERDUE' if date.fromisoformat(fixture['due'])<date(2026,11,27) else 'VALID') if fixture['due'] else 'UNKNOWN'
+                                result=verdict(checks,REQUIRED[fixture['type']],label)
+                            emit('EVIDENCE_CAPTURED',asset_id=asset,view=name,checks=checks.copy(),label=label,
+                                 inspection_crop=frame.get('inspection_crop'),model_response=frame.get('model_response'))
                             if result['status']=='FLAGGED':
                                 stop='HARD_FAIL_EARLY_EXIT'
                                 break
-                        result=verdict(checks,REQUIRED[fixture['type']],label)
+                        result=perception.result(key,REQUIRED[fixture['type']]) if perception.inspector is not None else verdict(checks,REQUIRED[fixture['type']],label)
+                        orbit_views=[]
+                        if view_policy=='orbit' and views and result['status']!='FLAGGED' and selection['action']=='INSPECT':
+                            from .viewpoints import candidate_views
+                            rear_missing=any(checks.get(c,'UNKNOWN')=='UNKNOWN' for c in ('rear_feet','spreader'))
+                            ring_allowed=variant=='open-orbit' and fixture['type']=='A_FRAME_STEPLADDER' and rear_missing
+                            candidates=candidate_views(detection['position'],fixture['type'],grid,full_orbit=True,start=sim.pose[:2],radius=2.2,
+                                open_space_confirmed=variant=='open-orbit',rear_evidence_missing=rear_missing)
+                            for candidate in candidates:
+                                if move(candidate['position'],'ORBIT_APPROACH',yaw=candidate['yaw']):
+                                    sim.t+=.8
+                                    frame,rgb,depth,seg=capture('INSPECT_ORBIT')
+                                    frame['view_angle_deg']=candidate['angle_deg']
+                                    views.append(frame);orbit_views.append(candidate['angle_deg'])
+                                    if perception.inspector is not None:
+                                        checks,label,result=perception.read(sim,key,detection['position'],frame,rgb,depth,seg,views,REQUIRED[fixture['type']])
+                                    elif detector=='oracle':
+                                        visible=sim.visible_parts(key,seg)
+                                        frame['observed_components']=list(visible)
+                                        checks=fuse(checks,visible)
+                                        result=verdict(checks,REQUIRED[fixture['type']],label)
+                                    if result['status']=='FLAGGED': break
+                            emit('ORBIT_FINISHED',asset_id=asset,angles_captured=orbit_views,requested_full_ring=ring_allowed)
                         if result['status']=='MANUAL_REVIEW' and recovery and views:
                             retry_count=1
                             emit('SECOND_LOOK_REQUESTED',asset_id=asset,missing=result['missing'])
@@ -170,12 +202,15 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                                 sim.t+=.8
                                 frame,rgb,depth,seg=capture('INSPECT_SIDE')
                                 views.append(frame)
-                                # Bounded scripted recovery for the rear-foot/spreader evidence gap.
-                                recovered={c:'PASS' for c in REQUIRED[fixture['type']]}
-                                if fixture.get('defect'):
-                                    recovered[fixture['defect']]='FAIL'
-                                checks=fuse(checks,recovered)
-                                result=verdict(checks,REQUIRED[fixture['type']],label)
+                                if perception.inspector is not None:
+                                    checks,label,result=perception.read(sim,key,detection['position'],frame,rgb,depth,seg,views,REQUIRED[fixture['type']])
+                                else:
+                                    # Bounded scripted recovery for the rear-foot/spreader evidence gap.
+                                    recovered={c:('PASS' if detector=='oracle' else 'UNKNOWN') for c in REQUIRED[fixture['type']]}
+                                    if fixture.get('defect'):
+                                        recovered[fixture['defect']]='FAIL'
+                                    checks=fuse(checks,recovered)
+                                    result=verdict(checks,REQUIRED[fixture['type']],label)
                                 stop='ALL_REQUIRED_COMPLETE'
                             else:
                                 stop='NEXT_POSE_UNSAFE_BLOCKED'
@@ -184,10 +219,12 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                         payload={**result,'asset_id':asset,'mission_id':mid,'position':detection['position'],
                             'ladder_type':fixture['type'],'checks':checks,'label_status':label,
                             'required_components':REQUIRED[fixture['type']],
-                            'label_reading':{'raw_text':None,'due_date':fixture['due'] if views else None,'status':label,'source':'SCENARIO_FIXTURE'},
-                            'views':views,'retry_count':retry_count,'stop_reason':stop,
-                            'source':'SIMULATION_ORACLE','oracle_key':key,'synthetic':True,
-                            'run_id':run_id,'evidence_root':str(output.resolve())}
+                            'label_reading':{'raw_text':None,'due_date':fixture['due'] if views and inspector=='oracle' else None,'status':label,'source':'MODEL_PROPOSAL' if inspector!='oracle' else 'SCENARIO_FIXTURE'},
+                            'views':views,'model_evidence':perception.findings.get(key,[]),'retry_count':retry_count,'stop_reason':stop,
+                            'source':'MODEL_PROPOSALS' if inspector!='oracle' or detector!='oracle' else 'SIMULATION_ORACLE','oracle_key':key if detector=='oracle' else None,'synthetic':True,
+                            'run_id':run_id,'evidence_root':str(output.resolve()),'orbit_angles':orbit_views,
+                            'perception_backend':{'detector':detector,'inspector':inspector},
+                            'full_ring_executed':len(set(orbit_views))==8 and fixture['type']=='A_FRAME_STEPLADDER' and variant=='open-orbit'}
                         db.append(mid,asset,payload)
                         records.append(payload)
                         emit('INSPECTION_COMMITTED',asset_id=asset,status=payload['status'],retry_count=retry_count,reason=payload['reason'],
@@ -204,7 +241,7 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                     returned_to_base=move(decision['goal'],'RETURN_BASE')
                     emit('BASE_REACHED' if returned_to_base else 'BASE_UNREACHABLE',
                          status='KNOWN_ASSETS_HANDLED_COVERAGE_UNVERIFIED' if returned_to_base else 'AWAIT_OPERATOR')
-                mission_status='COVERAGE_INCOMPLETE' if missing or skipped or len(inspected)<len(ladders) else 'MISSION_COMPLETE'
+                mission_status='COVERAGE_INCOMPLETE' if detector!='oracle' or missing or skipped or len(inspected)<len(ladders) else 'MISSION_COMPLETE'
                 summary={'mission_id':mid,'status':mission_status,'mission_mode':mode,
                     'planned_waypoints':len(route),'reached_waypoints':reached,'skipped_waypoints':skipped,
                     'zone_bounds':list(grid.bounds),'keepout_rectangles':grid.obstacles,
@@ -212,7 +249,7 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                     'waypoint_coverage_pct':100*reached/len(route),'unscanned_area_pct':None,
                     'coverage_note':'Waypoint completion is NOT measured area coverage',
                     'expected_ground_truth':len(ladders),'found':len(inspected),
-                    'ladder_recall_simulation':len(inspected)/len(ladders),'missing_expected':missing,
+                    'ladder_recall_simulation':len(inspected)/len(ladders) if detector=='oracle' else None,'missing_expected':missing,
                     'operator_interventions':interventions,'duration_sim_s':round(sim.t-clock,2),
                     'records':records,'synthetic':True,'supervisor_decision':decision,'returned_to_base':returned_to_base,
                     'recovery_attempts':sum(r['retry_count'] for r in records),
@@ -220,7 +257,7 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                     'hard_fail_cases_oracle':sum(bool(a.get('defect')) or a['due']<'2026-11-27' for a in ladders),
                     'false_scoped_passes_oracle':sum(r['status']=='AUTOMATED_PASS' and
                         any(a['key']==r['oracle_key'] and (a.get('defect') or a['due']<'2026-11-27') for a in ladders)
-                        for r in records)}
+                        for r in records) if detector=='oracle' else None}
                 db.finish(mid,summary)
                 mission_results.append(summary)
                 emit('MISSION_FINISHED',status=mission_status,missing_expected=missing)
@@ -234,7 +271,7 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
         for mission in mission_results:
             for record in mission['records']:
                 record['evidence_root']='.'
-        exported={'team':'ULTRON','run_id':run_id,'variant':variant,'recovery_enabled':recovery,'motion_backend':motion,'synthetic':True,'missions':mission_results,
+        exported={'team':'ULTRON','run_id':run_id,'variant':variant,'recovery_enabled':recovery,'motion_backend':motion,'view_policy':view_policy,'perception_backend':{'detector':detector,'inspector':inspector},'synthetic':True,'missions':mission_results,
                   'assets':assets,'world_objects':db.objects(),'limitations':['Kinematic base; no validated locomotion',
                   'Segmentation and inspection oracles; no learned perception',
                   'No hardware connection; no formal inspection certification']}
@@ -243,7 +280,7 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
         from .preview import make_preview
         make_preview(output)
         manifest={str(p.relative_to(output)):hashlib.sha256(p.read_bytes()).hexdigest()
-                  for p in output.rglob('*') if p.is_file() and p.suffix in ('.jpg','.png','.npy','.xml','.jsonl','.gif','.json')}
+                  for p in output.rglob('*') if p.is_file() and p.suffix in ('.jpg','.png','.npy','.xml','.jsonl','.gif','.json','.txt')}
         (output/'manifest.json').write_text(json.dumps(manifest,indent=2))
         return exported
     finally:
