@@ -45,6 +45,10 @@ Start on contracts + unit tests against a fake action server immediately.
      AWAIT_OPERATOR reachable from every state. Wraps `src/ultron/supervisor.py`
      actions (`INSPECT, SURVEY, RETURN_BASE, RETURN_BASE_WITH_GAPS,
      AWAIT_OPERATOR`). Records base pose at start. `RunMission` action.
+     The mission never publishes velocities: it moves only via D's
+     `NavigateToView` action, and HOLD is asserted by publishing `ops/hold`
+     (twist_mux lock, upstream of the collision monitor and gate) plus
+     cancelling the active goal.
    - `memory_bridge`: SQLite via `src/ultron/memory.py` (append-only,
      map-scoped; schema change ⇒ new DB or explicit migration).
    - `coverage_reporter`: `CoverageReport` (explored/free/unknown/unreachable

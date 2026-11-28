@@ -83,8 +83,13 @@ ULTRON sim uses domain 71 localhost-only.
  2D MAP/LOC      slam_toolbox (mapping | localization) ── TF map→odom + /map
                  localization_monitor ─► localization_state (VALID/DEGRADED/LOST/STALE)   map_manager (save/load/version)
  NAVIGATION      Nav2: planner(NavFn/Smac2D) + controller(RotationShim+RPP) + costmaps(static+obstacle/STVL+keepout)
-                 └► nav/cmd_vel_raw ─► velocity_smoother ─► collision_monitor ─► motion_gate ─► cmd_vel_gated
- CONTROL         twist_mux (teleop > autonomy) ─► SIM: kinematic driver  | LIVE: b2_sport_bridge (Move/StopMove, watchdog, armed only)
+                 └► nav/cmd_vel_raw ─► velocity_smoother ─► control/in/autonomy
+ CONTROL         teleop (joy/keyboard) ─► control/in/teleop        ops/hold (lock, highest priority)
+ (one path)      twist_mux (HOLD > teleop > autonomy) ─► control/cmd_vel_muxed
+                 ─► collision_monitor (common, all sources) ─► control/cmd_vel_safe
+                 ─► motion_gate (common, all sources; sole publisher of cmd_vel) ─► cmd_vel
+                 ─► SIM: sim_driver  | LIVE: b2_sport_bridge (subscribes cmd_vel only; Move/StopMove, watchdog, armed only)
+                 Above all software: B2 handheld RC priority + physical E-stop (hardware, not bypassable by this stack)
  MISSION         mission_manager: PATROL→EXPLORE→DETECT→APPROACH→SETTLE→CAPTURE→ASSESS(hand-off)→COMMIT→RETURN_BASE, HOLD from any state
                  frontier_explorer (bounded zone) · ladder_detector → ladder_localizer (depth+TF@stamp) → ladder_tracker → memory_bridge (SQLite)
                  view_pose_planner (4-pose ring + gates) · capture_coordinator · coverage_reporter
@@ -124,9 +129,27 @@ All stack nodes use **relative** topic names and launch under a namespace:
 | localization state | `state/localization` | `ultron_b2_interfaces/LocalizationState` |
 | map | `map`, `map_metadata` | OccupancyGrid |
 | 3D map (throttled) | `viz/map_cloud` | PointCloud2 |
-| Nav2 raw → gated | `nav/cmd_vel_raw` → `nav/cmd_vel_smoothed` → `nav/cmd_vel_safe` → `cmd_vel` | Twist |
+| autonomy command | `nav/cmd_vel_raw` → (velocity_smoother) → `control/in/autonomy` | Twist |
+| teleop command | `control/in/teleop` | Twist |
+| HOLD lock | `ops/hold` | std_msgs/Bool (twist_mux lock, highest priority) |
+| muxed → safe → gated | `control/cmd_vel_muxed` → (collision_monitor) → `control/cmd_vel_safe` → (motion_gate) → `cmd_vel` | Twist |
+| active source | `control/active_source` | std_msgs/String (`hold`/`teleop`/`autonomy`/`none`) |
 | operator enable | `ops/operator_enable` | `ultron_b2_interfaces/OperatorEnable` (heartbeat) |
 | gate status | `safety/motion_gate` | `ultron_b2_interfaces/MotionGateStatus` |
+
+**Command-path invariant (all modes, all sources).** Every velocity command
+that can reach `sim_driver` or `b2_sport_bridge` passes, in this order:
+source mux → `collision_monitor` → `motion_gate` → `cmd_vel`. `motion_gate`
+is the only node allowed to publish `cmd_vel`; the bridge and sim driver
+subscribe to `cmd_vel` only. There is no teleop, recovery or test shortcut
+past the collision monitor or the gate. The gate always enforces: HOLD,
+operator-enable heartbeat, command age, non-finite rejection and velocity
+limits. For `autonomy` it also requires VALID, fresh localization for the
+loaded map. For `teleop` the localization check is controlled by
+`teleop_requires_localization`, which defaults to `true` (fail-closed);
+relaxing it is an open decision for the safety owner (see Unknowns). The B2
+handheld RC and physical E-stop sit above this software chain and are not
+replaced by it.
 | ladder candidates | `perception/ladder_detections`, `perception/ladder_candidates` | interfaces |
 | mission | `mission/status`, `mission/events` | interfaces |
 
@@ -157,7 +180,7 @@ diagnostics). Never whitelist raw `sensors/lidar/points` or raw images by defaul
 | `ultron_b2_preprocess` | ament_cmake (C++ for throughput) or Python+numpy first | self-filter crop box, range/height crop, voxel downsample, optional deskew; `pointcloud_to_laserscan` config |
 | `ultron_b2_localization` | ament_python | MOLA-LO + KISS-ICP launch/config, slam_toolbox mapping/localization configs (ported from `config/autonomy`), `localization_monitor` (port), `map_manager` (save 2D pgm/yaml/posegraph + 3D MOLA map + `map_meta.json` with hashes, `free_thresh` fix, versioning), B2-odom adapter (fallback) |
 | `ultron_b2_navigation` | ament_python | Nav2 params `{sim,real}.yaml`, keepout/zone filter masks, `collision_monitor` + `velocity_smoother` configs, `motion_gate` (port), `nav_contract_server` (`NavigateToView` action wrapping `NavigateToPose`, pre-checks, settle, CAPTURE_READY; port of `nav2_adapter.py`) |
-| `ultron_b2_control` | ament_cmake/python | `twist_mux` config (teleop > autonomy), teleop (joy/keyboard), `b2_sport_bridge` (Twist → `unitree_api/Request` Move api 1008, StopMove on timeout/disarm, rate + accel limits, armed-only, refuses unless `hardware_enable:=true` and preflight passes), `sim_driver` adapter to existing kinematic driver |
+| `ultron_b2_control` | ament_cmake/python | `twist_mux` config (HOLD lock > teleop > autonomy, output `control/cmd_vel_muxed`, upstream of the collision monitor and gate), `active_source_monitor` (publishes `control/active_source` from the same priority table; replace both with a minimal custom mux if they cannot be kept consistent), teleop (joy/keyboard → `control/in/teleop`), `b2_sport_bridge` (subscribes **only** gated `cmd_vel`; Twist → `unitree_api/Request` Move api 1008, StopMove on timeout/disarm, rate + accel limits, armed-only, refuses unless `hardware_enable:=true` and preflight passes), `sim_driver` adapter (also subscribes only `cmd_vel`) |
 | `ultron_b2_sim` | ament_python | wrapper launching `ultron.autonomy.sim_bridge` with contract remaps/namespace `/ultron/sim`, RGB-D head camera render (MuJoCo) on contract topics, scenario hooks; later `isaac/` launcher behind same contract |
 | `ultron_b2_perception` | ament_python | `ladder_detector` (backends: `oracle_sim` [labelled ORACLE], `yolo`, `owlv2` open-vocab; model weights from perception owner), `ladder_localizer` (depth + TF at image stamp, reject stale TF), `ladder_tracker` (map-scoped association, ambiguity kept), `label_capture` hooks |
 | `ultron_b2_mission` | ament_python | `mission_manager` (wraps existing `supervisor.py` actions `INSPECT/SURVEY/RETURN_BASE/RETURN_BASE_WITH_GAPS/AWAIT_OPERATOR`), `frontier_explorer` (bounded by PatrolZone; m-explore-ros2 or own), `view_pose_planner` (port `viewpoints.py`, six gates), `capture_coordinator`, `memory_bridge` (SQLite via `memory.py`, append-only), `coverage_reporter`, dashboard event publisher |
@@ -208,7 +231,7 @@ TF caveats, B2 sport API notes), `05_ladder_discovery_reid.md`, `09_plan_tests_g
 | M0 | Workspace + contracts + bag facts | `colcon build` clean in dev container; interfaces compile; `bag_inspect` report on the real bag (TF tree, frames, cloud fields, rates, gaps); unknowns table filled |
 | M1 | Sim parity in ament | `ros2 launch ultron_b2_bringup sim.launch.py mode:=mapping odom_source:=sim` reproduces Phase 3 metrics (ATE RMSE ≤ 0.10 m) using the new packages |
 | M2 | Real-data replay SLAM | replay of real bag: MOLA-LO odometry + slam_toolbox map produced; map saved/reloaded; LocalizationState sane; resource use measured on dev PC (and Orin if available). No ground truth → report qualitative + loop-consistency metrics only |
-| M3 | Nav + safety in sim | Nav2 N1/N2 cases re-pass with new packages + collision_monitor + twist_mux; `b2_sport_bridge` tested against a mock `/api/sport/request` subscriber: disarmed = no messages, timeout → StopMove, limits enforced |
+| M3 | Nav + safety in sim | Nav2 N1/N2 cases re-pass with new packages through the single chain (mux → collision_monitor → motion_gate → `cmd_vel`); teleop commands are also stopped by the collision monitor and zeroed by a closed gate; graph check shows `motion_gate` is the only `cmd_vel` publisher; `b2_sport_bridge` tested against a mock `/api/sport/request` subscriber: disarmed = no messages, timeout → StopMove, limits enforced |
 | M4 | Autonomous search in sim (**cut-line A: must have**) | `mode:=mission`: bounded explore → ladder detection (oracle labelled + real detector if available) → view pose → settle → capture → resume → return base; coverage report with gaps; HOLD/operator inhibit from every state |
 | M5 | Edge deployment + viz (**cut-line B**) | Orin container runs replay mode; Foxglove shows map/pose/plan/ladders at whitelisted rates; laptop RViz via domain_bridge; bandwidth measured |
 | M6 | Full-system sim acceptance record | `docs/b2_ros_stack/VALIDATION.md` (M6 section) per SIM_TO_HARDWARE.md; reviewer sign-off. **Only then** propose a bounded, separately authorized hardware plan (read-only sensors first, then supervised motion with RC priority, watchdog, E-stop) |
@@ -245,8 +268,9 @@ Each agent: branch off `om/b2-ros-stack` as `om/b2-ros-stack-<letter>`; follow t
 ### D — Navigation, safety chain and B2 control (depends A, C-sim)
 - Port Nav2 params to `{sim,real}.yaml`; footprint from measured B2 (sim 0.55 m circle until measured); costmaps: static + obstacle (scan) + optional STVL from filtered cloud; keepout/zone mask from PatrolZone; `velocity_smoother`, `collision_monitor`.
 - Port `motion_gate` and `nav_contract_server` (`NavigateToView` action, pre-checks, settle, late-result rejection, timeout, cancel).
-- `ultron_b2_control`: `twist_mux`, teleop, `b2_sport_bridge` (Move/StopMove via pinned `unitree_ros2` msgs, watchdog, armed-only, limits PROPOSED), `sim_driver` adapter; mock sport subscriber for tests.
-- Accept: N1/N2 cases re-pass through the full chain in sim; bridge tests (disarmed silence, timeout StopMove ≤ PROPOSED 0.3 s, limit clamp, non-finite reject, domain/namespace refusal).
+- Single command path for every source: `twist_mux` (HOLD > teleop > autonomy) → common `collision_monitor` → common `motion_gate` → `cmd_vel` → sim driver or bridge. No source bypasses the monitor or gate.
+- `ultron_b2_control`: `twist_mux`, `active_source_monitor`, teleop, `b2_sport_bridge` (Move/StopMove via pinned `unitree_ros2` msgs, watchdog, armed-only, limits PROPOSED), `sim_driver` adapter; mock sport subscriber for tests.
+- Accept: N1/N2 cases re-pass through the full chain in sim; teleop-path tests (teleop toward obstacle stopped by collision monitor; teleop with gate closed ⇒ zero `cmd_vel`); `motion_gate` is the sole `cmd_vel` publisher; bridge tests (disarmed silence, timeout StopMove ≤ PROPOSED 0.3 s, limit clamp, non-finite reject, domain/namespace refusal).
 
 ### E — Mission, exploration and ladder search (depends A, D-sim; perception weights optional)
 - `frontier_explorer` bounded by PatrolZone, gaps reported (unknown/unreachable separate); fallback: configured survey route.
@@ -277,6 +301,7 @@ A → (B, C, D, E, F start on stubs immediately); B → C(real); C(sim) → D; D
 | Camera extrinsics/intrinsics (D457 head) | B/E | camera_info from bag; extrinsics TO_VERIFY |
 | Ladder detector weights | Om (perception) | oracle_sim in sim only, labelled |
 | MOLA GPLv3 acceptability for team distribution | user | KISS-ICP |
+| Whether teleop may move without VALID localization (`teleop_requires_localization`) | safety owner (+ operator) | keep `true` (fail-closed); teleop still passes collision monitor + gate either way |
 
 ## 9. Notes
 - Preserve existing tests/behaviour; port code by importing `ultron.*` modules where possible rather than duplicating.

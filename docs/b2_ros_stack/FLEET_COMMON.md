@@ -47,6 +47,11 @@ Every fleet agent reads this file, then [PLAN.md](PLAN.md), then its own brief
 - No agent connects to the real B2, Orin, robot network or any hardware.
   No agent launches `live` mode against a real robot. Live code is written and
   tested against mocks/replay only.
+- Command-path invariant (PLAN.md §topic contract): every velocity source
+  (Nav2, teleop, mission, tests) enters `twist_mux`, then the common
+  `collision_monitor`, then the common `motion_gate`; only `motion_gate`
+  publishes `cmd_vel`, and the sim driver / B2 bridge subscribe to nothing
+  else. No agent adds a shortcut past the monitor or gate.
 - Real-motion prerequisites (outside any agent's authority): verified RC
   priority, independent watchdog, functional E-stop, measured environment,
   named operator, full-system sim acceptance record (M6) plus a separate,
