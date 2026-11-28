@@ -49,7 +49,7 @@ def artifacts():
 
 
 class MockWorld(Node):
-    def __init__(self):
+    def __init__(self, asset_ids):
         super().__init__('mock_world_e2e')
         from geometry_msgs.msg import Twist  # noqa: F401
         from nav_msgs.msg import OccupancyGrid
@@ -57,7 +57,7 @@ class MockWorld(Node):
         from std_msgs.msg import Bool
         from ultron_b2_interfaces.action import NavigateToView, RunMission
         from ultron_b2_interfaces.msg import (LadderCandidate, LadderCandidateArray, LocalizationState,
-                                              MissionStatus, OperatorEnable)
+                                              MissionEvent, MissionStatus, OperatorEnable)
         self.msgs = dict(OccupancyGrid=OccupancyGrid, Image=Image, LocalizationState=LocalizationState,
                          OperatorEnable=OperatorEnable, LadderCandidate=LadderCandidate,
                          LadderCandidateArray=LadderCandidateArray, NavigateToView=NavigateToView)
@@ -66,8 +66,10 @@ class MockWorld(Node):
         cb = ReentrantCallbackGroup()
         self.lock = threading.Lock()
         self.robot = [1.0, 1.0, 0.0]
+        self.asset_ids = asset_ids
         self.operator_enabled = True
         self.goals, self.cancels, self.holds, self.states = [], [], [], []
+        self.events = []
         self.map_pub = self.create_publisher(OccupancyGrid, 'map', latched)
         self.loc_pub = self.create_publisher(LocalizationState, 'state/localization', 10)
         self.op_pub = self.create_publisher(OperatorEnable, 'ops/operator_enable', 10)
@@ -76,6 +78,7 @@ class MockWorld(Node):
         self.depth_pub = self.create_publisher(Image, 'sensors/cam_head/depth/image_rect_raw', 10)
         self.create_subscription(Bool, 'ops/hold', lambda m: self.holds.append((time.monotonic(), m.data)), 10)
         self.create_subscription(MissionStatus, 'mission/status', lambda m: self.states.append(m.state), 10)
+        self.create_subscription(MissionEvent, 'mission/events', self.events.append, 50)
         self.nav = ActionServer(self, NavigateToView, 'nav/navigate_to_view', execute_callback=self._nav_exec,
                                 goal_callback=self._nav_goal,
                                 cancel_callback=lambda g: CancelResponse.ACCEPT, callback_group=cb)
@@ -108,7 +111,8 @@ class MockWorld(Node):
         arr.header.frame_id = 'map'
         for cid, (x, y, t) in {'LAD-901': (5.0, 4.0, 'TRESTLE'),
                                'LAD-902': (7.5, 2.5, 'LAYHER_A_FRAME_STEPLADDER')}.items():
-            c = C(schema_version=C.SCHEMA_VERSION, candidate_id=cid, asset_id='', map_id='hall', map_version=1,
+            c = C(schema_version=C.SCHEMA_VERSION, candidate_id=cid, asset_id=self.asset_ids[cid],
+                  map_id='hall', map_version=1,
                   ladder_type=t, association_state='NEW', from_oracle=True)
             c.position.x, c.position.y = x, y
             arr.candidates.append(c)
@@ -180,15 +184,22 @@ def _stop(proc):
 
 def test_mission_end_to_end_against_mock_nav_server(artifacts):
     from ultron_b2_interfaces.action import RunMission
+    from ultron_b2_perception.registry_store import open_registry
     zone = artifacts / 'zone.yaml'
     zone.write_text('zone_id: TEST\nframe: map\nboundary: [[0,0],[10,0],[10,8],[0,8]]\nbase_pose: [1.0, 1.0, 0.0]\n')
+    registry = open_registry(artifacts / 'registry.sqlite')
+    asset_ids = {
+        'LAD-901': registry.associate((5.0, 4.0, 0.0), 'TRESTLE', 'hall@1')[0],
+        'LAD-902': registry.associate((7.5, 2.5, 0.0), 'LAYHER_A_FRAME_STEPLADDER', 'hall@1')[0],
+    }
+    registry.close()
     env = dict(os.environ)
     mission = _spawn('ultron_b2_mission.mission_manager', {
         'zone_file': str(zone), 'memory_db': str(artifacts / 'registry.sqlite'), 'run_dir': str(artifacts / 'runs'),
         'detect_dwell_s': 0.2, 'settle_dwell_s': 0.2, 'hold_timeout_s': 60.0}, env)
     capture = _spawn('ultron_b2_mission.capture_coordinator', {'evidence_dir': str(artifacts / 'evidence')}, env)
     rclpy.init()
-    world = MockWorld()
+    world = MockWorld(asset_ids)
     ex = MultiThreadedExecutor(num_threads=4)
     ex.add_node(world)
     spin = threading.Thread(target=ex.spin, daemon=True)
@@ -237,6 +248,7 @@ def test_mission_end_to_end_against_mock_nav_server(artifacts):
         assert world.goals[-1]['reason'].startswith('RETURN_BASE')
         assert all(g['map_id'] == 'hall' and g['map_version'] == 1 and g['frame'] == 'map' for g in world.goals)
         assert res.coverage.zone_area_m2 > 0 and res.coverage.observed_area_m2 > 0
+        assert world.events and all(e.header.stamp.sec > 0 for e in world.events)
 
         evidence = list((artifacts / 'evidence').rglob('*.npy'))
         assert len(evidence) >= 4 * 2  # 2 ladders x 2 views x (color, depth)
@@ -249,8 +261,7 @@ def test_mission_end_to_end_against_mock_nav_server(artifacts):
         rows = db.execute('SELECT payload FROM inspections').fetchall()
         assert db.execute('SELECT count(*) FROM missions').fetchone()[0] == 1
         db.close()
-        # Mock candidates carry no registry asset ids, so captures are logged as events, not registry rows.
-        assert rows == [] or all(json.loads(r[0])['verdict'] == 'PENDING_ASSESSMENT' for r in rows)
+        assert len(rows) == 2 and all(json.loads(r[0])['verdict'] == 'PENDING_ASSESSMENT' for r in rows)
         commits = [e for e in events if e['type'] == 'CAPTURE_COMMITTED']
         assert all(e['verdict'] == 'PENDING_ASSESSMENT' and e['human_review_required'] for e in commits)
         assert all(e['detection_source'] == 'ORACLE' for e in commits)

@@ -14,8 +14,10 @@ from ultron_b2_perception.registry_store import open_registry
 
 
 class MemoryBridge:
+    """MissionManager serializes all access with its node lock across ROS executor threads."""
+
     def __init__(self, db_path='', run_dir='', clock=time.time):
-        self.registry = open_registry(db_path) if db_path else None
+        self.registry = open_registry(db_path, check_same_thread=False) if db_path else None
         self.run_dir = pathlib.Path(run_dir) if run_dir else None
         if self.run_dir:
             self.run_dir.mkdir(parents=True, exist_ok=True)

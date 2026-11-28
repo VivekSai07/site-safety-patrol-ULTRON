@@ -45,8 +45,9 @@ def main(argv=None):
     from action_msgs.msg import GoalStatus
     from geometry_msgs.msg import Point32, Polygon, PoseArray, PoseStamped
     from nav_msgs.msg import OccupancyGrid
-    from std_msgs.msg import Bool
+    from std_msgs.msg import Bool, Header
     from std_srvs.srv import SetBool, Trigger
+    from ultron_b2_contracts import float_to_time
     from ultron_b2_interfaces.action import CaptureViews, NavigateToView, RunMission
     from ultron_b2_interfaces.msg import (CoverageReport, LadderCandidateArray, LocalizationState, MissionEvent,
                                           MissionStatus, OperatorEnable)
@@ -395,6 +396,7 @@ def main(argv=None):
                 self.event_seq += 1
                 self.event_pub.publish(MissionEvent(
                     schema_version='ultron.mission_event/v1', mission_id=core.mission_id,
+                    header=Header(stamp=float_to_time(ev['time'])),
                     event_id=f'{core.mission_id}-E{self.event_seq:05}', event_type=ev['event_type'],
                     from_state=ev['from_state'], to_state=ev['to_state'], reason=ev['reason'],
                     asset_id=ev['asset_id'] or '', goal_id=ev['goal_id'] or '',

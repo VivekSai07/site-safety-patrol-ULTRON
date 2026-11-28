@@ -10,8 +10,8 @@ def now():
 
 
 class Registry:
-    def __init__(self, path):
-        self.db = sqlite3.connect(str(path))
+    def __init__(self, path, *, check_same_thread=True):
+        self.db = sqlite3.connect(str(path), check_same_thread=check_same_thread)
         self.db.row_factory = sqlite3.Row
         self.db.executescript("""
         PRAGMA journal_mode=WAL;

@@ -19,7 +19,7 @@ def map_key(map_id, map_version):
     return f'{map_id}@{int(map_version)}'
 
 
-def open_registry(path):
+def open_registry(path, *, check_same_thread=True):
     if not path:
         return None
     if not ensure_ultron_importable():
@@ -27,7 +27,7 @@ def open_registry(path):
     from ultron.memory import Registry  # noqa: PLC0415
     path = os.path.expanduser(str(path))
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    return Registry(path)
+    return Registry(path, check_same_thread=check_same_thread)
 
 
 def load_priors(registry, key):
