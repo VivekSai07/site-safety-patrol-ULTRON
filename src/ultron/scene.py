@@ -102,14 +102,21 @@ def make_scene(ladders,clear_clutter=False,safety_assets=None):
             box(body, f"{key}_post", [0, 0, 1.1], [.03, .03, 1.1], ".45 .47 .5 1")
             box(body, f"{key}_plate", [0, 0, 2.3], [.22, .012, .11], ".06 .55 .25 1")
         elif kind == 'person':
-            box(body, f"{key}_legs", [0, 0, .45], [.14, .1, .45], ".2 .22 .3 1")
-            vest_color = ".95 .5 .05 1" if asset.get('vest') else ".4 .42 .5 1"
-            box(body, f"{key}_torso", [0, 0, 1.2], [.2, .12, .3], vest_color)
+            # Vest must contrast with the arms to read as a vest: blue workwear arms,
+            # hi-vis orange torso only when vest=True.
+            shirt = ".25 .35 .6 1"
+            torso = ".95 .5 .05 1" if asset.get('vest') else shirt
+            for side, tag in ((-1, 'leg_l'), (1, 'leg_r')):
+                box(body, f"{key}_{tag}", [side * .08, 0, .42], [.055, .07, .42], ".2 .22 .3 1")
+            box(body, f"{key}_torso", [0, 0, 1.14], [.17, .1, .3], torso)
+            for side, tag in ((-1, 'arm_l'), (1, 'arm_r')):
+                ET.SubElement(body, "geom", name=f"{key}_{tag}", type="capsule",
+                              fromto=f"{side * .2} 0 1.38 {side * .3} 0 .92", size=".045", rgba=shirt)
             ET.SubElement(body, "geom", name=f"{key}_head", type="sphere",
-                          pos="0 0 1.66", size=".11", rgba=".87 .72 .6 1")
+                          pos="0 0 1.56", size=".1", rgba=".87 .72 .6 1")
             if asset.get('helmet'):
                 ET.SubElement(body, "geom", name=f"{key}_helmet", type="sphere",
-                              pos="0 0 1.74", size=".115", rgba=".95 .8 .05 1")
+                              pos="0 0 1.63", size=".105", rgba=".95 .8 .05 1")
     for ladder in ladders:
         body=world.find("body[@name='"+ladder['key']+"']")
         width=ladder.get('width_factor',1.);height=ladder.get('height_factor',1.)
