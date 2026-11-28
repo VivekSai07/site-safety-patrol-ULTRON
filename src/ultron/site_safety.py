@@ -10,6 +10,19 @@ KINDS = ('extinguisher', 'firstaid', 'escape_sign', 'person')
 # Distinctive geom suffix per kind; the oracle keys off "<key>_<suffix>".
 PRIMARY_GEOM = {'extinguisher': 'tank', 'firstaid': 'box', 'escape_sign': 'plate', 'person': 'head'}
 
+# Criteria each station kind can supply evidence for (keys from assets/site_safety_v1/rubric.json).
+KIND_CRITERIA = {
+    'extinguisher': ('ext.vorhanden', 'ext.zugaenglich', 'ext.pruefplakette'),
+    'firstaid': ('firstaid.aushang', 'firstaid.kasten'),
+    'escape_sign': ('flucht.kennzeichnung', 'flucht.frei'),
+    'person': ('psa.helm', 'psa.warnweste'),
+}
+# Open-vocabulary detector classes and the class that confirms each station kind.
+YOLO_CLASS_FOR_KIND = {'extinguisher': 'fire extinguisher', 'firstaid': 'first aid kit',
+                       'escape_sign': 'exit sign', 'person': 'person'}
+SAFETY_CLASSES = ['fire extinguisher', 'first aid kit', 'exit sign', 'person',
+                  'safety helmet', 'high visibility vest']
+
 
 def sweep_manifest(mission_id, views, inspection_date, position, map_version='ultron_mock_site_v1'):
     """One site-visit evidence bundle; same_asset_confirmed means same confirmed site visit."""
