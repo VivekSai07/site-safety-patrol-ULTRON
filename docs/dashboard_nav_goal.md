@@ -48,7 +48,7 @@ curl -X POST http://127.0.0.1:8000/api/missions -H 'Content-Type: application/js
 | `action_name` | `navigate_to_pose` | nav2 action |
 | `pose_rate_hz` / `map_min_period_s` | `5` / `2` | Upload rates |
 | `nav_wait_s` / `nav_accept_timeout_s` | `3` / `5` | A goal fails with `navigation not available` instead of hanging: no Nav2 found in 3 s, or no answer in 5 s |
-| `explore_command` | `ros2 launch explore_lite explore.launch.py use_sim_time:=false` | Started on Start exploration, stopped on Finish. **Reads the unfenced `/map`**; see docs/EXPLORATION_CONTRACT.md for one that reads `/map_fenced` |
+| `explore_command` | `ros2 run explore_lite explore --ros-args -p use_sim_time:=false -p costmap_topic:=/map_fenced -p costmap_updates_topic:=/map_fenced_updates -p return_to_init:=false` | Started on Start exploration, stopped on Finish. Reads the fenced map `/map_fenced`, so no frontier beyond the fence (windows) |
 | `explore_resume_topic` / `explore_status_topic` | `explore/resume` / `explore/status` | explore_lite's topics |
 | `fenced_map_topic` / `keepout_mask_topic` / `obstacles_topic` | `/map_fenced` / `/keepout_mask` / `/ultron/object_obstacles` | Fence and object obstacles out to ROS |
 

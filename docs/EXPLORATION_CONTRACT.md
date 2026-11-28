@@ -122,12 +122,11 @@ followed exactly:
   bridge warns and publishes the map unfenced. `scripts/dashboard.sh live` passes `EXPLORE_COMMAND` from the
   environment to the bridge. With no fence, `/map_fenced` is the map unchanged and
   `/keepout_mask` all 0, so an explorer reading `/map_fenced` still works.
-- **The explorer must be pointed at `/map_fenced`; the default command does not do it.** The bridge's
-  `explore_command` defaults to `ros2 launch explore_lite explore.launch.py use_sim_time:=false`, whose
-  package `params.yaml` sets `costmap_topic: map`: that explorer reads the **unfenced** map. Use a params
-  file, or e.g.
+- **The explorer reads `/map_fenced`.** The bridge's default `explore_command` is
   `ros2 run explore_lite explore --ros-args -p use_sim_time:=false -p costmap_topic:=/map_fenced -p costmap_updates_topic:=/map_fenced_updates -p return_to_init:=false`
-  (`costmap_updates_topic` set to an unused topic, so no partial update of the raw map lands on the fenced one).
+  (`costmap_updates_topic` set to an unused topic, so no partial update of the raw map lands on the
+  fenced one). The package's own launch file would read the unfenced `map` (its `params.yaml`); a
+  team params file must keep `costmap_topic: /map_fenced`.
 - **explore_lite facts the bridge relies on** (read from robo-friends/m-explore-ros2 `main` on 2026-11-28
   through a summarising web fetch, not a line-by-line read; still assumed: the status publisher's
   reliability and depth, `wait_for_action_server()`'s default timeout, whether slam_toolbox publishes

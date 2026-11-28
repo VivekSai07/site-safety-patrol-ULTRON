@@ -453,6 +453,9 @@ class OnlinePatrol:
         now, state = self.clock(), self._exploration_state()
         current = state.get("state") if state else None
         if self.pause:
+            if state is not None and state.get("by") == "operator":
+                self._pause_taken()  # the operator took the pause over: it is theirs to resume
+                return
             if state is not None and current not in ("PAUSING", "PAUSED") and now - self.pause["since"] > 3.0:
                 self.store.emit("exploration_pause_ended", reason=f"exploration is {current}", objects=sorted(self.pause["objects"]))
                 self.pause = None  # resumed or finished elsewhere (operator, lease run out)
@@ -465,7 +468,9 @@ class OnlinePatrol:
             elif now - self.pause["renewed"] >= self.exploration.lease_s / 3:
                 self.pause["renewed"] = now
                 ok, text = self.exploration.renew()
-                if not ok:
+                if not ok and "operator" in text:
+                    self._pause_taken()
+                elif not ok:
                     self.store.emit("error", stage="exploration renew", message=text)
             return
         if current != "EXPLORING" or not self.focus or self.focus in self.paused_for or now < self._pause_retry:
@@ -487,8 +492,14 @@ class OnlinePatrol:
         self._explore_checked = -math.inf  # look again at once: PAUSING -> PAUSED
         self.store.emit("exploration_paused", objects=sorted(batch))
 
+    def _pause_taken(self):
+        self.store.emit("exploration_pause_taken", by="operator", objects=sorted(self.pause["objects"]))
+        self.pause = None
+
     def _end_pause(self, reason):
         ok, text = self.exploration.resume()
+        if not ok and "operator" in text:
+            return self._pause_taken()  # not ours to resume any more
         self.store.emit("exploration_resumed", reason=reason, objects=sorted(self.pause["objects"]),
                         ok=ok, detail=text)
         self.pause = None

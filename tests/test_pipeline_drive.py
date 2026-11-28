@@ -182,6 +182,20 @@ class DriveTest(Workspace):
             online.run(frames())
         self.assertEqual(dashboard.actions, ["pause", "resume"])
 
+    def test_an_operator_who_takes_the_pause_over_is_left_with_it(self):
+        dashboard = FakeDashboard(exploring=True, arrive=False)
+        online = self.online(dashboard, exploration=True)
+        for stamp in range(3):
+            self.step(online, stamp=float(stamp))
+            self.now[0] += 1.0
+        self.assertEqual(dashboard.actions, ["pause"])
+        dashboard.exploration["by"] = "operator"   # the operator pressed Pause, or set a goal, during our pause
+        self.now[0] += 2.0
+        self.step(online, stamp=3.0)
+        online.finish()
+        self.assertNotIn("resume", dashboard.actions)  # not ours to resume
+        self.assertIn("exploration_pause_taken", self.kinds())
+
     def test_the_pause_has_a_cap(self):
         dashboard = FakeDashboard(exploring=True, arrive=False)  # views never come in
         online = self.online(dashboard, exploration=True, pause_cap=10.0)

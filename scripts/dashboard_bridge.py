@@ -85,7 +85,8 @@ class DashboardBridge(Node):
             ('nav_wait_s', 3.0), ('nav_accept_timeout_s', 5.0),
             # explore_lite's own launch file reads its package params (costmap_topic: map, i.e. unfenced);
             # point it at /map_fenced with a params file or `ros2 run` (docs/dashboard_nav_goal.md)
-            ('explore_command', 'ros2 launch explore_lite explore.launch.py use_sim_time:=false'),
+            # Reads the fenced map: the raw SLAM map is free beyond the windows, and its frontiers lie there.
+            ('explore_command', 'ros2 run explore_lite explore --ros-args -p use_sim_time:=false -p costmap_topic:=/map_fenced -p costmap_updates_topic:=/map_fenced_updates -p return_to_init:=false'),
             ('explore_resume_topic', 'explore/resume'), ('explore_status_topic', 'explore/status'),
             ('explore_ready_wait_s', 30.0),
             ('fenced_map_topic', '/map_fenced'), ('keepout_mask_topic', '/keepout_mask'),
