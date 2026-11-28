@@ -81,9 +81,23 @@ def object_folder(args):
 
 def build_survey(args, store, vlm):
     folder = object_folder(args)
-    return Survey(build_detector(args, vlm), ObjectMap(folder), KeyframeStore(folder), store,
-                  load_calibration(args), args.interval, args.min_sharpness,
-                  verifier=Verifier(vlm) if vlm and not args.no_verify else None, map_id=map_id(args))
+    survey = Survey(build_detector(args, vlm), ObjectMap(folder), KeyframeStore(folder), store,
+                    load_calibration(args), args.interval, args.min_sharpness,
+                    verifier=Verifier(vlm) if vlm and not args.no_verify else None, map_id=map_id(args))
+    survey.fence = load_fence(args)
+    if survey.fence:
+        survey.inside = survey.fence.contains  # objects beyond the fence are reflections or behind glass
+        store.emit("fence", polygon=survey.fence.polygon)
+    return survey
+
+
+def build_gate(args, survey, navigator, saved_map=None):
+    """Where goals may go: inside the fence, known free and reachable in the dashboard's map (or
+    free in the saved map), clear of known objects. Also filters the focus guidance without a navigator."""
+    moving = navigator is not None and getattr(navigator, "moves", False)
+    return Gate(survey.fence, DashboardMap(args.dashboard) if args.dashboard and not saved_map else None,
+                survey.objects, clearance=getattr(args, "clearance", 0.45), also=saved_map,
+                require_map=moving and not getattr(args, "no_map_check", False))
 
 
 def print_events(store, quiet=()):
@@ -134,6 +148,7 @@ def command_inspect(args):
     store, mission, vlm = Store(args.data), args.mission or "PATROL-" + uuid.uuid4().hex[:6], build_vlm(args)
     survey = build_survey(args, store, vlm)
     navigator, is_free = build_navigator(args, mission)
+    is_free = build_gate(args, survey, navigator, is_free)
     frames = iter(open_source(args.camera)) if args.camera else None
     publisher = connect_dashboard(store, args, mission)
     print_events(store)
@@ -165,6 +180,7 @@ def command_patrol(args):
         print("Survey stopped by Ctrl-C: inspecting what was found. Ctrl-C again aborts.", flush=True)
     store.emit("stage", name="inspection", objects=len(survey.objects.all()))
     navigator, is_free = build_navigator(args, mission)
+    is_free = build_gate(args, survey, navigator, is_free)
     Inspection(survey.objects, survey.keyframes, vlm, store, survey, navigator,
                camera=(lambda: next(frames)) if navigator.moves else None, is_free=is_free, mission=mission).run()
     if publisher:
@@ -218,13 +234,8 @@ def command_online(args):
     print_events(store, quiet={"look"} if args.navigator == "operator" else ())
     # operator: a person drives by teleop, follows the `focus` events and types n when done with one
     navigator, saved_map = (None, None) if args.navigator == "operator" else build_navigator(args, mission)
-    fence = load_fence(args)
-    if fence:
-        survey.inside = fence.contains  # objects beyond the fence are reflections or behind glass
-        store.emit("fence", polygon=fence.polygon)
     dashboard = http_json(args.dashboard, timeout=2) if args.dashboard else None
-    gate = Gate(fence, DashboardMap(args.dashboard) if args.dashboard and not saved_map else None, survey.objects,
-                clearance=args.clearance, also=saved_map, require_map=navigator is not None and not args.no_map_check)
+    gate = build_gate(args, survey, navigator, saved_map)
     exploration = Exploration(dashboard) if dashboard and args.navigator == "dashboard" else None
     obstacles = (lambda cells: dashboard("PUT", "/api/obstacles", {"frame_id": "map", "cell": 0.1, "cells": cells})) \
         if dashboard else None
@@ -299,6 +310,8 @@ def main(argv=None):
     common.add_argument("--language", default="German")
     common.add_argument("--replay", help="recorded model answers instead of a model")
     common.add_argument("--no-cache", action="store_true")
+    common.add_argument("--fence", help="room polygon JSON {frame_id, polygon: [[x, y], ...]} in the map frame "
+                                        "(default: the dashboard's): no goal or object outside it")
     common.add_argument("--no-verify", action="store_true", help="survey without the vision model's second opinion")
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -312,6 +325,7 @@ def main(argv=None):
                         help="how missing views are reached: not at all, a person drives, goals through "
                              "the dashboard bridge, or the ultron.autonomy navigation contract")
     moving.add_argument("--clearance", type=float, default=0.45, help="free radius a goal needs, metres")
+    moving.add_argument("--no-map-check", action="store_true", help="send goals even before the dashboard has a map")
 
     inspect = commands.add_parser("inspect", parents=[common, moving], help="stage 2: fill each object's form")
     inspect.add_argument("--camera", help="live frame source for views taken during inspection")
@@ -333,10 +347,8 @@ def main(argv=None):
     live.add_argument("--max-reads", type=int, default=1,
                       help="reads per object: 2 reads it again when the robot comes back with views it lacked "
                            "(the dashboard keeps the first ladder verdict of a mission)")
-    live.add_argument("--fence", help="room polygon JSON {frame_id, polygon: [[x, y], ...]} (default: the dashboard's)")
     live.add_argument("--stall-seconds", type=float, default=20.0, help="an object whose views stop growing this long is read")
     live.add_argument("--pause-cap", type=float, default=90.0, help="longest pause of the explorer for one batch of objects (s)")
-    live.add_argument("--no-map-check", action="store_true", help="send goals even before the dashboard has a map")
     live.add_argument("--realtime", action="store_true", help="replay a recording at the pace it was recorded")
     live.add_argument("--candidates", choices=["none", "lidar"], default="none",
                       help="where things worth a look come from besides the detector")
