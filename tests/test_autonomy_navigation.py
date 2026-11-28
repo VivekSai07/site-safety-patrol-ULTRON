@@ -136,6 +136,17 @@ class NavigationContractTest(unittest.TestCase):
         self.assertTrue(tracker.settle(20.31 + settle * 1.5, 0.0, 0.0, True, (1.5, 1.5, 0)))
         self.assertTrue(result.capture_ready and result.stop_acknowledged)
 
+    def test_unconfirmed_backend_success_is_failed_not_reached(self):
+        for pose, expected in ((None, 'FAILED'), ((5.0, 5.0, 0.0), 'FAILED'), ((1.6, 1.5, 0.0), 'REACHED')):
+            tracker = GoalTracker(self.params)
+            goal = self.goal()
+            tracker.submit(goal, True, 'OK', 10.0)
+            tracker.on_backend_status(goal.goal_id, 4, 20.0)
+            result = tracker.settle_expired(30.0, pose, 10.0)
+            self.assertEqual(result.status, expected, pose)
+            self.assertFalse(result.capture_ready)
+            self.assertIn('NOT_SETTLED', result.reason)
+
     def test_motion_gate_defaults_to_inhibit(self):
         gate = MotionGate(self.params, *MAP)
         cmd = (0.3, 0.1)

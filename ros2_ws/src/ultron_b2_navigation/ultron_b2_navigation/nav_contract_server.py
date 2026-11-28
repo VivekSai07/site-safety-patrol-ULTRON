@@ -5,6 +5,8 @@ level and then answered with a contract status in the result:
 
   REACHED   -> succeed()   (``settled`` = CAPTURE_READY: still for settle_time_s with VALID localization
                             inside the goal tolerances; false if not settled within settle_timeout_s)
+  FAILED    <- a Nav2 success not confirmed by a VALID localized pose within goal tolerance + 0.3 m after
+               settle_timeout_s (BACKEND_REACHED_OUT_OF_TOLERANCE; guards Humble's false "Reached the goal")
   CANCELLED -> canceled() when the client requested it, else abort()
   REJECTED / TIMEOUT / FAILED -> abort()
 
@@ -302,11 +304,10 @@ class NavContractServer(Node):
                 if tracker.settle(now, self.speed, self.yaw_rate, within, pose or [math.nan] * 3):
                     return self._finish(handle, tracker.result)
                 if now - reached_at > self.p['settle_timeout_s']:
-                    r = tracker.result
-                    err = 'no VALID pose' if pose is None else \
-                        f'pose error {math.hypot(pose[0] - goal.x, pose[1] - goal.y):.3f} m'
-                    r.reason = f'NOT_SETTLED within {self.p["settle_timeout_s"]} s ({err})'
-                    r.last_valid_pose = pose
+                    with self.lock:
+                        r = tracker.settle_expired(now, pose, self.p['settle_timeout_s'])
+                    if r.status == 'FAILED':
+                        r.stop_acknowledged = self._wait_still()
                     return self._finish(handle, r)
             elif status in TERMINAL:
                 r = tracker.result

@@ -12,6 +12,9 @@ import numpy as np
 
 from .localization_state import LocalizationState, accept_pose, wrap
 
+# PROPOSED: slack beyond the goal tolerance before an unconfirmed backend success counts as a false arrival.
+FALSE_ARRIVAL_MARGIN_M = 0.3
+
 GOAL_SCHEMA = 'ultron.navigation_goal/v1'
 RESULT_SCHEMA = 'ultron.navigation_result/v1'
 STATUSES = ('ACCEPTED', 'ACTIVE', 'REACHED', 'REJECTED', 'CANCELLED', 'TIMEOUT', 'FAILED')
@@ -220,6 +223,24 @@ class GoalTracker:
             self.result.last_valid_pose = list(pose)
             self._event(now, 'REACHED', 'CAPTURE_READY: settled and localization VALID')
         return self.result.capture_ready
+
+    def settle_expired(self, now, pose, timeout_s, margin_m=FALSE_ARRIVAL_MARGIN_M):
+        """Settle window ran out after REACHED. A backend success the localized pose does not confirm (no VALID
+        pose, or farther than the goal tolerance + margin) is FAILED, never REACHED: Nav2 Humble's controller
+        reports "Reached the goal" when the end-pose transform fails (seen with a stale map->odom)."""
+        if self.status != 'REACHED' or self.result is None:
+            return self.result
+        if pose is None:
+            err, confirmed = 'no VALID pose', False
+        else:
+            d = math.hypot(pose[0] - self.goal.x, pose[1] - self.goal.y)
+            err, confirmed = f'pose error {d:.3f} m', d <= self.goal.xy_tolerance_m + margin_m
+        why = f'NOT_SETTLED within {timeout_s} s ({err})'
+        if confirmed:
+            self.result.reason = why
+            self.result.last_valid_pose = list(pose)
+            return self.result
+        return self._finish('FAILED', f'BACKEND_REACHED_OUT_OF_TOLERANCE: {why}', now, pose)
 
 
 @dataclass

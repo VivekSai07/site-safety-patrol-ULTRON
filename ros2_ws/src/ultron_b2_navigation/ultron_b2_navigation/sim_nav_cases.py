@@ -327,8 +327,8 @@ class Runner:
 
     def _to_open_spot(self):
         r = self.run_goal(self.goal_msg((2.5, 5.5), 0.0))
-        if r.status != 'REACHED':
-            raise RuntimeError(f'setup goal failed: {r.status} {r.reason}')
+        if r.status != 'REACHED' or not r.settled:
+            raise RuntimeError(f'setup goal failed: {r.status} {r.reason} (settled={r.settled})')
         self.spin(1.0)
 
     def teleop_hold(self):
