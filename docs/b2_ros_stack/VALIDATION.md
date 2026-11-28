@@ -420,7 +420,11 @@ _Not assembled. Reviewer decision: pending (human)._
   localization when the clock stops, and measured queue-overflow drops fell to zero. One
   startup scan lacked TF; MOLA worker-busy drops, looping, and LOST/DEGRADED states remain
   unresolved. See `docs/b2_ros_stack/REPLAY_ACCEPTANCE.md` for evidence. The merged launch,
-  localization and mission package tests pass, but replay has not been rerun after the merge.
+  localization and mission package tests pass. A 0.7x post-merge real-bag replay observed
+  364 scans and 364 odometry messages, saved a map, and ended STALE when playback stopped;
+  273 VALID and 82 DEGRADED monitor messages were observed. One initial scan was earlier
+  than the available TF cache. These are replay observations, not accuracy or hardware evidence;
+  local artifacts are in `ros2_ws/runs/replay_integrated_bac1bf7/`.
 - Complete integration, repeat end-to-end acceptance and investigate the above failures before
   considering M6. Simulation uses kinematic motion and ORACLE detections; neither establishes
   physical walking, real perception, or hardware readiness. Real motion remains NO-GO without
