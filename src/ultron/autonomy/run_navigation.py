@@ -142,6 +142,10 @@ class Runner:
     # --- cases -------------------------------------------------------------------------
     def case(self, name, fn):
         print(f'nav case {name} ...', flush=True)
+        try:
+            self.wait_for_valid()   # a case must not inherit localization loss from the previous one
+        except RuntimeError as exc:
+            print(f'  starting without VALID localization: {exc}', flush=True)
         t0 = self.now()
         try:
             record = fn()

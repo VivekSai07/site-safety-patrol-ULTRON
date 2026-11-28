@@ -16,6 +16,7 @@ from .navigation_contract import GoalTracker, MapFootprint, check_goal
 from .rtabmap_sim import ODOM as RTABMAP_ODOM
 
 ACTION = '/navigate_to_pose'
+GATE_STATUS_GRACE_S = 0.5     # how long a gate status older than the goal may persist before it cancels
 
 
 class Nav2Adapter:
@@ -180,6 +181,20 @@ class Nav2Adapter:
         if self.tracker.request_cancel(why, self.now()) and self.handle is not None:
             self.handle.cancel_goal_async()
 
+    def _gate_inhibits_goal(self, now):
+        """True when the gate's inhibition applies to the active goal.
+
+        The gate publishes only on change, on its own timer, so right after localization recovers
+        the last received status can still describe the state from before this goal. Such an older
+        status cancels the goal only if the gate has not cleared it within the grace period. The
+        gate itself keeps output at zero meanwhile.
+        """
+        if not self.gate.get('inhibited') or self.gate.get('reason') in (None, 'NO_COMMAND', 'COMMAND_STALE'):
+            return False
+        requested = self.tracker.goal.requested_at
+        reported = self.gate.get('t')
+        return (reported is not None and reported >= requested) or now - requested >= GATE_STATUS_GRACE_S
+
     def tick(self):
         """Call periodically: timeout, gate-inhibit cancellation, settle."""
         now = self.now()
@@ -191,8 +206,7 @@ class Nav2Adapter:
             ok, reason = self._live_target(self.tracker.goal, now, self.grid_stamp_ns)
             if not ok:
                 self.cancel(reason)
-        if (self.tracker.status in ('ACCEPTED', 'ACTIVE') and self.gate.get('inhibited')
-                and self.gate.get('reason') not in (None, 'NO_COMMAND', 'COMMAND_STALE')):
+        if self.tracker.status in ('ACCEPTED', 'ACTIVE') and self._gate_inhibits_goal(now):
             self.cancel(f'MOTION_GATE: {self.gate.get("reason")}')
         valid = self._pose() is not None
         self.tracker.settle(now, self.speed, self.yaw_rate, valid, self._pose() or [math.nan] * 3)

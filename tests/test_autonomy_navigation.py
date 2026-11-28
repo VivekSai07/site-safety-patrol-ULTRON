@@ -99,12 +99,30 @@ class NavigationContractTest(unittest.TestCase):
             _pose=lambda: (0.0, 0.0, 0.0), speed=0.0, yaw_rate=0.0, gate={'inhibited': False}, cancel=Mock(),
         )
         backend._live_target = lambda *args: Nav2Adapter._live_target(backend, *args)
+        backend._gate_inhibits_goal = lambda now: Nav2Adapter._gate_inhibits_goal(backend, now)
         Nav2Adapter.tick(backend)
         backend.cancel.assert_not_called()
         cells[15, 15] = 100
         backend.footprint = MapFootprint.from_grid(self.live_grid(cells))
         Nav2Adapter.tick(backend)
         self.assertIn('TARGET_FOOTPRINT_OCCUPIED', backend.cancel.call_args.args[0])
+
+    def test_gate_status_older_than_the_goal_does_not_cancel_it_at_once(self):
+        # Regression: a goal sent just after localization recovered was cancelled by the gate's
+        # previous status (DEGRADED), which had not been replaced yet.
+        def inhibits(gate, now, requested=10.0):
+            backend = SimpleNamespace(gate=gate, tracker=SimpleNamespace(goal=SimpleNamespace(requested_at=requested)))
+            return Nav2Adapter._gate_inhibits_goal(backend, now)
+
+        old = {'inhibited': True, 'reason': 'LOCALIZATION: NOT_VALID: DEGRADED', 't': 9.8}
+        self.assertFalse(inhibits(old, 10.05))
+        self.assertTrue(inhibits(old, 10.55))                      # still inhibited after the grace period
+        self.assertTrue(inhibits(old | {'t': 10.02}, 10.05))       # inhibition reported after the goal: at once
+        self.assertFalse(inhibits({'inhibited': False, 'reason': None, 't': 10.02}, 11.0))
+        self.assertFalse(inhibits({'inhibited': True, 'reason': 'NO_COMMAND', 't': 10.02}, 11.0))
+        unknown = {'inhibited': True, 'reason': 'NO_GATE_STATUS'}   # no gate heard from: cancels after grace
+        self.assertFalse(inhibits(unknown, 10.05))
+        self.assertTrue(inhibits(unknown, 10.55))
 
     def check(self, goal, now=10.0, **kw):
         args = dict(map_id='map-A', map_version=1, localization=valid_state(now), now=now, operator_enabled=True,
