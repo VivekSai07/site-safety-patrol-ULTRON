@@ -26,6 +26,7 @@ class Kind:
     views: tuple            # View entries the form reader wants
     sides: int              # how many different viewing directions are wanted (45 degree steps)
     checklist: str          # form to fill: "ladder" or a key of checklists.CHECKLISTS
+    extent: float = 0.4     # metres: largest horizontal size, how far behind its nearest surface it may reach
 
 
 OVERVIEW, CLOSE = View("overview", 2.0, 4.5), View("close", 0.8, 2.0)
@@ -43,7 +44,8 @@ DETAIL = View("detail", 0.3, 0.5)
 KINDS = {kind.name: kind for kind in (
     # A free-standing ladder can be walked around; three directions cover rails, rungs and feet.
     Kind("ladder", "LAD", "portable ladder or stepladder",
-         ("ladder", "stepladder", "aluminium ladder"), 0.5, (0.5, 8.0), 0.7, (OVERVIEW, CLOSE, DETAIL), 3, "ladder"),
+         ("ladder", "stepladder", "aluminium ladder"), 0.5, (0.5, 8.0), 0.7, (OVERVIEW, CLOSE, DETAIL), 3, "ladder",
+         extent=1.8),
     # Wall-mounted equipment: one direction, but close enough to read the inspection sticker.
     Kind("fire_extinguisher", "FEX", "portable red cylinder, about 0.5 m tall, with a hose and handle",
          ("red fire extinguisher", "fire extinguisher", "fire extinguisher standing on the floor"), 0.35, (0.42, 0.9), 0.8, (OVERVIEW, CLOSE, DETAIL), 1, "fire_extinguisher"),

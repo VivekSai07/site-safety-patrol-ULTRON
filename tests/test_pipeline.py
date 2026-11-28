@@ -18,11 +18,11 @@ from ultron.pipeline.coverage import missing_views
 from ultron.pipeline.detect import ReplayDetector, VlmDetector
 from ultron.pipeline.inspection import Inspection
 from ultron.pipeline.keyframes import KeyframeStore, view_name
-from ultron.pipeline.lift import ASSUMED_RANGE, lift
+from ultron.pipeline.lift import ASSUMED_RANGE, CELL, lift
 from ultron.pipeline.navigate import DashboardNavigator, Passive
 from ultron.pipeline.objects import ObjectMap
 from ultron.pipeline.survey import Survey
-from ultron.pipeline.types import Detection, ViewRequest
+from ultron.pipeline.types import Detection, Sighting, ViewRequest
 from ultron.protocol.frames import Frame
 from ultron.protocol.lidar import Calibration
 from ultron.protocol.store import Store
@@ -53,6 +53,60 @@ def sized_box(kind, distance):
     """A centred box as tall as an object of this kind looks from `distance` metres."""
     half = min(480.0, REAL_HEIGHT[kind] * CALIBRATION.fy / distance) / 480 * 500
     return [400, round(500 - half), 600, round(500 + half)]
+
+
+def rectangle(cx, cy, length, width):
+    """Outline of a floor rectangle as segments: `length` along x, `width` along y."""
+    corners = [(cx - length / 2, cy - width / 2), (cx + length / 2, cy - width / 2),
+               (cx + length / 2, cy + width / 2), (cx - length / 2, cy + width / 2)]
+    return [(corners[i], corners[(i + 1) % 4]) for i in range(4)]
+
+
+def render(pose, shapes, background=8.0):
+    """Depth image (CALIBRATION camera at the robot origin) of upright `shapes` (lists of floor
+    segments) standing in front of a wall, and each shape's outline in thousandths (None if unseen)."""
+    x, y, yaw = pose
+    depth = np.full((480, 640), background, dtype=np.float32)
+    columns = [[] for _ in shapes]
+    for u in range(640):
+        angle = yaw - math.atan2(u + 0.5 - CALIBRATION.cx, CALIBRATION.fx)
+        dx, dy = math.cos(angle), math.sin(angle)
+        nearest = None
+        for n, segments in enumerate(shapes):
+            for (ax, ay), (bx, by) in segments:
+                ex, ey = bx - ax, by - ay
+                cross = dx * ey - dy * ex
+                if abs(cross) < 1e-9:
+                    continue
+                t = ((ax - x) * ey - (ay - y) * ex) / cross
+                s = ((ax - x) * dy - (ay - y) * dx) / cross
+                if t > 0 and 0 <= s <= 1 and (nearest is None or t < nearest[0]):
+                    nearest = (t, n)
+        if nearest:
+            depth[100:400, u] = nearest[0] * math.cos(angle - yaw)
+            columns[nearest[1]].append(u)
+    outlines = [[[c[0] * 1000 // 640, 208], [(c[-1] + 1) * 1000 // 640, 208], [(c[-1] + 1) * 1000 // 640, 833],
+                 [c[0] * 1000 // 640, 833]] if c else None for c in columns]
+    return depth, outlines
+
+
+class Rendered:
+    """Detector for rendered frames: one segmented box per visible shape, tracked by `tracks`."""
+
+    def __init__(self, kind="ladder", tracks=None):
+        self.kind, self.tracks = kind, tracks
+
+    def detect(self, frame):
+        return [Detection(self.kind, [o[0][0], o[0][1], o[2][0], o[2][1]], 0.9,
+                          None if self.tracks is None else self.tracks[n], o)
+                for n, o in enumerate(frame.outlines) if o]
+
+
+def rendered(name, pose, shapes, stamp=0.0):
+    depth, outlines = render(pose, shapes)
+    seen = Frame(Image.new("RGB", (640, 480)), name=name, stamp=stamp, pose=pose, depth=depth)
+    seen.outlines = outlines
+    return seen
 
 
 class SeesEverything:
@@ -119,6 +173,44 @@ class LiftTest(unittest.TestCase):
 
     def test_without_pose_only_the_detection_is_kept(self):
         self.assertIsNone(lift(frame("a"), Detection("ladder", CENTRE), CALIBRATION).position)
+
+
+class FootprintTest(unittest.TestCase):
+    def test_the_footprint_lies_on_the_visible_surface(self):
+        depth, (outline,) = render((0.0, 0.0, 0.0), [rectangle(3.25, 0.0, 0.5, 1.0)])
+        seen = Frame(Image.new("RGB", (640, 480)), name="a", pose=(0.0, 0.0, 0.0), depth=depth)
+        sighting = lift(seen, Detection("ladder", [0, 208, 1000, 833], outline=outline), CALIBRATION)
+        xs = [i * CELL for i, _ in sighting.cells]
+        ys = [j * CELL for _, j in sighting.cells]
+        self.assertTrue(all(2.9 <= x <= 3.05 for x in xs))     # the near face, not the wall behind
+        self.assertAlmostEqual(min(ys), -0.5, delta=0.11)
+        self.assertAlmostEqual(max(ys), 0.4, delta=0.11)
+        self.assertAlmostEqual(sighting.position[0], 3.0, delta=0.06)
+        self.assertAlmostEqual(sighting.position[1], 0.0, delta=0.06)
+
+    def test_background_seen_between_rungs_is_not_part_of_the_footprint(self):
+        depth = np.full((480, 640), 2.8, dtype=np.float32)  # wall 0.8 m behind, within a ladder's extent
+        depth[100:400:20, 280:360] = 2.0                    # rungs: every column also sees the wall between them
+        seen = Frame(Image.new("RGB", (640, 480)), name="a", pose=(0.0, 0.0, 0.0), depth=depth)
+        outline = [[440, 208], [560, 208], [560, 833], [440, 833]]
+        sighting = lift(seen, Detection("ladder", [440, 208, 560, 833], outline=outline), CALIBRATION)
+        self.assertTrue(all(1.9 <= i * CELL <= 2.05 for i, _ in sighting.cells), sighting.cells)
+
+    def test_a_nearer_object_inside_the_outline_does_not_stretch_the_footprint(self):
+        depth, (far, _) = render((0.0, 0.0, 0.0), [rectangle(5.0, 0.0, 0.2, 1.2), rectangle(2.5, 0.3, 0.2, 0.3)])
+        seen = Frame(Image.new("RGB", (640, 480)), name="a", pose=(0.0, 0.0, 0.0), depth=depth)
+        wide = [[far[0][0] - 40, 208], [far[1][0], 208], [far[1][0], 833], [far[0][0] - 40, 833]]  # sloppy mask
+        sighting = lift(seen, Detection("ladder", [wide[0][0], 208, wide[1][0], 833], outline=wide), CALIBRATION)
+        self.assertGreater(min(i for i, _ in sighting.cells) * CELL, 4.0)
+
+    def test_depth_at_half_the_colour_resolution_lands_in_the_same_place(self):
+        depth, (outline,) = render((1.0, 2.0, 0.5), [rectangle(3.5, 3.0, 0.4, 0.4)])
+        full = lift(Frame(Image.new("RGB", (640, 480)), name="a", pose=(1.0, 2.0, 0.5), depth=depth),
+                    Detection("fire_extinguisher", [0, 208, 1000, 833], outline=outline), CALIBRATION)
+        half = lift(Frame(Image.new("RGB", (640, 480)), name="a", pose=(1.0, 2.0, 0.5), depth=depth[::2, ::2]),
+                    Detection("fire_extinguisher", [0, 208, 1000, 833], outline=outline), CALIBRATION)
+        self.assertLess(math.dist(full.position, half.position), 0.05)
+        self.assertLess(math.dist(full.position, (3.5, 3.0)), 0.3)
 
 
 class DepthRegistrationTest(unittest.TestCase):
@@ -261,6 +353,53 @@ class SurveyTest(Workspace):
             survey.feed(frame("one", (0.0, 0.0, 0.0), float(stamp), depth=3.0))
         self.assertEqual(survey.tidy(), {})
         self.assertEqual(len(self.objects.all()), 2)
+
+    def test_a_wide_object_seen_from_its_side_and_its_front_is_one_object(self):
+        """An A-frame 1.5 m long: its visible faces from two directions lie 0.8 m apart, beyond any
+        radius that keeps nearby ladders apart. Their footprints touch."""
+        ladder = [rectangle(5.0, 5.0, 1.5, 0.5)]
+        survey = Survey(Rendered(), self.objects, self.keyframes, self.store, CALIBRATION, interval=0)
+        for stamp, side in enumerate((0, 0, 0, 2, 2, 2)):
+            survey.feed(rendered("a", facing((5.0, 5.0), side, 3.0), ladder, float(stamp)))
+        self.assertEqual([(o.id, o.sightings) for o in self.objects.all()], [("LAD-001", 6)])
+        position = self.objects.get("LAD-001").position
+        self.assertTrue(4.25 <= position[0] <= 5.75 and 4.75 <= position[1] <= 5.3, position)
+
+    def test_ladders_a_metre_apart_seen_one_at_a_time_stay_two(self):
+        left, right = rectangle(5.0, 5.0, 0.3, 1.0), rectangle(5.0, 7.0, 0.3, 1.0)
+        survey = Survey(Rendered(), self.objects, self.keyframes, self.store, CALIBRATION, interval=0)
+        for stamp in range(3):
+            survey.feed(rendered("left", facing((5.0, 5.0), 0, 3.0), [left], float(stamp)))
+        for stamp in range(3, 6):
+            survey.feed(rendered("right", facing((5.0, 7.0), 0, 3.0), [right], float(stamp)))
+        self.assertEqual([(o.id, o.sightings) for o in self.objects.all()], [("LAD-001", 3), ("LAD-002", 3)])
+        self.assertEqual(self.survey.tidy(), {})
+
+    def test_touching_footprints_in_one_frame_are_two_objects_and_tracks_keep_them_apart(self):
+        pair = [rectangle(5.0, 4.8, 0.3, 0.3), rectangle(5.0, 5.2, 0.3, 0.3)]
+        survey = Survey(Rendered(tracks=[1, 2]), self.objects, self.keyframes, self.store, CALIBRATION, interval=0)
+        for stamp in range(3):
+            survey.feed(rendered("pair", facing((5.0, 5.0), 0, 3.0), pair, float(stamp)))
+        survey.detector = Rendered(tracks=[2])  # now only the second, the tracker still knows it
+        for stamp in range(3, 6):
+            survey.feed(rendered("one", facing((5.0, 5.0), 0, 3.0), pair[1:], float(stamp)))
+        self.assertEqual([(o.id, o.sightings) for o in self.objects.all()], [("LAD-001", 3), ("LAD-002", 6)])
+        self.assertEqual(survey.tidy(), {})
+
+    def test_a_merged_object_brings_its_footprint_and_frees_no_id_for_reuse(self):
+        def sighting(x, cells):
+            return Sighting(Detection("ladder", CENTRE), (x, 0.0), 3.0, cells=cells)
+        first = [[i, j] for i in range(10, 13) for j in range(0, 5)]
+        for stamp in range(6):
+            self.objects.observe(sighting(1.15, first), float(stamp))
+        fragment = self.objects.observe(sighting(1.5, [[15, 2], [16, 2]]), 7.0)  # beside it, seen in a frame of its own
+        far = self.objects.observe(sighting(9.0, [[90, 0], [90, 1]]), 8.0)
+        self.assertEqual((fragment.id, far.id), ("LAD-001", "LAD-002"))  # within the margin: the same ladder
+        self.objects.update("LAD-001", cells={})  # forget the footprint: the next one starts its own
+        self.objects._objects["LAD-003"] = self.objects._objects.pop("LAD-002")
+        self.objects._objects["LAD-003"].id = "LAD-003"
+        new = self.objects.observe(sighting(20.0, [[200, 0]]), 9.0)
+        self.assertNotIn(new.id, ("LAD-001", "LAD-003"))
 
     def test_a_stopped_survey_resumes_from_disk(self):
         self.see("ladder", (5.0, 5.0), 0, 3.0)

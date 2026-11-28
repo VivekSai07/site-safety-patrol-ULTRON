@@ -8,11 +8,14 @@ import math
 import numpy as np
 from PIL import Image, ImageDraw
 
+from .catalog import KINDS
 from .types import Sighting
 from ..protocol.lidar import BOX_CORE, MIN_POINTS, MIN_RANGE, NEAR_PERCENTILE, locate
 
 ASSUMED_RANGE = 2.5  # metres, used only when neither depth nor lidar hits the box
 OUTLINE_PERCENTILE = 35  # of depths inside the outline: thin rails let some background through
+CELL = 0.1          # metres: floor grid of object footprints
+COLUMN_BAND = 0.25  # metres: per image column, pixels this far behind the nearest one are background seen through gaps
 
 
 def _depth_range(depth, box):
@@ -25,14 +28,49 @@ def _depth_range(depth, box):
     return float(np.percentile(valid, NEAR_PERCENTILE)) if valid.size >= MIN_POINTS else None
 
 
-def _outline_range(depth, outline):
-    """Range to the object from the depth pixels inside its outline."""
-    height, width = depth.shape
+def _mask(shape, outline):
+    height, width = shape
     mask = Image.new("1", (width, height))
     ImageDraw.Draw(mask).polygon([(x * width / 1000, y * height / 1000) for x, y in outline], fill=1)
-    inside = depth[np.asarray(mask, dtype=bool)]
+    return np.asarray(mask, dtype=bool)
+
+
+def _outline_range(depth, outline):
+    """Range to the object from the depth pixels inside its outline."""
+    inside = depth[_mask(depth.shape, outline)]
     valid = inside[np.isfinite(inside) & (inside > MIN_RANGE)]
     return float(np.percentile(valid, OUTLINE_PERCENTILE)) if valid.size >= MIN_POINTS else None
+
+
+def footprint(depth, outline, calibration, pose, kind, distance):
+    """Floor cells covered by the object's visible surface, and their centroid, in the map frame.
+
+    Every depth pixel inside the outline is placed on the floor. Pixels more than the kind's extent
+    nearer or further than the object's measured `distance` belong to something else (a ladder in
+    front, the far wall). Of the rest, pixels further than COLUMN_BAND behind the nearest pixel of
+    their own image column are background seen past the object (a ladder is mostly gaps).
+    Returns (cells, (x, y)) or (None, None) with too few pixels.
+    """
+    rows, columns = np.nonzero(_mask(depth.shape, outline) & np.isfinite(depth) & (depth > MIN_RANGE))
+    z = depth[rows, columns]
+    keep = np.abs(z - distance) <= KINDS[kind].extent
+    columns, z = columns[keep], z[keep]
+    order = np.lexsort((z, columns))
+    columns, z = columns[order], z[order]
+    starts = np.unique(columns, return_index=True)[1]
+    front = np.repeat(z[starts], np.diff(np.append(starts, len(z))))
+    keep = z <= front + COLUMN_BAND
+    columns, z = columns[keep], z[keep]
+    if z.size < MIN_POINTS:
+        return None, None
+    # Depth is registered to the colour camera, possibly at a lower resolution than the calibration.
+    u = (columns + 0.5) * calibration.width / depth.shape[1]
+    left = -(u - calibration.cx) / calibration.fx * z
+    x, y, yaw = pose
+    xs = x + z * math.cos(yaw) - left * math.sin(yaw)
+    ys = y + z * math.sin(yaw) + left * math.cos(yaw)
+    cells = np.unique(np.stack([np.floor(xs / CELL), np.floor(ys / CELL)], axis=1).astype(int), axis=0)
+    return cells.tolist(), (float(xs.mean()), float(ys.mean()))
 
 
 def _along_bearing(frame, box, calibration, distance):
@@ -62,6 +100,12 @@ def lift(frame, detection, calibration=None):
     if depth is not None:
         depth = np.asarray(depth, dtype=float)
         distance = (_outline_range(depth, detection.outline) if detection.outline else None) or _depth_range(depth, detection.box)
+        if detection.outline and distance:
+            cells, centre = footprint(depth, detection.outline, calibration, frame.pose, detection.kind, distance)
+            if cells:
+                # The middle of the visible surface, not a point along the box's centre ray.
+                return Sighting(detection, centre, distance, height=_box_height(detection.box, calibration, distance),
+                                cells=cells)
     if distance:
         return Sighting(detection, _along_bearing(frame, detection.box, calibration, distance), distance,
                         height=_box_height(detection.box, calibration, distance))
