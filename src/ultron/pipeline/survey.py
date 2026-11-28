@@ -3,10 +3,14 @@
 Feed it frames at any rate. It keeps no state of its own beyond the rate limit: objects
 and keyframes are on disk after every frame, so pausing is simply not feeding it.
 """
+import copy
+
 from PIL import Image
 
+from .anchor import Anchoring
 from .catalog import KINDS
 from .lift import lift
+from .objects import MIN_SHARE, footprint, offset, touching
 from .verify import NONE
 
 
@@ -14,6 +18,7 @@ EDGE = 10               # thousandths: a box this close to the top or bottom of 
 VERIFY_VIEWS = 3        # keyframes of an object shown to the vision model, one call each
 SAME_BOX_OVERLAP = 0.5  # boxes of one kind overlapping this much (intersection over union) are one object
 PART_OF_BOX = 0.7       # a box of one kind lying this much inside a better one is a part of it
+WIDE = 0.5              # metres: objects larger than this look different from every side
 ANNOUNCE = 3            # sightings before an object is announced: single boxes are often false hits or parts
 
 
@@ -50,6 +55,9 @@ class Survey:
         self._tracks = {}  # detector track id -> object id, for this run of the detector
         self.map_id = map_id  # the object map is shared by all runs in this map's frame
         self._warned = False
+        # On a shared map, objects stored by earlier patrols are landmarks this one is lined up with.
+        stored = objects.all() if map_id else []
+        self.anchoring = Anchoring(stored) if stored else None
         # Objects announced (`object_found`) in this workspace: resuming does not announce them twice.
         self.announced = {e["object"] for e in store.events(limit=None) if e["kind"] == "object_found"}
         self.seen_now = {}  # object id -> sightings in this run: a patrol reports what it saw itself
@@ -67,6 +75,9 @@ class Survey:
             self._warned = True  # objects from earlier runs line up only if this run started where they did
             self.store.emit("localisation_suspect", reason="pose from odometry, not localisation in the map",
                             map_id=self.map_id)
+        if self.anchoring and self.anchoring.transform and frame.pose:
+            frame = copy.copy(frame)
+            frame.pose = self.anchoring.to_map(frame.pose)  # this run's drift against the stored objects
         try:
             detections = distinct(self.detector.detect(frame))
         except Exception as error:  # a failing model must not end the patrol
@@ -81,10 +92,26 @@ class Survey:
             cut_off = detection.box[1] <= EDGE or detection.box[3] >= 1000 - EDGE
             if sighting.height is not None and not ((cut_off or low <= sighting.height) and sighting.height <= high):
                 continue  # wrong size for its kind: a look-alike
+            measured = sighting.position is not None and not sighting.approximate
+            create, landmark = True, None
+            if self.anchoring:
+                if self.anchoring.state == Anchoring.SUSPECT:
+                    continue  # the robot is not where it thinks it is: change nothing
+                # Until the patrol is lined up, a sighting near a stored object of its kind may be
+                # that object, displaced: it creates nothing, and tells where the object appears.
+                landmark = self.anchoring.near(detection.kind, sighting.position) if measured else None
+                create = self.anchoring.state == Anchoring.ANCHORED or landmark is None
+            # Until then, the stored objects are not moved by positions that may be off.
+            frozen = self.anchoring.stored if self.anchoring and self.anchoring.state != Anchoring.ANCHORED else ()
             site_object = self.objects.observe(sighting, frame.stamp, exclude={o.id for o in seen},
-                                               known=self._tracks.get(detection.track))
+                                               known=self._tracks.get(detection.track), create=create, frozen=frozen)
+            if self.anchoring and measured:
+                landmark = site_object.id if site_object and site_object.id in self.anchoring.stored else (
+                    None if site_object else landmark)
+                if landmark:
+                    self._landmark(landmark, sighting)
             if site_object is None:
-                continue  # between two known objects and no way to tell which: wait for a clearer frame
+                continue  # between two known objects and no way to tell which, or waiting to line up
             if detection.track is not None:
                 self._tracks[detection.track] = site_object.id
             self.keyframes.offer(frame, site_object, sighting, sharpness)
@@ -102,6 +129,25 @@ class Survey:
                         view=None, box=best.box if best else None, pose=frame.pose,
                         note=", ".join(known) or ("nothing confirmed yet" if seen else "nothing found"))
         return seen
+
+    def _landmark(self, object_id, sighting):
+        """A stored object was seen (positions in the stored map's frame, as corrected so far).
+
+        A compact object is where its view's middle is. A wide one is placed by how far the view's
+        cells lie from its stored footprint, so a ladder seen from one side is not mistaken for a
+        shifted ladder."""
+        stored = self.objects.get(object_id)
+        area = footprint(stored) if stored and stored.position else []
+        position = sighting.position
+        if (KINDS[stored.kind].extent > WIDE and sighting.cells and len(area)
+                and touching(sighting.cells, area) >= MIN_SHARE):
+            dx, dy = offset(sighting.cells, area)
+            position = (self.anchoring.stored[object_id][1][0] + dx, self.anchoring.stored[object_id][1][1] + dy)
+        changed = self.anchoring.add(object_id, self.anchoring.to_run(position))
+        if changed == Anchoring.SUSPECT:
+            self.store.emit("localisation_suspect", map_id=self.map_id, **self.anchoring.details)
+        elif changed == Anchoring.ANCHORED:
+            self.store.emit("localisation_anchored", map_id=self.map_id, **self.anchoring.details)
 
     def announce(self, min_sightings=ANNOUNCE, settled=False):
         """Report objects seen often enough (or confirmed by the vision model).
@@ -127,6 +173,9 @@ class Survey:
     def tidy(self, min_sightings=3):
         """Merge fragments into the objects they belong to, then have the vision model check
         what is left. Call when a survey pass ends, or now and then during a long one."""
+        if self.anchoring and self.anchoring.state == Anchoring.SUSPECT:
+            self.announce(min_sightings, settled=True)
+            return {}  # positions of this patrol are not to be trusted: merge and relabel nothing
         merged = self.objects.consolidate(min_sightings, keep=self.announced)
         for removed, target in merged.items():
             self.keyframes.reassign(removed, target)

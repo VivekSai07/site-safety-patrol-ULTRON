@@ -85,21 +85,35 @@ def render(pose, shapes, background=8.0):
         if nearest:
             depth[100:400, u] = nearest[0] * math.cos(angle - yaw)
             columns[nearest[1]].append(u)
-    outlines = [[[c[0] * 1000 // 640, 208], [(c[-1] + 1) * 1000 // 640, 208], [(c[-1] + 1) * 1000 // 640, 833],
-                 [c[0] * 1000 // 640, 833]] if c else None for c in columns]
+    outlines = []
+    for c in columns:  # a segmentation mask covers the widest stretch of the shape not hidden by another
+        runs = np.split(np.asarray(c), np.nonzero(np.diff(c) > 1)[0] + 1) if c else []
+        c = max(runs, key=len).tolist() if runs else []
+        outlines.append([[c[0] * 1000 // 640, 208], [(c[-1] + 1) * 1000 // 640, 208], [(c[-1] + 1) * 1000 // 640, 833],
+                         [c[0] * 1000 // 640, 833]] if c else None)
     return depth, outlines
 
 
 class Rendered:
-    """Detector for rendered frames: one segmented box per visible shape, tracked by `tracks`."""
+    """Detector for rendered frames: one segmented box per visible shape, of the shape's kind in
+    `kinds` (ladder by default) and as tall as such an object looks, tracked by `tracks`."""
 
-    def __init__(self, kind="ladder", tracks=None):
-        self.kind, self.tracks = kind, tracks
+    def __init__(self, kind="ladder", tracks=None, kinds=None):
+        self.kind, self.tracks, self.kinds = kind, tracks, kinds
 
     def detect(self, frame):
-        return [Detection(self.kind, [o[0][0], o[0][1], o[2][0], o[2][1]], 0.9,
-                          None if self.tracks is None else self.tracks[n], o)
-                for n, o in enumerate(frame.outlines) if o]
+        found = []
+        for n, o in enumerate(frame.outlines):
+            if not o:
+                continue
+            kind = self.kinds[n] if self.kinds else self.kind
+            if kind != "ladder":  # rows of a box as tall as this kind looks from where it stands
+                column = int((o[0][0] + o[1][0]) / 2000 * 640)
+                _, top, _, bottom = sized_box(kind, float(frame.depth[240, column]))
+                o = [[o[0][0], top], [o[1][0], top], [o[1][0], bottom], [o[0][0], bottom]]
+            found.append(Detection(kind, [o[0][0], o[0][1], o[2][0], o[2][1]], 0.9,
+                                   None if self.tracks is None else self.tracks[n], o))
+        return found
 
 
 def rendered(name, pose, shapes, stamp=0.0):
@@ -538,6 +552,91 @@ class SiteMapTest(unittest.TestCase):
         args = argparse.Namespace(map_id=None, map=str(saved), sites="sites", site="hall", data="run")
         self.assertEqual(object_folder(args), Path("sites/hall/ctrl-hall-v3"))
         self.assertEqual(object_folder(argparse.Namespace(map_id=None, map=None, sites="s", site="h", data="run")), Path("run"))
+
+
+class AnchoringTest(unittest.TestCase):
+    """A later patrol on a shared map is lined up with the objects stored by an earlier one."""
+    LADDER, LEFT, RIGHT, NEW = (5.0, 5.0), (8.0, 2.0), (2.0, 8.0), (8.0, 8.0)
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        self.folder = self.root / "sites" / "hall" / "hall-v1"
+
+    def shapes(self, moved=None):
+        places = [self.LADDER, self.LEFT, self.RIGHT, self.NEW]
+        if moved:
+            places[1] = moved
+        return ([rectangle(*self.LADDER, 1.5, 0.5)] + [rectangle(x, y, 0.3, 0.3) for x, y in places[1:]],
+                ["ladder", "fire_extinguisher", "fire_extinguisher", "fire_extinguisher"])
+
+    def patrol(self, run, targets, error=(0.0, 0.0, 0.0), moved=None, new=True):
+        """Look at each target from three nearby directions; the robot believes it stands where
+        `error` (angle, dx, dy about the origin) puts it. The new object exists from run 2 on."""
+        from ultron.pipeline.anchor import apply
+        shapes, kinds = self.shapes(moved)
+        present = range(4) if new and run != "run-1" else range(3)
+        store = Store(self.root / run)
+        survey = Survey(Rendered(kinds=kinds), ObjectMap(self.folder), KeyframeStore(self.folder), store,
+                        CALIBRATION, interval=0, map_id="hall-v1")
+        stamp = 0.0
+        for target in targets:
+            for side in (3, 4, 5) * 2:
+                true = facing(target, side, 2.5)
+                believed = (*apply(error, true[:2]), true[2] + error[0])
+                seen = rendered("a", believed, [], stamp)
+                seen.depth, seen.outlines = render(true, [shapes[n] if n in present else [] for n in range(4)])
+                survey.feed(seen)
+                stamp += 1.0
+        merged = survey.tidy()
+        return survey, store, merged
+
+    def events(self, store, kind):
+        return [e for e in store.events(limit=None) if e["kind"] == kind]
+
+    def first_patrol(self):
+        self.patrol("run-1", [self.LADDER, self.LEFT, self.RIGHT])
+        objects = ObjectMap(self.folder).all()
+        self.assertEqual(sorted(o.id for o in objects), ["FEX-001", "FEX-002", "LAD-001"])
+        return {o.id: o.position for o in objects}
+
+    def test_a_drifted_patrol_is_lined_up_and_places_a_new_object_where_it_is(self):
+        before = self.first_patrol()
+        error = (math.radians(3.0), 0.3, -0.2)
+        survey, store, _ = self.patrol("run-2", [self.LEFT, self.RIGHT, self.LADDER, self.NEW], error)
+        self.assertEqual(len(self.events(store, "localisation_anchored")), 1)
+        self.assertEqual(self.events(store, "localisation_suspect"), [])
+        objects = {o.id: o for o in survey.objects.all()}
+        self.assertEqual(sorted(objects), ["FEX-001", "FEX-002", "FEX-003", "LAD-001"])
+        new = objects["FEX-003"].position
+        self.assertLess(math.dist(new, self.NEW), 0.25, new)          # uncorrected it would be about 0.7 m off
+        for object_id, position in before.items():
+            self.assertLess(math.dist(objects[object_id].position, position), 0.25, object_id)
+
+    def test_a_patrol_far_off_its_map_creates_and_merges_nothing(self):
+        before = self.first_patrol()
+        survey, store, merged = self.patrol("run-2", [self.LEFT, self.RIGHT, self.LADDER, self.NEW], (0.0, 1.5, 0.0))
+        suspect = self.events(store, "localisation_suspect")
+        self.assertEqual(len(suspect), 1)
+        self.assertGreater(suspect[0]["shift"], 1.0)
+        self.assertEqual(merged, {})
+        self.assertEqual({o.id: o.position for o in survey.objects.all()}, before)
+
+    def test_stored_objects_that_disagree_make_the_patrol_suspect(self):
+        self.first_patrol()
+        survey, store, _ = self.patrol("run-2", [self.LEFT, self.LADDER, self.NEW], moved=(8.0, 3.5))
+        self.assertEqual(len(self.events(store, "localisation_suspect")), 1)
+        self.assertEqual(len(survey.objects.all()), 3)
+
+    def test_the_same_patrol_again_lines_up_without_correction(self):
+        self.first_patrol()
+        survey, store, _ = self.patrol("run-2", [self.LADDER, self.LEFT, self.RIGHT], new=False)
+        anchored = self.events(store, "localisation_anchored")
+        self.assertEqual(len(anchored), 1)
+        # A 0.3 m object seen from one side lies up to half its size from its stored middle.
+        self.assertLess(anchored[0]["shift"], 0.15)
+        self.assertEqual(len(survey.objects.all()), 3)
 
 
 class Opinion:

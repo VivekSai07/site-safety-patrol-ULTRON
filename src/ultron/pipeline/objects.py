@@ -48,6 +48,15 @@ def touching(cells, area, margin=MARGIN):
     return float((gap <= margin).mean())
 
 
+def offset(cells, area):
+    """Mean shift in metres from each of `cells` to the nearest cell of `area`: how far a view of
+    an object lies from where its stored footprint says, whichever face of it the view shows."""
+    cells = np.asarray(cells, dtype=int).reshape(-1, 2)
+    gaps = cells[:, None, :] - area[None, :, :]
+    nearest = gaps[np.arange(len(cells)), (gaps ** 2).sum(axis=2).argmin(axis=1)]
+    return nearest.mean(axis=0) * CELL
+
+
 def _centre(site_object):
     cells = footprint(site_object)
     return [round(float(v), 3) for v in (cells.mean(axis=0) + 0.5) * CELL] if len(cells) else site_object.position
@@ -125,9 +134,10 @@ class ObjectMap:
             return AMBIGUOUS  # two different objects stand within reach: position cannot decide
         return near[0] if near else None
 
-    def observe(self, sighting, stamp, exclude=(), known=None):
-        """The object this sighting belongs to: a known one nearby, else a new one. None if it
-        lies between two known objects and nothing says which of them it is.
+    def observe(self, sighting, stamp, exclude=(), known=None, create=True, frozen=()):
+        """The object this sighting belongs to: a known one nearby, else a new one (unless not
+        `create`). None if it lies between two known objects and nothing says which of them it is.
+        Objects in `frozen` count the sighting but keep their footprint and position.
 
         `exclude` holds ids already matched in the same frame: two boxes in one image
         are two objects, however close together they stand. `known` is the object the
@@ -145,10 +155,14 @@ class ObjectMap:
             if found is AMBIGUOUS:
                 return None
             if found is None:
+                if not create:
+                    return None
                 found = SiteObject(self._new_id(kind), kind, first_seen=stamp)
                 self._objects[found.id] = found
             found.sightings += 1
-            if sighting.cells:
+            if found.id in frozen:
+                pass
+            elif sighting.cells:
                 for i, j in sighting.cells:
                     key = f"{i},{j}"
                     found.cells[key] = found.cells.get(key, 0) + 1
