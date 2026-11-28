@@ -44,6 +44,34 @@ Example prompts
 
 ## Session record and preconditions
 
+### Jetson Python environment
+
+Use ROS Humble's system Python 3.10 and a venv with system site packages. The
+offline setup below can repair the existing team venv in place. For a clean
+environment, substitute a fresh path for `.venv-teamultron` in both commands.
+The script installs dashboard dependencies and checks imports without
+starting ROS or connecting to the B2.
+
+```bash
+ULTRON_ROS_VENV="$PWD/.venv-teamultron" bash scripts/setup-ros-venv.sh --hardware-preflight
+source /opt/ros/humble/setup.bash
+PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" .venv-teamultron/bin/python -m unittest discover -s tests -v
+```
+
+Run from the branch under test. Save the full test footer and exit code
+together. The reported 424 total, 422 passes, 58 skips and two errors cannot
+describe a single run. Missing imports block the affected checks until the
+rerun. Check branch-specific ROS packages separately before running SLAM.
+
+### Record fields as they become relevant
+
+P1 is an offline review. For D1, establish read-only authorization, on-site
+roles, the verified connection, physical isolation of commands, the
+stationary state and abort conditions. D1 discovers actual topic, QoS and
+timing details. D2 verifies calibration. P2 and P3 verify the protections
+needed before motion. The results of those later checks are not P1 or D1
+entry requirements.
+
 Fill these with measured or verified hardware values before the approval for
 a dependent check. Leave unknown values blank and mark the dependent check
 `BLOCKED`. The on-site operator keeps direct control throughout. Use Unitree's
@@ -78,7 +106,7 @@ and Nav2 in shadow mode before considering physical autonomy.
 
 | ID | Verification and limit | Evidence and pass condition |
 |---|---|---|
-| P1 | Review the session record, permissions, relevant simulation/bench evidence, site and risk controls offline. | Approved roles and scope, marked zone, limits and stop criteria recorded. Every missing dependency is assigned and blocks its dependent test. |
+| P1 | Review the session record, permissions, relevant simulation/bench evidence, site and risk controls offline. | Record offline evidence, environment issues and the entry requirements for the next check. Assign each later gap to its dependent check. |
 | D1 | Stationary read-only connection on the verified interface with the command path isolated. Observe agreed sensor and robot-state topics. | Actual topic names, types, QoS, frame IDs, rates, gaps, timestamps and sample counts recorded for the agreed window. LiDAR returns and required camera/IMU or odometry streams are plausible. Missing optional inputs are recorded explicitly. Any motion or unexpected actuation publisher aborts. |
 | D2 | Verify calibration, timestamps and TF while stationary against known references in the test zone. | The actual `map -> odom -> base_link -> sensor` chain is documented, including which transforms can only be verified after mapping. Required sensor transforms are available at acquisition time, angle and distance agree with the references within approved tolerances, and there are no duplicate TF authorities or unsynchronized clocks. |
 | P2 | Independently verify RC priority and E-stop on the actual equipment using the reviewed Unitree/operator procedure and an appropriate safe bench setup. | Reviewer and operator confirm override and stop behavior independently of ULTRON. Any bench procedure that could move the robot needs its own bounded approval and setup. An unverified protection blocks all floor motion. |
