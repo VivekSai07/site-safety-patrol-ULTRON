@@ -1,7 +1,8 @@
 """Where frames come from. Every source is an iterable of `Frame`.
 
     folder:PATH                    images in name order (recorded data, the nesseler photos)
-    bag:PATH[,rate=2][,pose=lidar] recorded ROS 2 bag from the B2: colour, registered depth, lidar odometry
+    bag:PATH[,rate=2][,pose=lidar][,lidar=1] recorded ROS 2 bag from the B2: colour, registered depth, lidar odometry
+                                   (lidar=1: each frame also carries the scan as `cloud`, odometry frame)
     relay[:PORT]                   live from the robot through scripts/ros_relay.py (default port 5600)
     cv:0 | cv:rtsp://... | cv:FILE OpenCV capture: webcam, network stream or video file
     ros2:/image[,pose=/odom][,cloud=/points]   ROS 2 topics (Image or CompressedImage)
@@ -234,7 +235,8 @@ def open_source(spec, pace=0.0):
         from . import bag
         path, *options = rest.split(",")
         settings = dict(option.split("=", 1) for option in options)
-        return bag.frames(path, float(settings.get("rate", 2.0)), settings.get("pose", "lidar"))
+        return bag.frames(path, float(settings.get("rate", 2.0)), settings.get("pose", "lidar"),
+                          lidar=settings.get("lidar") == "1")
     if kind == "sim":
         from . import sim
         path, *options = rest.split(",")
