@@ -1,5 +1,34 @@
 # Local validation, 27 November 2026
 
+## Main reconciliation with `0e7eff6`
+
+In the reconciled worktree, Python 3.10.12 with MuJoCo 3.17.0, NumPy 2.2.6,
+Pillow 12.3.0 and the dashboard dependencies ran:
+
+```bash
+PYTHONPATH=src:tests python -m unittest discover -s tests -v
+PYTHONPATH=src:tests MUJOCO_GL=egl ULTRON_RENDER_TESTS=1 python -m unittest discover -s tests -v
+```
+
+The fast run completed 213 tests with 15 skipped; the rendered run completed
+213 with seven skipped, with all remaining tests passing. Rendered skips were
+two PDF checks requiring the unavailable source form, one check requiring a separately generated
+`runs/history-demo`, and four optional browser checks. The interpreter used
+the dashboard environment with a separate local simulation site-packages
+path; for reproduction install the declared `sim` and `dashboard` extras.
+Python 3.12 was not tested locally.
+
+A separate clean-source run generated a two-patrol synthetic history and ran
+28 dashboard tests with two PDF checks skipped; the history conversion check
+passed. A clean wheel included the synthetic schema, dashboard assets and
+both assessment packs, without the excluded local schema or hall.
+
+A separate `ultron.inspect360` run recorded 24/24 accepted synthetic
+sampling cells and return to the simulated base. It used kinematic movement,
+virtual camera pan/tilt and segmentation-oracle visibility; this is not a
+validated minimum image count, complete physical surface coverage or hardware
+readiness. No real robot or live external API was contacted.
+
 ## Organizer B2 headless smoke test and label-first status
 
 An isolated organizer-kit headless test on 27 November 2026 used image

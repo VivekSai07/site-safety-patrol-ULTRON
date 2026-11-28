@@ -18,7 +18,8 @@ Paths are relative to the team repository:
 5. `docs/DETECTION_WORLD_USAGE.md`, `docs/DETECTION_WORLD_SOURCES.md`,
    `docs/DETECTION_EVALUATION.md` and `docs/DETECTION_LABEL_BASELINE.md`
 6. `docs/API_PROMPTS.md`, `docs/DASHBOARD.md` and
-   `docs/dashboard_nav_goal.md`
+   `docs/dashboard_nav_goal.md`, plus `docs/ASSESSMENT_RUNBOOK.md`,
+   `docs/INSPECTION_PACK_DESIGN.md` and `docs/SITE_SAFETY.md`
 7. `docs/SOURCE_REVIEW.md`, `docs/ORGANIZER_ALIGNMENT.md`,
    `docs/VALIDATION.md`, `docs/SIM_TO_HARDWARE.md` and
    `docs/DATA_COLLECTION.md`
@@ -56,6 +57,9 @@ figures, model weights, databases, generated runs, browser profiles,
 credentials or identifiable personal data. Share only separately approved
 summaries and provenance. Local availability or code-push permission does not
 grant rights to upload these materials to a model provider.
+The existing upstream prompt ZIP contains source-derived rubric material with
+unverified reuse rights; do not attach or upload it without separate approval
+and rights/privacy review.
 
 For each supplied attachment record its path or title, source, revision,
 role, and sharing status; record missing items and unresolved rights.

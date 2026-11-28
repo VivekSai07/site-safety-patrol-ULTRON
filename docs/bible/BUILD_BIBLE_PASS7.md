@@ -2,8 +2,9 @@
 
 **Working team reference.** Team baseline `0b97edb` and the Pass 6 material
 remain historical comparison points. Team main at `79fb408` added a
-dashboard and versioned assessment prompt packs; this reconciliation also
-includes the label-first and detection-world work. Use `git rev-parse HEAD`
+dashboard and versioned assessment prompt packs; `0e7eff6` added a separate
+24-view simulator, site-safety sweep and live-assessment path. This
+reconciliation also includes label-first and detection-world work. Use `git rev-parse HEAD`
 to identify the actual snapshot under review. This is not evidence of physical
 deployment, approval, legal compliance or a completed inspection.
 
@@ -106,9 +107,10 @@ area was visible or every ladder was detected.
 | Model adapters | **EXISTS: ADAPTER, limited smoke tests.** A local CPU YOLO-World ladder predictor was exercised on synthetic views and four real photos. The real sample is not independently annotated or held out; label accuracy and real-world performance remain unvalidated. See [evaluation](../DETECTION_EVALUATION.md). |
 | Label-first capture/draft | **EXISTS: SIM, bounded probes.** Rendered 1280×720 synthetic capture, HTTP movement/STOP and a local source-specific manual-fixture draft were observed; browser controls and focus were checked separately. The public example is not an official form. Automatic label reading and real inspection remain unverified. See [validation](../VALIDATION.md). |
 | Detection test hall | **EXISTS: SIM.** An independent example has a stationary B2, free virtual camera, synthetic labels and segmentation-derived visible ground truth. The previously tested Sahil hall requires an explicitly supplied local source pending rights review. Neither is a calibrated robot camera or real detection result. See [world usage](../DETECTION_WORLD_USAGE.md). |
+| Optional sampling and site safety | **EXISTS: SIM.** `inspect360` uses a virtual pan/tilt camera, kinematic movement and oracle visibility; its 24-cell audit is not a proven minimal image count or physical full-surface inspection. The opt-in site-safety sweep uses known simulated target positions; default PPE flags are oracle-based, and optional model judgments are uncalibrated proposals. These do not replace the label-first baseline. See [assessment runbook](../ASSESSMENT_RUNBOOK.md) and [site safety](../SITE_SAFETY.md). |
 | Organizer B2 DDS | **EXISTS: SIM, bounded probes.** Headless LowState and a separately wrapped isolated viewer/stand run with finite command/state samples were observed. Browser GUI/host access, walking and hardware remain untested. See [organizer B2 simulation](../ORGANIZER_B2_SIM.md). |
 | Robot interface | **EXISTS: ADAPTER.** A B2 SDK hook exists but is not a hardware safety supervisor or proof of a functioning robot interface. The demo never connects to it. |
-| Dashboard and assessment | **EXISTS: ADAPTER.** The dashboard and its per-ladder PDF path are separate from the legacy report. The assessment adapter constructs hash-bound request bodies and validates proposals without calling an API; the optional live adapter has a separate approval boundary. End-to-end robot/API integration remains unverified. See [dashboard](../DASHBOARD.md) and [API prompts](../API_PROMPTS.md). |
+| Dashboard and assessment | **EXISTS: ADAPTER.** The dashboard and its per-ladder PDF path are separate from the legacy report. `assessment` constructs hash-bound requests without calling an API; `assessment_live` and the separate optional OpenAI adapter can transmit images and prompts and require separate authorization and rights/privacy review. No live call was made in this reconciliation. End-to-end robot/API integration remains unverified. See [dashboard](../DASHBOARD.md) and [API prompts](../API_PROMPTS.md). |
 | ROS and Nav2 | **PARTIAL.** ROS replay is visualization only. A separate dashboard bridge can send Nav2 goals when goals are enabled; it does not prove simulation isolation. Real Nav2, real-bag ingestion and the proposed executive remain unverified. Rerun and DimOS runtimes remain unverified. |
 
 Dashboard goals are off by default. Do not start the goal bridge where a real
@@ -505,8 +507,8 @@ resolution as a new authorized event rather than rewriting the old history.
 ### 8.1 Team roles
 
 The [team handoff](../../README.md#team-owners-and-deliverables) describes
-Sahil's autonomy, Om's detection/evaluation, Kaan's assessment, Vivek's
-integration and Aravind's dashboard workstreams. Confirm current ownership
+Sahil's autonomy, Om's detection/evaluation, Kaan's spatial memory, Vivek's
+assessment/integration and Aravind's dashboard workstreams. Confirm current ownership
 with the team; these descriptions are not verified GitHub issue assignments.
 The following role mapping remains a planning aid.
 

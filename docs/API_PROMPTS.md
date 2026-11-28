@@ -3,10 +3,10 @@
 The versioned prompts below are available for local, fixture-based team
 integration. They produce evidence proposals, not safety certification. They
 are separate from simulator oracles, image-generation recipes and completed
-evaluation results. The existing ladder rubric includes source-derived
-criterion labels whose reuse rights remain unverified; its presence on main
-does not establish permission to transmit or redistribute it. Review rights
-and privacy for both text and images before any external use.
+evaluation results. The existing ladder and site-safety rubrics include
+source-derived material whose reuse rights remain unverified; their presence
+on main does not establish permission to transmit or redistribute them.
+Review rights and privacy for both text and images before any external use.
 
 | Pack | Files | Scope |
 |---|---|---|
@@ -18,6 +18,12 @@ Each folder contains `system.txt`, numbered `section_*.txt` instructions, `rubri
 ## Request construction
 
 The published [assessment adapter](../src/ultron/assessment.py) loads the selected pack, reads hash-verified local JPEGs and builds a Responses API body. It does not call OpenAI or read an API key. The resulting local request file contains image data and prompt text; keep it private and do not transmit or publish it without separate authorization and rights/privacy review. A future live caller must keep credentials in its backend environment.
+
+The separate `ultron.assessment_live` and `scripts/first-milestone.sh` paths
+can send images and prompt text to an external API. Do not run them without
+separate authorization and rights/privacy review; they were not run in this
+reconciliation. The optional `perception.openai_adapter` is another distinct
+live path.
 
 ```bash
 python3 -m pip install -e . Pillow

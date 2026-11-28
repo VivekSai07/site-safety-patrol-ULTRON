@@ -95,10 +95,17 @@ default and read-only/audit-only, with no path to motion, verdict or veto.
    validation.
 7. The published assessment adapter constructs hash-bound request bodies and
    validates proposals; it is not itself a live API call. The separate
-   optional local OpenAI adapter has its own approval and execution boundary.
+   `assessment_live` milestone and optional local OpenAI adapter can transmit
+   images and prompts and have their own approval and rights/privacy boundary.
 8. Dashboard goal sending is off by default. The ROS bridge can forward Nav2
    goals and has no independent guarantee of simulation isolation. Do not
    infer that localhost, a namespace or a ROS domain alone isolates hardware.
+9. `inspect360` and the live-assessment milestone use a 24-cell simulated
+   sampling grid. This is not a proven minimum image count or a prerequisite
+   for the label-first draft; virtual pan/tilt and oracle visibility are not
+   physical B2 capabilities. The optional site-safety sweep uses known
+   synthetic target positions, with oracle defaults or uncalibrated models;
+   it is not an independent real-site inspection.
 
 Use actual supplied reports before quoting metrics. Small synthetic or real
 smoke tests do not establish hardware acceptance, generalization, an optimal

@@ -35,36 +35,46 @@ Automated tests do not establish physical B2 safety or learned-model accuracy.
 
 ## Main reconciliation and branch inventory
 
-The fetched team main was `79fb408`: it adds the dashboard, Nav2 goal bridge
-and versioned ladder/site-safety assessment packs to the earlier baseline.
-This branch preserves those changes alongside the label-first capture/draft
-and detection-world work. To identify a reviewed or published snapshot, use
-the actual commit SHA rather than assuming this document's fetch point is
-still the remote tip.
+Team main at `79fb408` added the dashboard, Nav2 goal bridge and versioned
+assessment packs. It later advanced to `0e7eff6`, adding an optional
+site-safety sweep, a 24-view simulation experiment and a separate live
+assessment path. This reconciliation preserves those changes alongside the
+label-first capture/draft and detection-world work. Use the actual commit SHA
+to identify a reviewed or published snapshot rather than assuming this fetch
+point is still the remote tip.
 
-At the reconciliation fetch, divergence below is relative to `79fb408`;
+At the later reconciliation fetch, divergence below is relative to `0e7eff6`;
 behind counts main-only commits, and ahead counts branch-only commits:
 
 | Live team branch | Tip at fetch | Behind / ahead | Status |
 |---|---|---:|---|
-| `main` | `79fb408` | 0 / 0 | Integration base |
-| `feature/dashboard` | `6d8cae2` | 1 / 0 | Already an ancestor of main |
-| `feature/site-pipeline` | `649c06c` | 1 / 3 | Separate, not merged here |
-| `feature/model-safety-perception` | `803e6e8` | 0 / 18 | Separate model/site-safety work, not merged here |
-| `sahil/sim-slam-nav2` | `f2a7094` | 7 / 14 | Separate autonomy/simulation work, not merged here |
+| `main` | `0e7eff6` | 0 / 0 | Integration base |
+| `feature/dashboard` | `6d8cae2` | 21 / 0 | Already an ancestor of main |
+| `feature/site-pipeline` | `6bb9ddf` | 21 / 5 | Separate, not merged here |
+| `feature/model-safety-perception` | `803e6e8` | 20 / 18 | Separate ancestry; related safety work is present in main |
+| `sahil/sim-slam-nav2` | `f2a7094` | 27 / 14 | Separate autonomy/simulation work, not merged here |
 
-The model/site-safety branch includes additional assets and model work whose
-rights, behavior and ownership have not been reviewed in this reconciliation.
+The site-pipeline branch also contains a recording-replay/object-map
+experiment and a source-specific checklist reader; its branch-only work and
+data rights have not been validated here. The model/site-safety branch has
+distinct commits despite related work being present in main; its remaining
+differences, assets and rights have not been independently reviewed in this
+reconciliation.
 The locally cached `feature/protocol-reader` ref was absent from the live
 remote and may be stale. Local `main` and the two `om/pass7-*` branches are
 independent refs; use Git to inspect their current tips. Refresh remote refs
 before relying on this inventory. The personal repository and this team
 repository retain separate histories.
 
-The assessment adapter builds hash-bound API requests and checks proposals
-without making a network call. The optional local live adapter is separate,
-off by default and requires image/text sharing approval; its local catalog
-override is fixture-only. Dashboard goals are off by default; the ROS bridge can forward goals to any reachable matching action
+The assessment builder constructs hash-bound API requests and checks
+proposals without making a network call. The separate `assessment_live`
+milestone and optional local OpenAI adapter can send data externally; both
+require separate image/text sharing approval and rights/privacy review.
+The local catalog override in the latter is fixture-only. The 24-cell grid is
+specific to the separate live milestone and simulation experiment, not a
+proven minimum or the label-first draft's prerequisite. The site-safety sweep
+is a later synthetic experiment with known scene targets, not a real site
+inspection. Dashboard goals are off by default; the ROS bridge can forward goals to any reachable matching action
 server and does not prove isolation. Do not start it where real hardware
 could receive a goal; localhost, a namespace or a ROS domain alone is not
 proof of isolation.
