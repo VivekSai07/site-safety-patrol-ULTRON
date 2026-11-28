@@ -169,6 +169,29 @@ def command_patrol(args):
     command_status(args)
 
 
+def realtime(frames):
+    """Hold a recording back to the pace it was recorded at, so the vision model gets the time it
+    would have on the robot (a replay otherwise runs as fast as frames can be processed)."""
+    import time
+    start = None
+    for frame in frames:
+        if start is None:
+            start = (time.monotonic(), frame.stamp)
+        ahead = (frame.stamp - start[1]) - (time.monotonic() - start[0])
+        if ahead > 0:
+            time.sleep(ahead)
+        yield frame
+
+
+def build_candidates(args):
+    """--candidates lidar: upright blobs in the lidar cloud the camera should look at (needs a source
+    whose frames carry `cloud` in the map frame: sim:PATH,lidar=1 today)."""
+    if args.candidates == "lidar":
+        from .discover import LidarCandidates
+        return LidarCandidates(floor=args.floor)
+    return None
+
+
 def command_online(args):
     """One process, objects read as the robot goes: survey every frame; each object found is
     checked by the vision model, collected until the robot is done with it, then read on a worker
@@ -184,8 +207,9 @@ def command_online(args):
     online = OnlinePatrol(survey, inspection, store, navigator=navigator, is_free=is_free,
                           leave_seconds=args.leave_seconds, leave_distance=args.leave_distance,
                           budget_seconds=args.budget_seconds, max_reads=args.max_reads,
-                          commands=stdin_commands())
-    online.run(open_source(args.source, args.pace))
+                          commands=stdin_commands(), candidates=build_candidates(args))
+    frames = open_source(args.source, args.pace)
+    online.run(realtime(frames) if args.realtime else frames)
     if publisher:
         publisher.end()
     command_status(args)
@@ -280,6 +304,10 @@ def main(argv=None):
     live.add_argument("--leave-distance", type=float, default=3.5, help="... and this far away (m) is read")
     live.add_argument("--budget-seconds", type=float, default=120.0, help="read an object after this long whatever its views")
     live.add_argument("--max-reads", type=int, default=2, help="reads per object when the robot comes back with new views")
+    live.add_argument("--realtime", action="store_true", help="replay a recording at the pace it was recorded")
+    live.add_argument("--candidates", choices=["none", "lidar"], default="none",
+                      help="where things worth a look come from besides the detector")
+    live.add_argument("--floor", type=float, help="floor height in the map frame for lidar candidates (default: estimated)")
     live.set_defaults(action=command_online)
 
     tune = commands.add_parser("calibrate", parents=[common], help="choose detector prompts for this site")

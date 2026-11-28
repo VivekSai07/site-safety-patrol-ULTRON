@@ -25,9 +25,11 @@ reading frames while the robot walks.
 
 Lidar discovery plugs in as `candidates(frame) -> [(x, y), ...]`: map positions of things worth a
 look. A candidate no object explains is looked at (`look_candidate`) once nothing is collecting.
-No source of candidates exists yet; see docs/ONLINE.md.
+`discover.LidarCandidates` is one (upright, ladder-sized blobs); only `sim:PATH,lidar=1` frames
+carry the cloud it needs so far, see docs/ONLINE.md.
 """
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import Future, ThreadPoolExecutor, wait
+import itertools
 from dataclasses import dataclass, field
 import math
 import queue
@@ -45,6 +47,41 @@ EXPLAINED = 1.5           # metres: an object this near a candidate explains it
 LOOKED_AT = (1.0, 5.0)    # range at which a candidate in front of the camera counts as looked at ...
 LOOK_CONE = math.radians(35)  # ... within this angle of the heading
 DISMISS_LOOKS = 5         # frames that looked at a candidate and found nothing there: dismissed
+CANDIDATE_HITS = 2        # clouds a candidate must show up in before it counts (sim yard: 28 of 40 did)
+
+
+class Worker:
+    """One thread for the vision model; quick object checks go before long form reads, so a new
+    object is confirmed while earlier ones are still being read (one model serves one call at a time)."""
+    CHECK, READ = 0, 1
+
+    def __init__(self):
+        self._queue, self._order = queue.PriorityQueue(), itertools.count()
+        self._thread = threading.Thread(target=self._serve, name="ultron-vlm", daemon=True)
+        self._thread.start()
+
+    def submit(self, call, priority=READ):
+        future = Future()
+        self._queue.put((priority, next(self._order), future, call))
+        return future
+
+    def pending(self, priority=READ):
+        return sum(1 for item in list(self._queue.queue) if item[0] == priority)
+
+    def _serve(self):
+        while True:
+            _, _, future, call = self._queue.get()
+            if call is None:
+                return
+            if future.set_running_or_notify_cancel():
+                try:
+                    future.set_result(call())
+                except BaseException as error:  # handed to the main thread with the result
+                    future.set_exception(error)
+
+    def shutdown(self):
+        self._queue.put((99, next(self._order), Future(), None))
+        self._thread.join()
 
 
 @dataclass
@@ -67,7 +104,7 @@ class Candidate:
     position: tuple
     hits: int = 1
     looks: int = 0
-    state: str = "open"          # open | explained | dismissed
+    state: str = "new"           # new (seen once) | open | explained | dismissed
     explained_by: str = None
 
 
@@ -90,7 +127,7 @@ class OnlinePatrol:
         self.tracks = {}
         self.candidates = []
         self.jobs = []                          # [(future, kind, object id, payload)]
-        self.worker = ThreadPoolExecutor(1, thread_name_prefix="ultron-vlm")
+        self.worker = Worker()
         self.driver = ThreadPoolExecutor(1, thread_name_prefix="ultron-nav") if self.navigator else None
         self.goal = None                        # (future, ViewRequest) while the navigator is under way
         self.tried = {}                         # object id -> {(view, side)} goals that failed
@@ -211,6 +248,8 @@ class OnlinePatrol:
         """Back with an object already read, with views it lacked then: read it again."""
         if track.reads >= self.max_reads or track.read_at is None or site_object.last_seen <= track.read_at:
             return
+        if self.worker.pending(Worker.READ) > 1:
+            return  # the reader is behind: first reads of other objects come first
         missing = len(missing_views(site_object, self.keyframes.for_object(site_object.id)))
         if missing < track.missing_at_read:
             track.state, track.since = COLLECTING, self.stamp
@@ -218,7 +257,8 @@ class OnlinePatrol:
 
     # --- the worker --------------------------------------------------------------------------
     def _submit(self, kind, object_id, payload, call):
-        self.jobs.append((self.worker.submit(call), kind, object_id, payload))
+        priority = Worker.CHECK if kind == "check" else Worker.READ
+        self.jobs.append((self.worker.submit(call, priority), kind, object_id, payload))
 
     def _apply_results(self):
         waiting = []
@@ -330,18 +370,21 @@ class OnlinePatrol:
             near = min(self.candidates, key=lambda c: math.dist(c.position, (x, y)), default=None)
             if near and math.dist(near.position, (x, y)) < CANDIDATE_MERGE:
                 near.hits += 1
+                if near.state == "new" and near.hits >= CANDIDATE_HITS:
+                    near.state = "open"
+                    self.store.emit("candidate", candidate=near.id, position=list(near.position), hits=near.hits)
                 continue
-            self.candidates.append(Candidate(f"CAND-{len(self.candidates) + 1:03}", (x, y)))
-            self.store.emit("candidate", candidate=self.candidates[-1].id, position=[round(x, 2), round(y, 2)])
+            self.candidates.append(Candidate(f"CAND-{len(self.candidates) + 1:03}", (x, y),
+                                             state="open" if CANDIDATE_HITS <= 1 else "new"))
         live = [o for o in self.objects.all() if o.position and o.status not in ("REJECTED", "MOVED")]
         for candidate in self.candidates:
-            if candidate.state != "open":
+            if candidate.state not in ("new", "open"):
                 continue
             near = min(live, key=lambda o: math.dist(o.position, candidate.position), default=None)
             if near and math.dist(near.position, candidate.position) <= EXPLAINED:
                 candidate.state, candidate.explained_by = "explained", near.id
                 self.store.emit("candidate_explained", candidate=candidate.id, object=near.id)
-            elif self._in_view(candidate.position):
+            elif candidate.state == "open" and self._in_view(candidate.position):
                 candidate.looks += 1
                 if candidate.looks >= DISMISS_LOOKS:
                     candidate.state = "dismissed"

@@ -117,7 +117,8 @@ class OnlineTest(Workspace):
 
     def test_a_candidate_nothing_explains_is_looked_at_then_explained_by_the_object_found_there(self):
         online = self.online(FormVlm(), candidates=lambda frame: [B])
-        self.step(online, (0.0, 0.0), 0, 3.0, 0.0, kind="nothing")
+        for stamp in (0.0, 0.5):  # a candidate counts once two clouds show it
+            self.step(online, (0.0, 0.0), 0, 3.0, stamp, kind="nothing")
         focus = [e for e in self.store.events(limit=None) if e["kind"] == "focus"][-1]
         self.assertIsNone(focus["object"])
         self.assertEqual(focus["view"], "look")
@@ -126,6 +127,19 @@ class OnlineTest(Workspace):
         self.assertIn("candidate_explained", self.kinds())
         self.assertEqual(online.candidates[0].explained_by, "LAD-001")
         online.finish()
+
+
+class LidarCandidatesTest(unittest.TestCase):
+    def test_an_upright_ladder_sized_blob_is_a_candidate_and_a_wall_is_not(self):
+        import numpy as np
+        from ultron.pipeline.discover import LidarCandidates
+        rng = np.random.default_rng(0)
+        ladder = np.column_stack([rng.uniform(4.9, 5.4, 400), rng.uniform(1.9, 2.1, 400), rng.uniform(0, 2.4, 400)])
+        wall = np.column_stack([rng.uniform(0, 8, 3000), np.full(3000, 6.0), rng.uniform(0, 2.6, 3000)])
+        floor = np.column_stack([rng.uniform(-5, 10, 3000), rng.uniform(-5, 10, 3000), rng.normal(0, 0.01, 3000)])
+        found = LidarCandidates().find(np.vstack([ladder, wall, floor]).astype(np.float32), (0.0, 0.0, 0.0))
+        self.assertEqual(len(found), 1)
+        self.assertLess(abs(found[0][0] - 5.15) + abs(found[0][1] - 2.0), 0.3)
 
 
 if __name__ == "__main__":

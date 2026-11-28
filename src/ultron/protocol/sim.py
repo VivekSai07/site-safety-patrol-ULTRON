@@ -70,8 +70,9 @@ def _misplace(pose, error):
     return c * x - s * y + dx, s * x + c * y + dy, yaw + angle
 
 
-def frames(path, rate=2.0, error=None, depth_folder="depth"):
-    """Colour frames at about `rate` per second, with depth registered to colour and the camera's pose."""
+def frames(path, rate=2.0, error=None, depth_folder="depth", lidar=False):
+    """Colour frames at about `rate` per second, with depth registered to colour and the camera's pose.
+    With `lidar`, each frame also carries the sweep as `cloud`: Nx3 points in the map frame."""
     path = Path(path)
     rig = _rig(path)
     color, depth_info = rig["camera_info"]["color"], rig["camera_info"]["depth"]
@@ -97,5 +98,15 @@ def frames(path, rate=2.0, error=None, depth_folder="depth"):
             pose = camera_pose(record["base_render"], rig)
             if error:
                 pose = _misplace(pose, error)
-            yield Frame(image, name=f"sim-{k:06d}", stamp=stamp, pose=pose, pose_frame="map",
-                        depth=registered, camera=camera)
+            frame = Frame(image, name=f"sim-{k:06d}", stamp=stamp, pose=pose, pose_frame="map",
+                          depth=registered, camera=camera)
+            if lidar and record.get("lidar"):
+                from ..pipeline.discover import world_cloud
+                sweep = np.load(path / "sensors" / "lidar" / f"{k:06d}.npz")["xyz"]
+                transform = np.asarray(record["lidar"]["T_world_sensor"], dtype=np.float64)
+                if error:  # misplace the cloud with the pose
+                    angle = math.radians(error[0])
+                    c, s = math.cos(angle), math.sin(angle)
+                    transform = np.array([[c, -s, 0, error[1]], [s, c, 0, error[2]], [0, 0, 1, 0], [0, 0, 0, 1]]) @ transform
+                frame.cloud = world_cloud(sweep, transform)
+            yield frame
