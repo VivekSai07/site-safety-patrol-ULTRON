@@ -40,7 +40,7 @@ next goal from afar is coarse again; the pipeline's goals are always coarse.
   `/controller_server`: `<checker>.xy_goal_tolerance`, `<checker>.yaw_goal_tolerance`; the checker's
   name comes from `goal_checker_plugins`). Nav2 Humble's `SimpleGoalChecker` applies these at run
   time (`dynamicParametersCallback`, read from the humble branch source on 2026-11-28).
-- **Never holds a goal back:** no parameter service, or no answer within 1 s, sends the goal anyway
+- **Never holds a goal back:** no parameter service, or no answer within 3 s (`tolerance_wait_s`), sends the goal anyway
   with Nav2's configured tolerance.
 - **Shown on the page:** the goal's detail says which, e.g. `fine 0.10 m / 0.10 rad`.
 - **Tested** with the bridge against a stand-in controller in `explore_check.sh` (coarse, then fine,

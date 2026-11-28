@@ -98,7 +98,8 @@ class DashboardBridge(Node):
             # Coarse to fine (ros_link.goal_tolerance): set on Nav2's goal checker before each goal.
             # goal_checker '' = the first of the controller's goal_checker_plugins.
             ('controller_server', 'controller_server'), ('goal_checker', ''),
-            ('coarse_xy', 0.4), ('coarse_yaw', 0.4), ('fine_xy', 0.1), ('fine_yaw', 0.1)]}
+            ('coarse_xy', 0.4), ('coarse_yaw', 0.4), ('fine_xy', 0.1), ('fine_yaw', 0.1),
+            ('tolerance_wait_s', 3.0)]}  # a goal waits this long for its tolerance at most, then goes anyway
         self.p = p
         self.dash = Dashboard(p['dashboard_url'])
         self.outbox = Outbox(self.get_logger())
@@ -211,7 +212,7 @@ class DashboardBridge(Node):
             self.active[1].cancel_goal_async()  # its CANCELED result is reported as usual
             with self.lock:
                 self.cancelled.discard(self.active[0])  # once is enough
-        if self.tolerance_wait and time.monotonic() - self.tolerance_wait[2] > 1.0:
+        if self.tolerance_wait and time.monotonic() - self.tolerance_wait[2] > self.p['tolerance_wait_s']:
             self.goal_modes[self.tolerance_wait[0]] += ' (not set: controller did not answer)'
             self.release(self.tolerance_wait[0])  # never hold a goal back for its tolerance
         if self.sent_at and self.sent_at[1] < time.monotonic() - self.p['nav_accept_timeout_s']:
