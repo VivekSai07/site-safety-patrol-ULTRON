@@ -10,15 +10,44 @@ from .perception import validate_findings,evidence_gate
 class RuntimePerception:
     def __init__(self,*,detector='oracle',weights=None,inspector='oracle',qwen=None,allow_download=False,device='cpu',family='yoloe'):
         self.detector=None;self.inspector=None;self.findings={}
+        self.safety_detector=None;self.safety_judge=None
         self.tracks=DetectionTracks()
         if detector=='yolo':
             if not weights: raise ValueError('--weights is required for model discovery')
-            from .perception.models import YoloLadderDetector
+            from .perception.models import YoloLadderDetector,YoloSafetyDetector
             self.detector=YoloLadderDetector(weights,family=family,device=device,allow_download=allow_download)
+            self.safety_detector=YoloSafetyDetector(weights,family=family,device=device,allow_download=allow_download)
         if inspector=='qwen':
             if not qwen: raise ValueError('--qwen is required for model inspection')
-            from .perception.models import QwenInspector
+            from .perception.models import QwenInspector,QwenSafetyJudge
             self.inspector=QwenInspector(qwen,allow_download=allow_download)
+            self.safety_judge=QwenSafetyJudge(qwen,allow_download=allow_download)
+
+    @property
+    def model_safety_mode(self):
+        return self.safety_detector is not None or self.safety_judge is not None
+
+    def safety_confirm(self,rgb,depth,frame,kind,position):
+        """Nearest matching-class model detection within 1.0 m of the station, or None."""
+        if self.safety_detector is None:
+            return None
+        from .site_safety import YOLO_CLASS_FOR_KIND
+        candidates=[]
+        for box in self.safety_detector.detect(Image.fromarray(rgb)):
+            if box['label']!=YOLO_CLASS_FOR_KIND[kind]:
+                continue
+            try: point=project_box(box['box_xyxy'],depth,frame)
+            except ValueError: continue
+            distance=math.dist(point[:2],position[:2])
+            if distance<=1.0:
+                candidates.append((distance,dict(box,position=point)))
+        return min(candidates,key=lambda c:c[0])[1] if candidates else None
+
+    def safety_judge_station(self,image_paths,kind):
+        if self.safety_judge is None:
+            raise RuntimeError('No model judge configured')
+        from .perception.models import parse_judge_text
+        return parse_judge_text(self.safety_judge.judge(image_paths,kind),kind)
 
     def detections(self,sim,frame,rgb,depth,segmentation):
         if self.detector is None:

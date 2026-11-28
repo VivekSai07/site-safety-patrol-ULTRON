@@ -22,5 +22,34 @@ class JudgeParsingTests(unittest.TestCase):
         self.assertEqual(set(bad['states'].values()), {'UNKNOWN'})
 
 
+class FakeDetector:
+    def __init__(self, boxes): self.boxes = boxes
+    def detect(self, image): return self.boxes
+
+
+class FakeJudge:
+    def __init__(self, text): self.text = text
+    def judge(self, paths, kind): return self.text
+
+
+class RuntimeSafetyTests(unittest.TestCase):
+    def perception(self):
+        from ultron.runtime_perception import RuntimePerception
+        return RuntimePerception()  # oracle mode, no models
+
+    def test_oracle_mode_has_no_model_safety(self):
+        p = self.perception()
+        self.assertFalse(p.model_safety_mode)
+        with self.assertRaises(RuntimeError):
+            p.safety_judge_station(['x.jpg'], 'person')
+
+    def test_fake_judge_station_states_flow_through(self):
+        p = self.perception()
+        p.safety_judge = FakeJudge('{"station_visible": true, "psa.helm": "NO", "psa.warnweste": "NO", "reason": "r"}')
+        result = p.safety_judge_station(['x.jpg'], 'person')
+        self.assertEqual(result['states']['psa.helm'], 'DEFECT')
+        self.assertTrue(p.model_safety_mode)
+
+
 if __name__ == '__main__':
     unittest.main()
