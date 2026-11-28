@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Stand-in for Nav2 + SLAM to check the dashboard bridge: a NavigateToPose action server that "drives" each
 goal for `drive_s` seconds and succeeds (a newer goal preempts the running one, as in Nav2; cancel works),
-and a latched /map (all free, 6 x 4 m) republished every few seconds like slam_toolbox. No TF, no motion.
-It logs what happens to every goal.
+and a latched /map (all free, 6 x 4 m) republished every few seconds like slam_toolbox. TF map -> base_link
+puts the robot where its last goal succeeded (at the origin before). A `controller_server` node holds
+the goal checker's tolerances like Nav2's (goal_checker_plugins, general_goal_checker.xy/yaw_goal_tolerance,
+settable at run time) and publishes them on /fake_nav2/tolerance. It logs what happens to every goal.
 """
 import threading
 import time
@@ -15,6 +17,34 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from geometry_msgs.msg import TransformStamped
+from rcl_interfaces.msg import SetParametersResult
+from std_msgs.msg import String
+from tf2_ros import TransformBroadcaster
+
+
+class FakeController(Node):
+    """Only the goal checker's parameters of Nav2's controller_server."""
+
+    def __init__(self):
+        super().__init__('controller_server')
+        self.declare_parameter('goal_checker_plugins', ['general_goal_checker'])
+        self.declare_parameter('general_goal_checker.xy_goal_tolerance', 0.25)
+        self.declare_parameter('general_goal_checker.yaw_goal_tolerance', 0.25)
+        latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.pub = self.create_publisher(String, '/fake_nav2/tolerance', latched)
+        self.add_on_set_parameters_callback(self.changed)
+        self.create_timer(0.5, self.publish)
+
+    def changed(self, parameters):
+        for p in parameters:
+            self.get_logger().info(f'{p.name} = {p.value}')
+        return SetParametersResult(successful=True)
+
+    def publish(self):
+        xy = self.get_parameter('general_goal_checker.xy_goal_tolerance').value
+        yaw = self.get_parameter('general_goal_checker.yaw_goal_tolerance').value
+        self.pub.publish(String(data=f'{xy:.2f} {yaw:.2f}'))
 
 
 class FakeNav2(Node):
@@ -28,6 +58,17 @@ class FakeNav2(Node):
         self.map_pub = self.create_publisher(OccupancyGrid, '/map', qos)
         self.create_timer(3.0, self.publish_map)
         self.publish_map()
+        self.robot = (0.0, 0.0)
+        self.tf = TransformBroadcaster(self)
+        self.create_timer(0.1, self.publish_tf)
+
+    def publish_tf(self):
+        t = TransformStamped()
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id, t.child_frame_id = 'map', 'base_link'
+        t.transform.translation.x, t.transform.translation.y = self.robot
+        t.transform.rotation.w = 1.0
+        self.tf.sendTransform(t)
 
     def publish_map(self):
         msg = OccupancyGrid()
@@ -57,6 +98,7 @@ class FakeNav2(Node):
                     return NavigateToPose.Result()
             time.sleep(0.05)
         handle.succeed()
+        self.robot = (p.x, p.y)
         self.get_logger().info(f'goal x={p.x:.2f} y={p.y:.2f}: succeeded')
         return NavigateToPose.Result()
 
@@ -64,8 +106,10 @@ class FakeNav2(Node):
 def main():
     rclpy.init()
     node = FakeNav2()
+    controller = FakeController()
     executor = MultiThreadedExecutor()
     executor.add_node(node)
+    executor.add_node(controller)
     try:
         executor.spin()
     except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):

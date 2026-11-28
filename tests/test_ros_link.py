@@ -37,3 +37,19 @@ class RosLinkTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class GoalToleranceTest(unittest.TestCase):
+    """Coarse to fine: asking again where the robot already stands means "more precisely"."""
+
+    def test_an_operator_goal_from_afar_is_coarse_and_one_within_reach_is_fine(self):
+        from ultron.dashboard.ros_link import goal_tolerance
+        robot = (1.0, 1.0, 0.0)
+        self.assertEqual(goal_tolerance({'x': 4.0, 'y': 1.0}, robot), ('coarse', 0.4, 0.4))
+        self.assertEqual(goal_tolerance({'x': 1.3, 'y': 1.1, 'by': 'operator'}, robot), ('fine', 0.1, 0.1))
+        self.assertEqual(goal_tolerance({'x': 1.0, 'y': 1.0, 'yaw': 1.5}, robot)[0], 'fine')  # turn on the spot
+
+    def test_pipeline_goals_and_an_unknown_robot_pose_stay_coarse(self):
+        from ultron.dashboard.ros_link import goal_tolerance
+        self.assertEqual(goal_tolerance({'x': 1.1, 'y': 1.0, 'by': 'pipeline'}, (1.0, 1.0, 0.0))[0], 'coarse')
+        self.assertEqual(goal_tolerance({'x': 1.1, 'y': 1.0}, None)[0], 'coarse')

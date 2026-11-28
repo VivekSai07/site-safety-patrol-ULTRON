@@ -34,6 +34,8 @@ import rclpy
 from action_msgs.msg import GoalStatus
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import OccupancyGrid
+from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
+from rcl_interfaces.srv import GetParameters, SetParameters
 from rclpy.action import ActionClient
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -43,8 +45,8 @@ from std_msgs.msg import Bool
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from ultron.dashboard.ros_link import (ACTION_STATUS, Dashboard, Explorer, explore_on_connect, explore_request, fence_mask,
-                                       fenced_grid, grid_png, keepout_grid, obstacle_cloud, quaternion_from_yaw,
-                                       yaw_from_quaternion)
+                                       fenced_grid, goal_tolerance, grid_png, keepout_grid, obstacle_cloud,
+                                       quaternion_from_yaw, yaw_from_quaternion)
 
 try:  # explore/status; not installed everywhere, then the explorer's state is inferred from its process
     from explore_lite_msgs.msg import ExploreStatus
@@ -92,7 +94,11 @@ class DashboardBridge(Node):
             ('fenced_map_topic', '/map_fenced'), ('keepout_mask_topic', '/keepout_mask'),
             # explore_lite subscribes to its costmap without transient-local, so a late start needs a repeat
             ('fenced_period_s', 2.0),
-            ('obstacles_topic', '/ultron/object_obstacles'), ('obstacles_period_s', 1.0)]}
+            ('obstacles_topic', '/ultron/object_obstacles'), ('obstacles_period_s', 1.0),
+            # Coarse to fine (ros_link.goal_tolerance): set on Nav2's goal checker before each goal.
+            # goal_checker '' = the first of the controller's goal_checker_plugins.
+            ('controller_server', 'controller_server'), ('goal_checker', ''),
+            ('coarse_xy', 0.4), ('coarse_yaw', 0.4), ('fine_xy', 0.1), ('fine_yaw', 0.1)]}
         self.p = p
         self.dash = Dashboard(p['dashboard_url'])
         self.outbox = Outbox(self.get_logger())
@@ -118,6 +124,15 @@ class DashboardBridge(Node):
         self.create_timer(1.0 / p['pose_rate_hz'], self.send_pose)
 
         self.nav = ActionClient(self, NavigateToPose, p['action_name'])
+        server = '/' + p['controller_server'].lstrip('/')
+        self.set_params = self.create_client(SetParameters, server + '/set_parameters')
+        self.get_params = self.create_client(GetParameters, server + '/get_parameters')
+        self.checker = p['goal_checker'] or None   # found from the controller when not given
+        self.checker_asked = 0.0
+        self.tolerance = None                      # (xy, yaw) last set on the goal checker
+        self.tolerance_wait = None                 # (seq, msg, mode, since) while a tolerance change is in flight
+        self.goal_modes = {}                       # seq -> 'coarse 0.40 m / 0.40 rad' for the ACCEPTED detail
+        self.create_timer(1.0, self.find_checker)  # known before the first goal, not looked up with it
         self.create_timer(0.1, self.take_goal)
 
         # exploration: requests run one at a time on their own thread, they wait for the explorer
@@ -196,6 +211,9 @@ class DashboardBridge(Node):
             self.active[1].cancel_goal_async()  # its CANCELED result is reported as usual
             with self.lock:
                 self.cancelled.discard(self.active[0])  # once is enough
+        if self.tolerance_wait and time.monotonic() - self.tolerance_wait[2] > 1.0:
+            self.goal_modes[self.tolerance_wait[0]] += ' (not set: controller did not answer)'
+            self.release(self.tolerance_wait[0])  # never hold a goal back for its tolerance
         if self.sent_at and self.sent_at[1] < time.monotonic() - self.p['nav_accept_timeout_s']:
             seq = self.sent_at[0]
             self.sent_at = None
@@ -228,6 +246,66 @@ class DashboardBridge(Node):
         q = pose.pose.orientation
         q.x, q.y, q.z, q.w = quaternion_from_yaw(float(goal['yaw']))
         self.get_logger().info(f"goal {seq}: x={goal['x']:.2f} y={goal['y']:.2f} yaw={goal['yaw']:.2f} in {goal['frame_id']}")
+        self.send_with_tolerance(seq, msg, goal)
+
+    # coarse to fine ----------------------------------------------------------------------------
+    def robot_pose(self):
+        try:
+            tf = self.tf.lookup_transform(self.p['map_frame'], self.p['base_frame'], rclpy.time.Time())
+        except TransformException:
+            return None
+        t, r = tf.transform.translation, tf.transform.rotation
+        return t.x, t.y, yaw_from_quaternion(r.x, r.y, r.z, r.w)
+
+    def find_checker(self):
+        """Ask the controller once in a while for its goal checker's name, until it answers."""
+        if self.checker or not self.get_params.service_is_ready() or time.monotonic() - self.checker_asked < 3.0:
+            return
+        self.checker_asked = time.monotonic()
+        request = GetParameters.Request(names=['goal_checker_plugins'])
+
+        def answered(future):
+            values = future.result().values if future.result() else []
+            names = list(values[0].string_array_value) if values else []
+            if names:
+                self.checker = names[0]
+                self.get_logger().info(f'goal checker: {self.checker}')
+        self.get_params.call_async(request).add_done_callback(answered)
+
+    def send_with_tolerance(self, seq, msg, goal):
+        mode, xy, yaw = goal_tolerance(goal, self.robot_pose(), (self.p['coarse_xy'], self.p['coarse_yaw']),
+                                       (self.p['fine_xy'], self.p['fine_yaw']))
+        self.goal_modes[seq] = f'{mode} {xy:.2f} m / {yaw:.2f} rad'
+        self.find_checker()
+        if (xy, yaw) == self.tolerance or not self.checker or not self.set_params.service_is_ready():
+            if (xy, yaw) != self.tolerance:
+                self.goal_modes[seq] += ' (not set: no goal checker parameters)'
+            return self.send_goal(seq, msg)
+        request = SetParameters.Request(parameters=[
+            Parameter(name=f'{self.checker}.{name}', value=ParameterValue(type=ParameterType.PARAMETER_DOUBLE,
+                                                                           double_value=float(value)))
+            for name, value in (('xy_goal_tolerance', xy), ('yaw_goal_tolerance', yaw))])
+        self.tolerance_wait = (seq, msg, time.monotonic())
+
+        def done(future):
+            results = future.result().results if future.result() else []
+            if results and all(r.successful for r in results):
+                self.tolerance = (xy, yaw)
+            else:
+                self.goal_modes[seq] += ' (not set: controller refused)'
+                self.get_logger().warning(f'goal tolerance {xy}/{yaw} not set: {[r.reason for r in results]}')
+            self.release(seq)
+        self.set_params.call_async(request).add_done_callback(done)
+
+    def release(self, seq):
+        """Send the goal that waited for its tolerance, unless a newer one replaced it meanwhile."""
+        if not self.tolerance_wait or self.tolerance_wait[0] != seq:
+            return  # an older goal's answer: the newer goal waits for its own
+        waiting, self.tolerance_wait = self.tolerance_wait, None
+        if seq == self.latest_seq:
+            self.send_goal(seq, waiting[1])
+
+    def send_goal(self, seq, msg):
         self.sent_at = (seq, time.monotonic())
         self.nav.send_goal_async(msg).add_done_callback(lambda future: self.on_accepted(seq, future))
 
@@ -244,15 +322,16 @@ class DashboardBridge(Node):
             handle.cancel_goal_async()
             return
         self.active = (seq, handle)
-        self.report(seq, 'ACCEPTED')
+        self.report(seq, 'ACCEPTED', self.goal_modes.get(seq, ''))
         handle.get_result_async().add_done_callback(lambda result: self.on_result(seq, result))
 
     def on_result(self, seq, future):
         status = future.result().status
         if self.active and self.active[0] == seq:
             self.active = None
+        mode = self.goal_modes.pop(seq, '')  # with what tolerance it was reached
         self.report(seq, ACTION_STATUS.get(status, 'FAILED'),
-                    '' if status == GoalStatus.STATUS_SUCCEEDED else f'nav2 status {status}')
+                    mode if status == GoalStatus.STATUS_SUCCEEDED else f'nav2 status {status}')
 
     def report(self, seq, status, detail=''):
         self.get_logger().info(f'goal {seq}: {status} {detail}'.rstrip())

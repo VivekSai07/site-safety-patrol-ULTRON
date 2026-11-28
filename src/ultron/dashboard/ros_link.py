@@ -22,6 +22,21 @@ from PIL import Image
 ACTION_STATUS = {4: 'SUCCEEDED', 5: 'CANCELED', 6: 'FAILED'}
 
 
+COARSE = (0.4, 0.4)   # goal tolerance (metres, radians): a view needs the object in frame, not an exact pose
+FINE = (0.1, 0.1)     # for an operator who asks again where the robot already is: they want it precise
+
+
+def goal_tolerance(goal, robot, coarse=COARSE, fine=FINE):
+    """(mode, xy, yaw) for a goal. Coarse to fine: an operator goal set within the coarse tolerance of
+    where the robot stands asks for more precision than coarse gives, so it is reached finely.
+    Goals from afar, and the pipeline's own, are coarse. No robot pose known: coarse."""
+    if goal.get('by', 'operator') != 'operator' or robot is None:
+        return 'coarse', *coarse
+    if math.hypot(float(goal['x']) - robot[0], float(goal['y']) - robot[1]) <= coarse[0]:
+        return 'fine', *fine
+    return 'coarse', *coarse
+
+
 def grid_png(width, height, data):
     """OccupancyGrid data (row 0 = lowest y; -1 unknown, 0..100 occupied %) -> greyscale PNG with
     row 0 = highest y, coloured like RViz's map view: free white, occupied black, unknown grey."""

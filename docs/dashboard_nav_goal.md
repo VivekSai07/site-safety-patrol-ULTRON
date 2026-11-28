@@ -48,6 +48,9 @@ curl -X POST http://127.0.0.1:8000/api/missions -H 'Content-Type: application/js
 | `action_name` | `navigate_to_pose` | nav2 action |
 | `pose_rate_hz` / `map_min_period_s` | `5` / `2` | Upload rates |
 | `nav_wait_s` / `nav_accept_timeout_s` | `3` / `5` | A goal fails with `navigation not available` instead of hanging: no Nav2 found in 3 s, or no answer in 5 s |
+| `coarse_xy`, `coarse_yaw` | `0.4`, `0.4` | Goal tolerance (m, rad) for goals from afar and every pipeline goal |
+| `fine_xy`, `fine_yaw` | `0.1`, `0.1` | For an operator goal set within `coarse_xy` of where the robot stands: asking again there means "more precisely" |
+| `controller_server`, `goal_checker` | `controller_server`, `` | Where the tolerance is set before each goal (empty: the first of the controller's `goal_checker_plugins`) |
 | `explore_command` | `ros2 run explore_lite explore --ros-args -p use_sim_time:=false -p costmap_topic:=/map_fenced -p costmap_updates_topic:=/map_fenced_updates -p return_to_init:=false` | Started on Start exploration, stopped on Finish. Reads the fenced map `/map_fenced`, so no frontier beyond the fence (windows) |
 | `explore_resume_topic` / `explore_status_topic` | `explore/resume` / `explore/status` | explore_lite's topics |
 | `fenced_map_topic` / `keepout_mask_topic` / `obstacles_topic` | `/map_fenced` / `/keepout_mask` / `/ultron/object_obstacles` | Fence and object obstacles out to ROS |

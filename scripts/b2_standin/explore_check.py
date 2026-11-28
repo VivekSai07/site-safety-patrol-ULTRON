@@ -83,6 +83,10 @@ class Watch(Node):
                             ('/ultron/object_obstacles', PointCloud2)):
             self.create_subscription(kind, topic, lambda msg, t=topic: self.latest.__setitem__(t, msg), latched)
         self.create_subscription(String, '/fake_explore/state', lambda msg: self.states.append(msg.data), latched)
+        self.tolerance = None
+        self.create_subscription(String, '/fake_nav2/tolerance', lambda msg: setattr(self, 'tolerance', msg.data),
+                                 QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                                            durability=DurabilityPolicy.TRANSIENT_LOCAL))
 
 
 def start_bridge():
@@ -122,6 +126,16 @@ def main():
     status, g = set_goal()
     check('operator goal with no exploration', status == 201, (status, g))
     check('operator goal reaches Nav2 and succeeds', wait_goal({'SUCCEEDED'})['status'] == 'SUCCEEDED', goal())
+    check('a goal from afar is coarse and sets the goal checker to 0.40', goal()['detail'].startswith('coarse 0.40')
+          and wait(lambda: node.tolerance == '0.40 0.40', 5), (goal()['detail'], node.tolerance))
+    status, g = set_goal(x=1.2, y=1.1)  # the robot stands at (1, 1): asked again within reach -> precisely
+    wait_goal({'SUCCEEDED'})
+    check('a goal within reach is fine and sets the goal checker to 0.10', goal()['detail'].startswith('fine 0.10')
+          and wait(lambda: node.tolerance == '0.10 0.10', 5), (goal()['detail'], node.tolerance))
+    status, g = set_goal(x=2.5, y=1.5)
+    wait_goal({'SUCCEEDED'})
+    check('the next goal from afar is coarse again', goal()['detail'].startswith('coarse 0.40')
+          and wait(lambda: node.tolerance == '0.40 0.40', 5), (goal()['detail'], node.tolerance))
 
     # rung 1: explore
     status, ex = ask('start')
