@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from .replay import Api, convert_record, depth_jpeg
+from .sim_site_checks import SimSiteChecks
 
 
 class LiveTail:
@@ -30,6 +31,7 @@ class LiveTail:
         self.closed_missions = set()
         self.published_records = set()
         self.backlog = {'events.jsonl': [], 'telemetry.jsonl': []}
+        self.site_checks = SimSiteChecks(self.run, self.api.post, log)
 
     def _new_rows(self, name):
         path = self.run / name
@@ -83,6 +85,7 @@ class LiveTail:
                                           'asset_id': row.get('asset_id'),
                                           'data': json.loads(json.dumps(data, default=str))})
             if status!=201:raise RuntimeError('Event publication failed')
+            self.site_checks.on_event(mission, row)
             if row['type'] == 'ASSESSMENT_READY' and self.assessment_worker:
                 self.assessment_worker.submit(row['manifest'], mission)
             if row['type'] == 'MISSION_FINISHED':

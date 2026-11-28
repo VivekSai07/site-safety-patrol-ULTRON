@@ -87,6 +87,11 @@ class PatrolSummary(unittest.TestCase):
         self.assertEqual(row(s, 'BS-1')['answer'], sc.YES)
         self.assertEqual(checklist(s, 'erste_hilfe_brandschutz')['headline'], sc.NO)
 
+    def test_an_unconfirmed_sighting_is_not_presence(self):
+        hit = {'object_id': 'AID-001', 'kind': 'first_aid_kit', 'rows': {}}
+        self.assertEqual(row(sc.patrol_summary([hit]), 'EH-1')['answer'], sc.OPEN)
+        self.assertEqual(row(sc.patrol_summary([{**hit, 'verified': True}]), 'EH-1')['answer'], sc.YES)
+
     def test_ladder_row_of_the_effectiveness_check(self):
         self.assertEqual(row(sc.patrol_summary([]), 'WK-5')['answer'], sc.NOT_FOUND)
         passed = row(sc.patrol_summary([], [{'status': 'AUTOMATED_PASS'}]), 'WK-5')

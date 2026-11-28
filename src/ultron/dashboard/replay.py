@@ -15,6 +15,7 @@ import urllib.request
 from pathlib import Path
 
 from .checklist import SIM_TYPE_TO_ASCENT, from_sim_checks
+from .sim_site_checks import SimSiteChecks
 
 DEPTH_RANGE_M = (0.3, 8.0)
 
@@ -97,6 +98,7 @@ def replay(run_dir, url, speed=4.0, site='demo-site', tag='', sleep=time.sleep, 
     events = [json.loads(line) for line in (run_dir / 'events.jsonl').read_text().splitlines() if line]
     telemetry = [json.loads(line) for line in (run_dir / 'telemetry.jsonl').read_text().splitlines() if line]
     by_index = {t['index']: t for t in telemetry}
+    site_checks = SimSiteChecks(run_dir, api.post, log)
     for mission in protocol['missions']:
         source_id = mission['mission_id']
         mission_id = source_id + tag
@@ -132,6 +134,7 @@ def replay(run_dir, url, speed=4.0, site='demo-site', tag='', sleep=time.sleep, 
                 data['ladder_type'] = row['observation'].get('type')
             api.post('/api/events', {'mission_id': mission_id, 'type': row['type'], 'time': t,
                                      'asset_id': row.get('asset_id'), 'data': json.loads(json.dumps(data, default=str))})
+            site_checks.on_event(mission_id, row)
             if row['type'] == 'INSPECTION_COMMITTED' and row.get('asset_id') in records:
                 record = {**records[row['asset_id']], 'mission_id': mission_id}
                 payload, files = convert_record(record, by_index, run_dir, t0, t)

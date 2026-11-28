@@ -336,8 +336,11 @@ def patrol_summary(objects, ladders=()):
         given = [(o, o.get('rows', {}).get(row.id)) for o in seen]
         answers = [g['answer'] for _, g in given if g]
         if row.mode == PRESENCE:
-            # found is enough for "there"; an object reported missing, empty or damaged makes it "nein"
-            answer = NO if NO in answers else YES
+            # "there" needs a confirmed object or a "ja" from its own reading: a detector hit alone may be
+            # a false one, and a missing extinguisher must not read as present. Missing, empty or
+            # damaged on any object makes it "nein".
+            confirmed = YES in answers or any(o.get('verified') for o in seen)
+            answer = NO if NO in answers else YES if confirmed else OPEN
         else:
             answer = _worst(answers) if answers else OPEN
         cited = next(((o, g) for o, g in given if g and g['answer'] == answer), (seen[0], None))
