@@ -417,6 +417,8 @@ def main(argv=None):
     parser.add_argument('--launch-arg', action='append', default=[], help='extra sim.launch.py key:=value')
     args = parser.parse_args(argv)
     cases = [c for c in args.cases.split(',') if c]
+    if not cases:
+        raise SystemExit('at least one navigation case is required')
     if set(cases) - set(ALL_CASES):
         raise SystemExit(f'unknown cases {sorted(set(cases) - set(ALL_CASES))}; choose from {ALL_CASES}')
     if os.environ.get('ROS_DOMAIN_ID', '0') in ('', '0') or os.environ.get('ROS_LOCALHOST_ONLY') != '1':
@@ -470,7 +472,8 @@ def main(argv=None):
     finally:
         for proc in procs.values():
             stop(proc, timeout=40)
+    return 0 if summary['verdict'] == 'PASS' else 1
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
