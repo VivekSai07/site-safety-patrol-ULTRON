@@ -82,4 +82,14 @@ The native-terminal run `runs/rung-evidence-comparison-20261128T031501778882Z/at
 
 The request builder now accepts optional `reference_views`: each needs a unique ID, root-confined JPEG path/hash, a matching `design_id`, explicit `design_match_verified`/`intact_verified` attestations and a nonempty `verification_source`. They are REFERENCE_ONLY, excluded from current evidence IDs, dashboard photos and coverage. References and the exact comparison policy are bound into the job digest; no-reference jobs retain their prior digests. Real references require independently verified matching equipment/design; an earlier model opinion is insufficient. This supplies intended geometry, not a safe-use certificate or an instruction to flag damage.
 
-`runs/verified-reference-comparison-20261128T032350676057Z/run_comparison.py` prepares two API calls using the same current frames plus intact synthetic design references. The intact control images are reused as reference templates, so this is a comparison diagnostic, not held-out validation. No successful API response for this new diagnostic has been recorded yet. Reference admission/evidence isolation and affected assessment/worker tests passed (26 tests); no hardware behavior changed.
+`runs/verified-reference-comparison-20261128T032350676057Z/run_comparison.py` prepares two API calls using the same current frames plus intact synthetic design references. The intact control images are reused as reference templates, so this is a comparison diagnostic, not held-out validation. The native-terminal run `attempt-20261128T032519138166Z` subsequently completed both calls: the damaged fixture returned DEFECT for rung damage and FLAGGED overall; the intact control returned UNKNOWN for rung damage and MANUAL_REVIEW overall. Both proposals passed all 23-criterion and evidence-bundle checks. Defect evidence IDs refer only to the current overview/detail, not reference images. This is one successful reference-assisted synthetic comparison, not held-out or real-world validation. Reference admission/evidence isolation and affected assessment/worker tests passed (26 tests); no hardware behavior changed.
+
+### Observed rung-test outcomes
+
+| Configuration | Missing-rung fixture | Intact control | Scope |
+|---|---|---|---|
+| One front keyframe | UNKNOWN / MANUAL_REVIEW | Not part of this pair | Seeded defect missed |
+| Overview plus close-up | UNKNOWN / MANUAL_REVIEW | UNKNOWN / MANUAL_REVIEW | Seeded defect missed |
+| Same overview/close-up plus verified design references | DEFECT / FLAGGED | UNKNOWN / MANUAL_REVIEW | One successful synthetic comparison |
+
+The last result supports continuing reference-assisted evaluation. It does not establish detection of cracks, bent stiles, missing feet, loose spreaders, wear, label validity or any functional condition. The control's UNKNOWN is not proof that the entire ladder is intact. No result grants safe use or hardware motion authority. No additional API calls were made while validating these saved responses.
