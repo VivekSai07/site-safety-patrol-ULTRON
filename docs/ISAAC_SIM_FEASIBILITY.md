@@ -14,15 +14,16 @@
 
 ## Smoke test (executed)
 
-`scripts/isaac/run-smoke.sh --seconds 25` (Isaac's interpreter, `ROS_DOMAIN_ID=71`, `ROS_LOCALHOST_ONLY=1`, bundled Humble libraries) with `scripts/isaac/check_points.py` listening in `.venv-ros`:
+`scripts/isaac/run-smoke.sh --seconds 25 --snapshot runs/isaac` (Isaac's interpreter, `ROS_DOMAIN_ID=71`, `ROS_LOCALHOST_ONLY=1`, bundled Humble libraries) with `scripts/isaac/check_points.py` listening in `.venv-ros`:
 
 | Check | Result |
 |---|---|
 | Headless start, primitive 8 × 6 m room, bare RTX lidar at 0.83 m, 10 Hz | PASS: 1,672 app frames in 25 s; GPU memory back to idle afterwards |
-| PointCloud2 on `/ultron/sim/isaac/points` received by ULTRON's ROS environment | PASS: 50 messages, ~76,000 points each, frame `lidar_link`, ranges 1.5–4.3 m (consistent with the room) |
+| PointCloud2 on `/ultron/sim/isaac/points` received by ULTRON's ROS environment | PASS: frame `lidar_link`. **Correction:** the first run's ~76,000-point messages were partial sweeps (a top-view plot showed one quadrant only) because output accumulation was off. With `accumulate_outputs=True`, each message is a full 360° sweep of ~458,000 points (128 emitters), ranges 1.5–4.9 m |
 | Lidar pattern | Default bare prim has **128 emitters**, not Helios-32: a custom emitter pattern must be authored |
 | Point fields | x, y, z only (no ring/time/intensity) |
-| Message rate | ~3 Hz observed; the Python listener converted every point and is the likely bottleneck — rate **not measured** reliably |
+| Message rate | Not measured reliably: full sweeps are ~7 MB each over best-effort transport; ~1 message/s reached the listener while Isaac ran about 0.5× real time |
+| Images | Rendered scene and received lidar sweep: `docs/images/isaac/isaac_scene.png`, `docs/images/isaac/isaac_lidar_points.png` (primitive room, primitive A-frame ladder, box as robot stand-in — not a B2 model) |
 
 ## What carries over unchanged
 
