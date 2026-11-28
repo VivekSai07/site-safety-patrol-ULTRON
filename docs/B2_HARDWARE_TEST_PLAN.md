@@ -112,9 +112,29 @@ and Nav2 in shadow mode before considering physical autonomy.
 | P2 | Independently verify RC priority and E-stop on the actual equipment using the reviewed Unitree/operator procedure and an appropriate safe bench setup. | Reviewer and operator confirm override and stop behavior independently of ULTRON. Any bench procedure that could move the robot needs its own bounded approval and setup. An unverified protection blocks all floor motion. |
 | P3 | Verify the independent watchdog and restart inhibition in the approved bench setup. Exercise command loss and stale commands within that procedure. | Watchdog stop is observed independently of ULTRON. Loss, stale data and restart leave actuation inhibited. An SDK success code without observed confirmation is insufficient. |
 
+### Joystick-first qualification
+
+The Isaac joystick reference is useful for checking axes and signs. For the
+B2, treat `/dev/input/js0` as a candidate input device. The reference publishes
+directly to `/cmd_vel` and relies on a shutdown zero. The proposed B2 path is
+`js0 → manual velocity request → motion gate → verified B2 transport`. Qualify
+it with a recorder first. Keep the robot's verified RC override and independent
+stop available. Keep Nav2 and dashboard motion out of the manual command path.
+
+| ID | Verification and limit | Evidence and pass condition |
+|---|---|---|
+| J1 | Before D1, check the B2 SDK offline in the branch's ROS Humble venv. Check the package revision and B2 SportClient interface without initializing DDS or opening a transport. | SDK imports and interface match the approved starter. Record any runtime or transport checks still pending. |
+| J2 | After D1, verify the controller identity, neutral position, forward/reverse sign and turn signs. Publish only to an isolated recorder. Approve each input case separately. | Observed velocity requests match each input. Neutral, enable release, stale input, unplug and process exit inhibit motion. Reconnect requires an explicit re-enable. Record the verified axis/button mapping and stop timing. |
+
+Do J1, then D1 and J2 before the controller movement trials. Complete the
+applicable protection checks before enabling any floor motion. Use the
+controller in M2–M5, one approved direction per trial. Once manual control
+passes, collect the short mapping route and verify the map before a Nav2
+shadow goal. A physical Nav2 goal remains a separate N3 decision.
+
 ### Controlled motion
 
-Requires P1–P3, named operator consent and an independently checked clear
+Requires P1–P3 and J1–J2, named operator consent and an independently checked clear
 test zone. Keep Nav2, dashboard goal dispatch and automatic recovery
 disabled during these checks. The operator controls each move and confirms
 stationary state before another move is considered. Measure actual travel,
