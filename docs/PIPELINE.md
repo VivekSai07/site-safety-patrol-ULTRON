@@ -78,7 +78,8 @@ disagree wait for a third; of three or more, one lying over 1 m from where the a
 was moved (`object_moved` with `seen_at`). Until the patrol is lined up nothing is announced, not
 even stored objects it re-sees (one may be taken for another of its kind nearby); a patrol that
 never sees two stored objects reports when its survey settles. Objects created before then are
-discarded if it turns out suspect, and a suspect patrol announces nothing.
+discarded if it turns out suspect, and a suspect patrol announces nothing, so it re-inspects
+nothing an earlier mission inspected (it still inspects stored objects never inspected).
 
 ## Modules
 
@@ -191,12 +192,18 @@ python -m ultron.pipeline survey --source sim:PATROL,rate=5 --calibration sim:PA
 ```
 
 Result, A then B then C on one map id, scored against the yard's ground truth:
-- A: 23 objects: 22 real ladders, each once; one rolling scaffold taken for a ladder (detector).
+- A: 23 objects: 22 real ladders, each once, each inside the ladder's footprint (the scorer cannot
+  see errors smaller than that); one rolling scaffold taken for a ladder (detector).
 - B: lined up with A's objects (shift 0.01 m); every object A found keeps its id; 7 ladders only
   seen from the north are added; no duplicates.
 - C: lined up; L49's old place is seen empty from three places and reported `object_moved`; the
-  ladder at its new place is a new object 0.00 m from the truth. Nothing else changes.
-- The first-aid point is never detected with the current prompts (detector, not association).
+  ladder at its new place is a new object inside its new footprint. Nothing else changes.
+- With every pose of B misplaced: 0.4 m and 2 degrees (about the yard's corner) lines up and keeps
+  every id, but the fit stays a shift: stored objects move up to 0.24 m (0.06 m without the error)
+  and ladders B adds in the north lie 0.3-0.4 m further off. 1.5 m, 5 degrees, and 3 degrees with
+  0.6 m are suspect: nothing is announced, kept or re-inspected.
+- The first-aid point is never detected: YOLOE gives "first aid kit" nothing on a clear view of
+  it, even at score 0.05 ("first aid sign" scores 0.33). Prompt calibration, not association.
 
 What the open yard forced (the hall recording had none of it):
 - **Range from the nearest dense depth peak that spans the outline**, not a percentile: seen 10 m
@@ -204,7 +211,8 @@ What the open yard forced (the hall recording had none of it):
   percentile fell behind it (the footprint then lay up to 4.5 m beyond the ladder and split it).
   A small object in front, caught by a sloppy outline, does not span it and is passed over.
 - **The floor is removed**: a plane fitted to the lower half of each depth image (camera 0.87 m
-  above it in the simulator). Masks that take in an object's shadow otherwise put it on the floor
+  above it in the simulator; on the hall recording found in all 265 frames at rate 8, camera
+  0.74-0.79 m above it). Masks that take in an object's shadow otherwise put it on the floor
   in front, and a stored height band that reaches below the floor made the empty floor where a
   moved ladder stood look occupied.
 - The simulated depth has no noise; the real D457's error grows with the square of the range
