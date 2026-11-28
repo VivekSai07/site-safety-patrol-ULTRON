@@ -26,6 +26,7 @@ class Sighting:
     cells: list = None       # [[i, j], ...] floor cells (CELL metres) the object's visible surface covers
     zband: tuple = None      # (low, high) metres above (+) or below (-) the camera that the box spans
     lying: bool = False      # flat on the floor (lift.py): zband is then measured floor to top, not the box
+    doubt: str = None        # why it is likely not an object in the room (lift.doubt): seen on or through glass
 
     def side(self, robot_pose):
         """Viewing direction as a 45 degree step, 0..7: the map bearing from object to camera."""

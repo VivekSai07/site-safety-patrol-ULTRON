@@ -65,3 +65,12 @@ KINDS = {kind.name: kind for kind in (
 )}
 
 DEFAULT_PROMPTS = {kind.name: {"prompt": kind.prompts[0], "min_score": kind.min_score} for kind in KINDS.values()}
+
+# Extra (prompt, kind, min_score) classes the detector runs beside each kind's chosen prompt.
+# A wooden ladder lying on the demo room's carpet (7 phone photos, about 1.5 m up): "ladder" and the
+# material prompts never boxed it; "ladder lying on the floor" did only at input size 1280
+# (0.44-0.83 in 4 photos with it in full view, 0.12 cut off at the edge; at 640 at most 0.13).
+# On the hall recording at 1280 the same prompt boxed a low paving platform as lying at 0.11-0.28
+# and nothing else lying, so 0.4. Glass reflections of standing ladders score up to 0.83 with it
+# too (0.88 with "ladder"): they stand above the sill, so lift.doubt, not this, is their guard.
+ALSO = (("ladder lying on the floor", "ladder", 0.4),)

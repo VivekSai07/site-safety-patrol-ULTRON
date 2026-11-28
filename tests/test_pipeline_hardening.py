@@ -17,7 +17,7 @@ except ImportError:
 
 from ultron.pipeline.catalog import KINDS
 from ultron.pipeline.keyframes import KeyframeStore
-from ultron.pipeline.lift import CELL, lift, lying
+from ultron.pipeline.lift import CELL, doubt, lift, lying
 from ultron.pipeline.objects import ObjectMap, footprint
 from ultron.pipeline.survey import Survey
 from ultron.pipeline.types import Detection
@@ -70,7 +70,7 @@ def scene(boxes, wall=12.0, noise=SIM_NOISE, seed=0):
             inside = (o >= low) & (o <= high)
             parallel = np.abs(d) < 1e-12
             t1 = np.where(parallel, np.where(inside, -np.inf, np.inf), t1)
-            t2 = np.where(parallel, np.where(inside, np.inf, -np.inf), t2)
+            t2 = np.where(parallel, np.inf, t2)  # parallel: all of the ray inside the slab, or none
             near, far = np.maximum(near, np.minimum(t1, t2)), np.minimum(far, np.maximum(t1, t2))
         hit = (far >= near) & (near > 0)
         depth = np.where(hit, np.minimum(depth, near), depth)
@@ -198,6 +198,155 @@ class LyingLadderTest(unittest.TestCase):
         frame = seen("a", boxes)
         frame.depth[240:] = 0.0  # no depth in the lower half: no floor plane
         self.assertFalse(lift(frame, detection(boxes), CALIBRATION).lying)
+
+
+def window_wall(boxes, wall=3.0, sill=0.9, top=2.4, beyond=12.0, columns=(120, 520), door=None, seed=0):
+    """`scene` with a wall `wall` metres ahead holding a window from `sill` to `top` metres high
+    over image `columns` (glass: the depth camera reads the room `beyond` it), or with a door
+    opening (floor to `top`) over `door` columns. `boxes` behind the wall show only through it."""
+    behind = [b for b in boxes if min(b[0] - b[2], b[0] + b[2]) > wall]
+    front = [b for b in boxes if b not in behind]
+    depth = scene(front, wall=wall, seed=seed)
+    far = scene(behind, wall=beyond, seed=seed + 1)
+    v, u = np.mgrid[0:480, 0:640] + 0.5
+    up = HEIGHT - (v - CALIBRATION.cy) / CALIBRATION.fy * wall  # height where the ray meets the wall
+    hole = np.zeros(depth.shape, dtype=bool)
+    if columns:
+        hole |= (u >= columns[0]) & (u < columns[1]) & (up >= sill) & (up <= top)
+    if door:
+        hole |= (u >= door[0]) & (u < door[1]) & (up <= top)
+    through = hole & (np.abs(depth - wall) < 0.3 * wall)  # where the wall would be seen, not a front object
+    depth[through] = far[through]
+    return depth
+
+
+def framed(depth):
+    return Frame(Image.new("RGB", (640, 480)), name="w", pose=(0.0, 0.0, 0.0), depth=depth)
+
+
+def visible_outline(boxes, depth, near, far):
+    """Outline of what of `boxes` is visible in `depth` (pixels in [near, far]) inside their hull."""
+    o = outline(boxes)
+    from ultron.pipeline.lift import _mask
+    mask = _mask(depth.shape, o) & (depth >= near) & (depth <= far)
+    rows, columns = np.nonzero(mask)
+    x0, x1 = columns.min() * 1000 / 640, (columns.max() + 1) * 1000 / 640
+    y0, y1 = rows.min() * 1000 / 480, (rows.max() + 1) * 1000 / 480
+    return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+
+
+def outlined(points, kind="ladder"):
+    box = [min(p[0] for p in points), min(p[1] for p in points), max(p[0] for p in points), max(p[1] for p in points)]
+    return Detection(kind, box, 0.9, None, points)
+
+
+class GlassTest(unittest.TestCase):
+    """Second line behind the fence: detections seen on or through glass (lift.doubt)."""
+
+    def test_a_ladder_seen_through_a_window_over_its_sill_is_doubted(self):
+        """A reflection or a ladder in the next room: only its top shows, the sill right below it."""
+        ladder = place(ladder_parts(1.8, standing=True), 6.0, 0.0, 0.0)
+        depth = window_wall(ladder)
+        detection = outlined(visible_outline(ladder, depth, 5.5, 6.5))
+        self.assertEqual(doubt(framed(depth), detection, CALIBRATION), "over a sill")
+        sighting = lift(framed(depth), detection, CALIBRATION)
+        self.assertEqual(sighting.doubt, "over a sill")
+
+    def test_a_ladder_standing_in_front_of_the_window_is_not_doubted(self):
+        for ahead in (1.8, 2.5):
+            ladder = place(ladder_parts(1.8, standing=True), ahead, 0.0, 0.0)
+            depth = window_wall(ladder)
+            self.assertIsNone(doubt(framed(depth), outlined(outline(ladder)), CALIBRATION), ahead)
+
+    def test_a_ladder_seen_through_an_open_door_is_not_doubted(self):
+        """The fence decides whether the next room counts; the floor runs on below it."""
+        ladder = place(ladder_parts(1.8, standing=True), 6.0, 0.0, 0.0)
+        depth = window_wall(ladder, columns=None, door=(250, 390))
+        self.assertIsNone(doubt(framed(depth), outlined(visible_outline(ladder, depth, 5.5, 6.5)), CALIBRATION))
+
+    def test_wall_mounted_equipment_and_a_lying_ladder_are_not_doubted(self):
+        box = [(2.98, 0.0, 0.04, 0.25, 0.0, 1.2, 1.55)]  # an alarm box on a plain wall 3 m ahead
+        depth = scene(box, wall=3.0)
+        self.assertIsNone(doubt(framed(depth), outlined(outline(box), "fire_alarm"), CALIBRATION))
+        flat = place(ladder_parts(), 3.0, 0.0, math.pi / 2)
+        self.assertIsNone(doubt(framed(window_wall(flat, wall=5.0)), outlined(outline(flat)), CALIBRATION))
+
+    def test_an_outline_the_depth_camera_cannot_see_is_doubted_unless_the_whole_camera_is_blind(self):
+        """Clear glass often gives no depth at all; the outline would then be placed 2.5 m away."""
+        ladder = place(ladder_parts(1.8, standing=True), 6.0, 0.0, 0.0)
+        depth = window_wall(ladder)
+        detection = outlined(visible_outline(ladder, depth, 5.5, 6.5))
+        from ultron.pipeline.lift import _mask
+        holes = depth.copy()
+        holes[_mask(depth.shape, detection.outline)] = 0.0
+        self.assertEqual(doubt(framed(holes), detection, CALIBRATION), "no depth")
+        blind = np.zeros_like(depth)
+        blind[:, :100] = 3.0
+        self.assertIsNone(doubt(framed(blind), detection, CALIBRATION))
+
+
+def lidar_sweep(boxes, height=0.74, seed=0, noise=0.02):
+    """One sweep of a 32-ring lidar `height` above the floor at the origin (rings -53 to +15
+    degrees, as the B2's on the hall recording; 0.5 degree azimuth steps) against the floor and
+    oriented boxes (centre x, centre y, length, width, yaw, bottom, top). Nx3, z up, floor at 0."""
+    elevation = np.radians(np.linspace(-53, 15, 32))[:, None]
+    azimuth = np.radians(np.arange(0, 360, 0.5))[None, :]
+    dx, dy = (np.cos(elevation) * np.cos(azimuth)).ravel(), (np.cos(elevation) * np.sin(azimuth)).ravel()
+    dz = np.broadcast_to(np.sin(elevation), (32, 720)).ravel()
+    with np.errstate(divide="ignore"):
+        t = np.where(dz < 0, -height / np.where(dz < 0, dz, -1), np.inf)
+    for cx, cy, length, width, yaw, bottom, top in boxes:
+        c, s = math.cos(yaw), math.sin(yaw)
+        o = (c * -cx + s * -cy, -s * -cx + c * -cy, height)
+        d = (c * dx + s * dy, -s * dx + c * dy, dz)
+        near, far = np.full(dx.shape, -np.inf), np.full(dx.shape, np.inf)
+        for oo, dd, low, high in ((o[0], d[0], -length / 2, length / 2), (o[1], d[1], -width / 2, width / 2),
+                                  (o[2], d[2], bottom, top)):
+            with np.errstate(divide="ignore", invalid="ignore"):
+                t1, t2 = (low - oo) / dd, (high - oo) / dd
+            parallel = np.abs(dd) < 1e-12
+            inside = (oo >= low) & (oo <= high)
+            t1 = np.where(parallel, np.where(inside, -np.inf, np.inf), t1)
+            t2 = np.where(parallel, np.inf, t2)  # parallel: all of the ray inside the slab, or none
+            near, far = np.maximum(near, np.minimum(t1, t2)), np.minimum(far, np.maximum(t1, t2))
+        t = np.where((far >= near) & (near > 0), np.minimum(t, near), t)
+    keep = np.isfinite(t) & (t < 30)
+    t = t[keep] + np.random.default_rng(seed).normal(0, noise, keep.sum())
+    return np.stack([dx[keep] * t, dy[keep] * t, height + dz[keep] * t], axis=1).astype(np.float32)
+
+
+ROOM = [(5.0, 4.0, 14.0, 0.2, 0.0, 0.0, 2.8), (5.0, -4.0, 14.0, 0.2, 0.0, 0.0, 2.8),   # a 10 x 8 m room
+        (10.0, 0.0, 0.2, 8.0, 0.0, 0.0, 2.8), (-2.0, 0.0, 0.2, 8.0, 0.0, 0.0, 2.8)]
+
+
+class LidarLyingTest(unittest.TestCase):
+    def find(self, boxes, seed=0, walk=(0.0, 0.3, 0.6)):
+        """Candidates after sweeps from a robot walking along +x by `walk` metres (yaw 0)."""
+        from ultron.pipeline.discover import LidarCandidates
+        finder, found = LidarCandidates(), []
+        for n, step in enumerate(walk):
+            moved = [(b[0] - step,) + tuple(b[1:]) for b in ROOM + boxes]
+            cloud = lidar_sweep(moved, seed=seed * 10 + n) + np.float32([step, 0.0, 0.0])
+            found = finder.find(cloud, (step, 0.0, 0.0))
+        return found
+
+    def test_a_ladder_lying_on_the_floor_is_a_lying_candidate(self):
+        for x, y, yaw in ((3.0, 0.0, math.pi / 2), (3.5, 0.0, 0.0), (2.5, 1.5, math.pi / 4), (4.0, -2.0, 0.3)):
+            found = self.find(place(ladder_parts(3.0), x, y, yaw))
+            lying = [c for c in found if c.lying]
+            self.assertEqual(len(lying), 1, (x, y, yaw, found))
+            self.assertLess(math.dist(lying[0], (x, y)), 0.6, (x, y, yaw))
+            self.assertFalse([c for c in found if not c.lying and math.dist(c, (x, y)) < 1.5])
+
+    def test_an_empty_room_a_low_crate_and_a_standing_ladder_give_no_lying_candidate(self):
+        for seed in range(3):
+            self.assertEqual([c for c in self.find([], seed) if c.lying], [])
+        crate = [(3.0, 1.0, 0.5, 0.4, 0.0, 0.0, 0.2)]
+        self.assertEqual([c for c in self.find(crate) if c.lying], [])
+        standing = place(ladder_parts(1.8, standing=True), 3.0, 0.0, 0.0)
+        found = self.find(standing)
+        self.assertEqual([c for c in found if c.lying], [])
+        self.assertTrue([c for c in found if math.dist(c, (3.0, 0.0)) < 0.5])
 
 
 class Outlined:

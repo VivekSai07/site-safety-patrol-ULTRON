@@ -257,6 +257,57 @@ def lying(site_object):
     return bool(kind and kind.lying and band and band[1] - band[0] < kind.size[0])
 
 
+# A second line behind the operator's fence (docs/EXPLORATION_CONTRACT.md) against detections on
+# glass. On the hall recording the depth camera looks through an interior window and reads 12-18 m
+# where the wall around it is 2.5-6 m away. A reflection is matched at its mirror depth, also
+# behind the glass, or not at all; then the outline range falls back to an assumed 2.5 m, inside
+# the room, where the fence cannot catch it. Every real sighting of the hall recording passes both
+# tests (226 with depth, at rate 8).
+MIN_VALID = 0.3     # share of the outline with depth (hall: real outlines 0.43 and up, ladders 0.68 and up)
+DEPTH_WORKS = 0.5   # share of the whole image with depth for that test to apply: else the sensor failed
+# A window or glass wall starts above a sill (wall, radiator band). Seen from the robot's camera
+# (0.75 m up) through glass that starts higher, a reflected or a far object shows only its upper
+# part, and right below its outline is the sill: an upright surface clearly nearer than it. Below
+# a real object is floor, its own feet, or the wall it hangs on at its own range.
+SILL_BAND = 0.3     # metres below the outline's bottom, at the object's range, that are looked at
+SILL_SHARE = 0.5    # share of that band's measured pixels that are upright and nearer
+SILL_GAP = 0.5      # metres nearer at least (and SILL_GAP_SHARE of the range)
+SILL_GAP_SHARE = 0.15
+
+
+def doubt(frame, detection, calibration):
+    """Why this detection is likely not an object in the room ("no depth", "over a sill"), or None.
+    Needs a depth image and an outline; says nothing without them."""
+    depth = getattr(frame, "depth", None)
+    if depth is None or calibration is None or not detection.outline:
+        return None
+    depth = np.asarray(depth, dtype=float)
+    measured = np.isfinite(depth) & (depth > MIN_RANGE)
+    if measured.mean() < DEPTH_WORKS:
+        return None
+    mask = _mask(depth.shape, detection.outline)
+    if not mask.any():
+        return None
+    if (measured & mask).sum() < MIN_VALID * mask.sum():
+        return "no depth"
+    keep = off_floor(frame, depth, calibration)
+    distance = _outline_range(depth, detection.outline, keep)
+    if not distance:
+        return None
+    rows, columns = np.nonzero(mask)
+    height = depth.shape[0]
+    bottom = rows.max() + 1
+    span = max(2, int(math.ceil(SILL_BAND * calibration.fy / distance * height / calibration.height)))
+    if bottom >= height:
+        return None  # reaches the image's lower edge: nothing below it in view
+    band = (slice(bottom, min(bottom + span, height)), slice(columns.min(), columns.max() + 1))
+    seen = measured[band]
+    if seen.sum() < MIN_POINTS:
+        return None
+    nearer = seen & keep[band] & (depth[band] < distance - max(SILL_GAP, SILL_GAP_SHARE * distance))
+    return "over a sill" if nearer.sum() >= SILL_SHARE * seen.sum() else None
+
+
 def _along_bearing(frame, box, calibration, distance):
     """Map position `distance` metres along the ray through the box centre."""
     u = (box[0] + box[2]) / 2000 * calibration.width
@@ -283,6 +334,12 @@ def lift(frame, detection, calibration=None):
     """A `Sighting` for this detection; without pose or calibration only the detection is kept."""
     if frame.pose is None or calibration is None:
         return Sighting(detection)
+    sighting = _lift(frame, detection, calibration)
+    sighting.doubt = doubt(frame, detection, calibration)
+    return sighting
+
+
+def _lift(frame, detection, calibration):
     if frame.points is not None:
         position = locate(frame.points, detection.box, calibration, frame.pose)
         if position:
