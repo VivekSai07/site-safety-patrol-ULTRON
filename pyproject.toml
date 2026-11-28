@@ -29,6 +29,9 @@ perception-vlm = ["transformers>=4.57,<5", "accelerate>=1", "Pillow>=9", "torch>
 
 training-vlm = ["transformers>=4.57,<5", "accelerate>=1", "Pillow>=9", "torch>=2.2", "peft>=0.17,<1"]
 
+# Appearance re-ID and place memory; reuses the CLIP TorchScript ultralytics downloads.
+spatial = ["ultralytics>=8.3.0", "torch>=2.2", "numpy>=1.24", "Pillow>=9"]
+
 [project.scripts]
 ultron = "ultron.__main__:main"
 ultron-protocol = "ultron.protocol.__main__:main"

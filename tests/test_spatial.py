@@ -263,3 +263,61 @@ class TestAdvisorHook(unittest.TestCase):
         from ultron.spatial import AssociationAdvisor, SpatialConfig, SpatialMemory, load_embedder  # noqa: F401
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsInstance(SpatialMemory(tmp), AssociationAdvisor)
+
+
+@unittest.skipIf(np is None, "numpy and Pillow required")
+class TestCli(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.store = root / "memory"
+        self.workspace = root / "workspace"
+        (self.workspace / "keyframes").mkdir(parents=True)
+        # Two stored objects that look identical and stand 1 m apart: this morning's bug.
+        (self.workspace / "objects.json").write_text(json.dumps([
+            {"id": "ladder-1", "kind": "ladder", "position": [0.0, 0.0]},
+            {"id": "ladder-2", "kind": "ladder", "position": [1.0, 0.0]},
+            {"id": "ext-1", "kind": "extinguisher", "position": [4.0, 0.0]},
+        ]))
+        keyframes = []
+        for name, value in (("ladder-1", 0), ("ladder-2", 2), ("ext-1", 90)):
+            file = f"keyframes/{name}.jpg"
+            Image.fromarray(img(value, 64)).save(self.workspace / file)
+            keyframes.append({"object_id": name, "file": file, "box": [250, 250, 750, 750],
+                              "pose": [float(value), 0.0, 0.0], "stamp": 100.0 + value})
+        (self.workspace / "keyframes.json").write_text(json.dumps(keyframes))
+
+    def run_cli(self, *argv):
+        import contextlib, io
+        from ultron.spatial.__main__ import main
+        output = io.StringIO()
+        with unittest.mock.patch("ultron.spatial.__main__.load_embedder", return_value=FakeEmbedder()):
+            with contextlib.redirect_stdout(output):
+                main(["--store", str(self.store), *argv])
+        return output.getvalue()
+
+    def test_ingest_builds_memory_from_workspace(self):
+        out = self.run_cli("ingest", "--data", str(self.workspace))
+        self.assertIn("3 objects", out)
+        from ultron.spatial.memory import SpatialMemory
+        memory = SpatialMemory(self.store, embedder=FakeEmbedder())
+        self.assertEqual(memory.objects["ladder-1"]["position"], [0.0, 0.0])
+        self.assertEqual(len(memory.objects["ladder-1"]["embedding_ids"]), 1)
+        self.assertGreaterEqual(len(memory.places), 1)
+
+    def test_audit_flags_the_double_detection(self):
+        self.run_cli("ingest", "--data", str(self.workspace))
+        out = self.run_cli("audit")
+        self.assertIn("ladder-1", out)
+        self.assertIn("ladder-2", out)
+        self.assertNotIn("ext-1", out)
+
+    def test_query_prints_best_hits(self):
+        self.run_cli("ingest", "--data", str(self.workspace))
+        out = self.run_cli("query", "90", "--limit", "2")
+        self.assertIn("ext-1", out.splitlines()[0])
+
+    def test_status_counts(self):
+        self.run_cli("ingest", "--data", str(self.workspace))
+        self.assertIn("3 objects", self.run_cli("status"))
