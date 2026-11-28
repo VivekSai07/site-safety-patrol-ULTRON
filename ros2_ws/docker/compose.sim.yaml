@@ -1,0 +1,23 @@
+# Sim stack in the dev image. Host network is used only together with ROS_LOCALHOST_ONLY=1.
+#   REPO=$(git rev-parse --show-toplevel) ULTRON_UID=$(id -u) ULTRON_GID=$(id -g) \
+#     docker compose -f ros2_ws/docker/compose.sim.yaml up
+# Build the workspace first: ros2_ws/scripts/dev.sh bash -lc "colcon build --symlink-install"
+services:
+  sim:
+    image: ultron-b2-dev:humble
+    network_mode: host
+    ipc: private
+    user: "${ULTRON_UID:?}:${ULTRON_GID:?}"
+    working_dir: ${REPO:?set REPO to the repo root}/ros2_ws
+    volumes:
+      - ${REPO}:${REPO}
+    environment:
+      ROS_DOMAIN_ID: "71"
+      ROS_LOCALHOST_ONLY: "1"
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+      CYCLONEDDS_URI: file://${REPO}/ros2_ws/src/ultron_b2_bringup/config/dds/cyclonedds_localhost.xml
+      HOME: ${REPO}/ros2_ws/.dev_home
+      ROS_LOG_DIR: ${REPO}/ros2_ws/log/ros
+    command: >-
+      bash -lc "source install/setup.bash &&
+      scripts/ultron_launch.sh sim mode:=$${ULTRON_SIM_MODE:-mapping} viz:=$${ULTRON_VIZ:-none}"

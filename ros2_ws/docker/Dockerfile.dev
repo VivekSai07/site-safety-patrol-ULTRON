@@ -43,6 +43,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-humble-rosidl-generator-dds-idl \
     && rm -rf /var/lib/apt/lists/*
 
+# Repo python extras (pyproject: sim/autonomy/dashboard) so the existing unittest suite and the
+# MuJoCo sim bridge run in-container. numpy<2 keeps ABI compatibility with Humble's binaries.
+RUN python3 -m pip install --no-cache-dir "numpy<2" "mujoco>=3.3,<4" "Pillow>=9" \
+      "fastapi>=0.110,<1" "uvicorn>=0.29,<1" "httpx>=0.27,<1" "pypdf>=4,<7" "reportlab>=4,<5" \
+    && python3 -m pip freeze | grep -Ei '^(numpy|mujoco|pillow|fastapi|uvicorn|httpx|pypdf|reportlab)==' \
+       >> /opt/ultron/pip_installed.txt
+
 RUN rosdep update --rosdistro humble || true
 
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \

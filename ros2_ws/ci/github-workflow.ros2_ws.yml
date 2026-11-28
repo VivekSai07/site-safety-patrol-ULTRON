@@ -1,0 +1,18 @@
+# INACTIVE TEMPLATE. AGENT_A.md: "Add a GitHub Actions workflow file only if the user approves
+# later — for now, script only." To activate after approval, copy to
+# .github/workflows/ros2_ws.yml. Manual trigger only; no hardware, localhost DDS domains 71-74.
+name: ros2_ws
+on:
+  workflow_dispatch:
+jobs:
+  build-test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build dev image
+        run: docker build -f ros2_ws/docker/Dockerfile.dev -t ultron-b2-dev:humble ros2_ws/docker
+      - name: CI in dev container
+        env:
+          ULTRON_DEV_NET: bridge
+        run: ros2_ws/scripts/dev.sh scripts/ci.sh
