@@ -253,6 +253,39 @@ def command_online(args):
     command_status(args)
 
 
+def command_fence(args):
+    """Set the room's fence: corners typed (--polygon "x,y x,y ...") or taken from where the robot
+    stands (--from-robot: drive it to each corner, press Enter; empty line + d to finish). Saved to
+    --out and, with --dashboard, to the dashboard (PUT /api/fence), where the bridge and every
+    pipeline run pick it up. Stand inside the glass: the gate keeps goals a clearance inside it."""
+    points = []
+    if args.polygon:
+        points = [[float(v) for v in pair.split(",")] for pair in args.polygon.split()]
+    elif args.from_robot:
+        if not args.dashboard:
+            sys.exit("--from-robot needs --dashboard URL (the robot's pose comes from there)")
+        call = http_json(args.dashboard, timeout=3)
+        while True:
+            reply = input(f"{len(points)} corners. Drive to the next corner and press Enter (d + Enter: done): ")
+            if reply.strip().lower() == "d":
+                break
+            status, live = call("GET", "/api/live")
+            pose = (live or {}).get("pose") if status == 200 else None
+            if not pose:
+                print("No robot pose on the dashboard (is a mission running and the bridge connected?)")
+                continue
+            points.append([round(pose["x"], 2), round(pose["y"], 2)])
+            print(f"corner {len(points)}: {points[-1]}")
+    fence = Fence(points)  # raises with fewer than 3 points
+    data = {"frame_id": "map", "polygon": [list(p) for p in fence.polygon]}
+    if args.out:
+        Path(args.out).write_text(json.dumps(data, indent=1))
+        print(f"saved {args.out}")
+    if args.dashboard:
+        status, answer = http_json(args.dashboard, timeout=5)("PUT", "/api/fence", data)
+        print(f"dashboard: HTTP {status} {answer if status not in (200, 201, 204) else 'fence set'}")
+
+
 def command_calibrate(args):
     """Pick prompt and threshold per kind from sample frames, judged by the vision model."""
     detector = YoloDetector(args.detector.partition(":")[2] or "yoloe-11l-seg.pt", track=False)
@@ -361,6 +394,13 @@ def main(argv=None):
     tune.set_defaults(action=command_calibrate)
 
     commands.add_parser("status", parents=[common], help="list the object map").set_defaults(action=command_status)
+
+    room = commands.add_parser("fence", help="set the room polygon no goal or object may lie outside")
+    room.add_argument("--polygon", help='corners in the map frame, "x,y x,y x,y ..."')
+    room.add_argument("--from-robot", action="store_true", help="take each corner from the robot's pose on the dashboard")
+    room.add_argument("--dashboard", help="URL of the dashboard: the fence is stored there")
+    room.add_argument("--out", help="also save it as JSON (for --fence FILE)")
+    room.set_defaults(action=command_fence)
 
     bake = commands.add_parser("export", parents=[common],
                                help="bake the prompts into the detector for TensorRT (build it on the robot)")
