@@ -200,6 +200,27 @@ full-system simulation acceptance, verified real B2 transport, and the
 independent hardware checks have been recorded. Earlier scoped component
 tests can proceed only with their own prerequisites and authorization.
 
+### Slot order and evidence reuse
+
+1. Start with `sahil/sim-slam-nav2`. Complete offline preflight, stationary
+   topics and supervised WASD checks, then mapping and Nav2. Capture a ROS
+   bag during the Phase 3 mapping pass using the same live inputs consumed by
+   SLAM.
+2. Switch to `sahil/3d-slam-nav2` for mapping and Nav2. Present the 2D
+   stationary-topic and WASD results for reuse approval. Carry them forward
+   when the robot, operator, interfaces, sensor setup and control path still
+   match. Recheck only changed or 3D-specific dependencies before mapping.
+3. Capture a separate ROS bag during the 3D mapping pass. For each bag, log
+   the branch and revision, actual SLAM input topics, required TF, clock
+   source and message counts. Include the bag scope in the mapping approval.
+
+For 3D cross-patrol association, pair the saved RTAB-Map database with a
+persistent map ID and reload it in localization mode. Verify camera poses
+in the saved map frame at marked references after a restart before enabling
+cross-patrol association. The live launcher currently creates a fresh
+identity and database path per run. A marked start can aid relocalization.
+Use a fixed ID only when the shared coordinate frame has been verified.
+
 ### How the branches differ
 
 | Branch | Map and localization checks |
