@@ -17,10 +17,10 @@ BOX_CORE = 0.6      # use the middle of the box, where the ladder is rather than
 
 
 class Calibration:
-    def __init__(self, intrinsics, image_size, T_cam_lidar, T_base_lidar=None):
+    def __init__(self, intrinsics, image_size, T_cam_lidar=None, T_base_lidar=None):
         self.fx, self.fy, self.cx, self.cy = map(float, intrinsics)
         self.width, self.height = image_size
-        self.T_cam_lidar = np.asarray(T_cam_lidar, dtype=float).reshape(4, 4)
+        self.T_cam_lidar = np.eye(4) if T_cam_lidar is None else np.asarray(T_cam_lidar, dtype=float).reshape(4, 4)
         self.T_base_lidar = np.eye(4) if T_base_lidar is None else np.asarray(T_base_lidar, dtype=float).reshape(4, 4)
 
     @classmethod

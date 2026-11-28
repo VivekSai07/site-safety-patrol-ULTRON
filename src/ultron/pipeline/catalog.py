@@ -29,7 +29,7 @@ OVERVIEW, CLOSE = View("overview", 2.0, 4.5), View("close", 0.6, 2.0)
 
 KINDS = {kind.name: kind for kind in (
     # A free-standing ladder can be walked around; three directions cover rails, rungs and feet.
-    Kind("ladder", "LAD", ("ladder", "stepladder"), 1.0, (OVERVIEW, CLOSE), 3, "ladder"),
+    Kind("ladder", "LAD", ("ladder", "stepladder"), 0.7, (OVERVIEW, CLOSE), 3, "ladder"),
     # Wall-mounted equipment: one direction, but close enough to read the inspection sticker.
     Kind("fire_extinguisher", "FEX", ("fire extinguisher",), 0.8, (OVERVIEW, CLOSE), 1, "fire_extinguisher"),
     Kind("fire_hydrant", "HYD", ("fire hydrant", "fire hose cabinet"), 0.8, (OVERVIEW, CLOSE), 1, "fire_hydrant"),

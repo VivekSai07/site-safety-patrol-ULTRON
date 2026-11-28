@@ -1,6 +1,7 @@
 """Where frames come from. Every source is an iterable of `Frame`.
 
     folder:PATH                    images in name order (recorded data, the nesseler photos)
+    bag:PATH[,rate=2][,pose=lidar] recorded ROS 2 bag from the B2: colour, registered depth, lidar odometry
     cv:0 | cv:rtsp://... | cv:FILE OpenCV capture: webcam, network stream or video file
     ros2:/image[,pose=/odom][,cloud=/points]   ROS 2 topics (Image or CompressedImage)
     unitree[:INTERFACE]            B2 front camera through unitree_sdk2py
@@ -175,6 +176,11 @@ def open_source(spec, pace=0.0):
     kind, _, rest = spec.partition(":")
     if kind == "folder":
         return folder(rest, pace)
+    if kind == "bag":
+        from . import bag
+        path, *options = rest.split(",")
+        settings = dict(option.split("=", 1) for option in options)
+        return bag.frames(path, float(settings.get("rate", 2.0)), settings.get("pose", "lidar"))
     if kind == "cv":
         return opencv(rest)
     if kind == "ros2":

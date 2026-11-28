@@ -13,6 +13,9 @@ dependencies = []
 sim = ["mujoco>=3.3,<4", "numpy>=1.24", "Pillow>=9"]
 # Camera frames to nesseler checklist records (vision model over HTTP, no GPU).
 protocol = ["Pillow>=9", "numpy>=1.24"]
+# Recorded B2 bags without ROS, lidar odometry for them, and the open-vocabulary detector (GPU).
+bags = ["rosbags>=0.10", "kiss-icp>=1.2"]
+detector = ["ultralytics>=8.3"]
 rerun = ["rerun-sdk==0.32.0", "numpy>=1.24", "Pillow>=9"]
 # Live dashboard: CPU only, no ROS or GPU; runs on Ubuntu and Windows.
 dashboard = ["fastapi>=0.110", "uvicorn>=0.29", "pydantic>=2", "httpx>=0.27", "pypdf>=4", "reportlab>=4", "Pillow>=9"]

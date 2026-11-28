@@ -17,7 +17,7 @@ from ..protocol.vlm import VlmError
 
 class Inspection:
     def __init__(self, objects, keyframes, vlm, store, survey=None, navigator=None, camera=None,
-                 is_free=None, max_extra_views=3, max_attempts=6, mission=None):
+                 is_free=None, max_extra_views=3, max_attempts=6, min_sightings=2, mission=None):
         self.objects, self.keyframes, self.vlm, self.store = objects, keyframes, vlm, store
         self.survey = survey                  # used to process frames captured at requested views
         self.navigator = navigator or Passive()
@@ -25,10 +25,11 @@ class Inspection:
         self.is_free = is_free                # is_free(x, y) from the occupancy map, or None
         self.max_extra_views = max_extra_views  # extra frames taken per object
         self.max_attempts = max_attempts        # navigation goals tried per object, reached or not
+        self.min_sightings = min_sightings      # objects seen less often are not inspected
         self.mission = mission
 
     def run(self):
-        for site_object in self.objects.pending():
+        for site_object in self.objects.pending(self.min_sightings):
             self.inspect(site_object)
 
     def collect_views(self, site_object):

@@ -33,23 +33,30 @@ class ObjectMap:
     def get(self, object_id):
         return self._objects.get(object_id)
 
-    def pending(self):
-        """Objects found but not yet inspected, in the order they were found."""
-        return [o for o in self._objects.values() if o.status == "FOUND"]
+    def pending(self, min_sightings=2):
+        """Objects found but not yet inspected, in the order they were found.
 
-    def _match(self, kind, position, stamp):
-        same_kind = [o for o in self._objects.values() if o.kind == kind]
+        A single sighting is not trusted: detectors produce one-off false hits.
+        """
+        return [o for o in self._objects.values() if o.status == "FOUND" and o.sightings >= min_sightings]
+
+    def _match(self, kind, position, stamp, exclude):
+        same_kind = [o for o in self._objects.values() if o.kind == kind and o.id not in exclude]
         if position is None:
             recent = [o for o in same_kind if o.position is None and 0 <= stamp - o.last_seen <= SAME_SIGHTING_GAP]
             return max(recent, key=lambda o: o.last_seen, default=None)
         near = [o for o in same_kind if o.position and math.dist(o.position, position) <= KINDS[kind].same_object_radius]
         return min(near, key=lambda o: math.dist(o.position, position), default=None)
 
-    def observe(self, sighting, stamp):
-        """The object this sighting belongs to: a known one nearby, else a new one."""
+    def observe(self, sighting, stamp, exclude=()):
+        """The object this sighting belongs to: a known one nearby, else a new one.
+
+        `exclude` holds ids already matched in the same frame: two boxes in one image
+        are two objects, however close together they stand.
+        """
         kind, position = sighting.detection.kind, sighting.position
         with self._lock:
-            found = self._match(kind, position, stamp)
+            found = self._match(kind, position, stamp, exclude)
             if found is None:
                 number = sum(o.kind == kind for o in self._objects.values()) + 1
                 found = SiteObject(f"{KINDS[kind].prefix}-{number:03}", kind, first_seen=stamp)

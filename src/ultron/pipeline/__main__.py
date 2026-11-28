@@ -29,15 +29,25 @@ def build_detector(args, vlm):
     if kind == "vlm":
         return VlmDetector(vlm)
     if kind == "yolo":
-        return YoloDetector(option or "yoloe-11s-seg.pt")
+        return YoloDetector(option) if option else YoloDetector()
     if kind == "replay":
         with open(option) as handle:
             return ReplayDetector(json.load(handle))
     raise ValueError(f"Unknown detector {args.detector!r}")
 
 
+def load_calibration(args):
+    """--calibration FILE, or `bag:PATH` to take the colour camera from a recording."""
+    if not args.calibration:
+        return None
+    if args.calibration.startswith("bag:"):
+        from ..protocol import bag
+        return bag.calibration(args.calibration[4:])
+    return Calibration.load(args.calibration)
+
+
 def build_survey(args, store, vlm):
-    calibration = Calibration.load(args.calibration) if args.calibration else None
+    calibration = load_calibration(args)
     return Survey(build_detector(args, vlm), ObjectMap(args.data), KeyframeStore(args.data), store,
                   calibration, args.interval, args.min_sharpness)
 
@@ -92,7 +102,7 @@ def main(argv=None):
     common.add_argument("--site", default="demo-site")
     common.add_argument("--mission", help="mission id; use the same one for survey and inspect")
     common.add_argument("--detector", default="vlm", help="vlm | yolo[:WEIGHTS] | replay:FILE")
-    common.add_argument("--calibration", help="camera/lidar calibration JSON")
+    common.add_argument("--calibration", help="camera/lidar calibration JSON, or bag:PATH")
     common.add_argument("--interval", type=float, default=1.0, help="seconds between processed frames")
     common.add_argument("--min-sharpness", type=float, default=0.0)
     common.add_argument("--model")
@@ -104,7 +114,7 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
 
     survey = commands.add_parser("survey", parents=[common], help="stage 1: build the object map")
-    survey.add_argument("--source", required=True, help="folder:PATH | cv:TARGET | ros2:/topic[,pose=..][,cloud=..] | unitree")
+    survey.add_argument("--source", required=True, help="bag:PATH | folder:PATH | cv:TARGET | ros2:/topic[,pose=..][,cloud=..] | unitree")
     survey.add_argument("--pace", type=float, default=0.0)
     survey.set_defaults(action=command_survey)
 

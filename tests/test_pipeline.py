@@ -100,6 +100,29 @@ class LiftTest(unittest.TestCase):
         self.assertIsNone(lift(frame("a"), Detection("ladder", CENTRE), CALIBRATION).position)
 
 
+class DepthRegistrationTest(unittest.TestCase):
+    def test_depth_is_reprojected_into_the_colour_camera(self):
+        from ultron.protocol.bag import register_depth
+        depth = np.zeros((480, 848), dtype=np.float32)
+        depth[200:280, 400:450] = 2.0  # a patch 2 m away, near the depth camera's centre
+        registered = register_depth(depth, (431.0, 431.0, 425.9, 241.0), (643.6, 642.9, 643.5, 362.0), (1280, 720),
+                                    np.eye(3), np.array([-0.059, 0.0, 0.0]))
+        self.assertEqual(registered.shape, (360, 640))
+        rows, cols = np.nonzero(registered)
+        self.assertTrue(np.allclose(registered[rows, cols], 2.0, atol=1e-3))
+        # Expected colour pixel of the patch centre: ray through the depth pixel, shifted 59 mm, re-projected.
+        x = (425 - 425.9) / 431.0 * 2.0 - 0.059
+        self.assertAlmostEqual(cols.mean() * 2, 643.6 * x / 2.0 + 643.5, delta=4)
+        self.assertAlmostEqual(rows.mean() * 2, 642.9 * ((240 - 241.0) / 431.0) + 362.0, delta=4)
+
+    def test_the_nearer_surface_wins_where_two_project_to_one_pixel(self):
+        from ultron.protocol.bag import register_depth
+        depth = np.full((4, 4), 3.0, dtype=np.float32)
+        depth[1, 1] = 1.0
+        registered = register_depth(depth, (1.0, 1.0, 2.0, 2.0), (1.0, 1.0, 2.0, 2.0), (4, 4), np.eye(3), np.zeros(3), scale=4)
+        self.assertEqual(registered.tolist(), [[1.0]])
+
+
 class SurveyTest(Workspace):
     def test_repeated_sightings_become_one_object_per_place_and_kind(self):
         for stamp, side in enumerate((0, 1, 7)):
@@ -111,6 +134,26 @@ class SurveyTest(Workspace):
         self.assertAlmostEqual(self.objects.get("LAD-001").position[0], 5.0, delta=0.15)
         self.assertEqual([e["object"] for e in self.store.events() if e["kind"] == "object_found"],
                          ["LAD-001", "LAD-002", "FEX-001"])
+
+    def test_two_boxes_in_one_frame_are_two_objects_even_when_close(self):
+        class TwoLadders:
+            def detect(self, frame):
+                return [Detection("ladder", [300, 200, 480, 800], 0.9), Detection("ladder", [520, 200, 700, 800], 0.8)]
+        survey = Survey(TwoLadders(), self.objects, self.keyframes, self.store, CALIBRATION, interval=0)
+        for stamp in range(3):
+            survey.feed(frame("pair", (0.0, 0.0, 0.0), float(stamp), depth=3.0))
+        self.assertEqual([(o.id, o.sightings) for o in self.objects.all()], [("LAD-001", 3), ("LAD-002", 3)])
+        self.assertLess(math.dist(self.objects.get("LAD-001").position, self.objects.get("LAD-002").position), 1.5)
+
+    def test_overlapping_boxes_of_one_kind_are_one_detection(self):
+        class Stutter:
+            def detect(self, frame):
+                return [Detection("fire_extinguisher", [400, 300, 500, 600], 0.6),
+                        Detection("fire_extinguisher", [405, 310, 510, 610], 0.9),
+                        Detection("ladder", [400, 300, 500, 600], 0.8)]
+        seen = Survey(Stutter(), self.objects, self.keyframes, self.store, CALIBRATION, interval=0).feed(
+            frame("x", (0.0, 0.0, 0.0), depth=3.0))
+        self.assertEqual([o.id for o in seen], ["FEX-001", "LAD-001"])
 
     def test_a_stopped_survey_resumes_from_disk(self):
         self.see("ladder", (5.0, 5.0), 0, 3.0)
@@ -224,7 +267,14 @@ class InspectionTest(Workspace):
             pose = navigator.pose
             return frame(f"{kind}-view-{next(counter)}", pose, 100.0, depth=math.dist(pose[:2], target), seed=7)
 
-        return Inspection(self.objects, self.keyframes, vlm, self.store, self.survey, navigator, camera, mission="PATROL-1")
+        return Inspection(self.objects, self.keyframes, vlm, self.store, self.survey, navigator, camera,
+                          min_sightings=1, mission="PATROL-1")
+
+    def test_single_sightings_are_not_inspected_by_default(self):
+        self.see("ladder", (5.0, 5.0), 0, 3.0)
+        self.assertEqual(self.objects.pending(), [])
+        self.see("ladder", (5.0, 5.0), 0, 3.0, stamp=1.0)
+        self.assertEqual([o.id for o in self.objects.pending()], ["LAD-001"])
 
     def test_ladder_gets_its_missing_views_then_its_kontrollblatt(self):
         self.see("ladder", (5.0, 5.0), 0, 3.0)

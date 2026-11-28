@@ -41,9 +41,12 @@ class VlmDetector:
 
 
 class YoloDetector:
-    """Open-vocabulary YOLO through `ultralytics`. Not run in this repository's tests: needs weights."""
+    """Open-vocabulary YOLO (YOLOE) through `ultralytics`. Needs a GPU to be fast; weights download on first use.
 
-    def __init__(self, weights="yoloe-11s-seg.pt", min_score=0.25, device=None):
+    On the hall recording false hits scored below 0.4 and real objects mostly above 0.5.
+    """
+
+    def __init__(self, weights="yoloe-11l-seg.pt", min_score=0.5, device=None):
         from ultralytics import YOLOE
         self.model = YOLOE(weights)
         self.prompts = list(KIND_OF_PROMPT)
