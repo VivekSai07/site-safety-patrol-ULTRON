@@ -75,8 +75,10 @@ Each patrol inspects again the objects it saw itself, even if an earlier mission
 object it did not see is not re-inspected from old keyframes. Lining up with the stored objects
 (`anchor.py`): one landmark decides nothing (the robot may be off, or the object moved); two that
 disagree wait for a third; of three or more, one lying over 1 m from where the agreeing others put it
-was moved (`object_moved` with `seen_at`). Objects created before the patrol is lined up are
-announced only once it is, and discarded if it turns out suspect.
+was moved (`object_moved` with `seen_at`). Until the patrol is lined up nothing is announced, not
+even stored objects it re-sees (one may be taken for another of its kind nearby); a patrol that
+never sees two stored objects reports when its survey settles. Objects created before then are
+discarded if it turns out suspect, and a suspect patrol announces nothing.
 
 ## Modules
 

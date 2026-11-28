@@ -596,9 +596,10 @@ class SiteMapTest(unittest.TestCase):
         first, _ = self.patrol("run-1", range(4), [0, 0, 1, 1])
         second, store = self.patrol("run-2", range(100, 104), [2, 2, 3, 3])  # other directions, other start
         self.assertEqual([(o.id, o.sightings) for o in second.objects.all()], [("LAD-001", 8)])
-        # Each patrol is its own mission on the dashboard, so each announces what it saw, once it saw it.
+        # Each patrol is its own mission on the dashboard, so each announces what it saw. One stored
+        # object cannot line a patrol up, so it is reported when the survey settles.
         found = [e for e in store.events(limit=None) if e["kind"] == "object_found"]
-        self.assertEqual([(e["object"], e["sightings"]) for e in found], [("LAD-001", 7)])
+        self.assertEqual([(e["object"], e["sightings"]) for e in found], [("LAD-001", 8)])
         self.assertFalse(any(e["kind"].startswith("localisation_") for e in store.events(limit=None)))
         self.assertTrue((self.root / "sites" / "hall" / "hall-v1" / "objects.json").is_file())
 
@@ -686,6 +687,30 @@ class AnchoringTest(unittest.TestCase):
         objects = ObjectMap(self.folder).all()
         self.assertEqual(sorted(o.id for o in objects), ["FEX-001", "FEX-002", "LAD-001"])
         return {o.id: o.position for o in objects}
+
+    def test_a_patrol_found_off_in_the_middle_of_a_frame_drops_what_it_made(self):
+        """In one frame two new objects are seen from a pose that is off, then a stored one seen in
+        the same frame shows the robot is off: the new objects go, and the frame ends cleanly."""
+        from ultron.pipeline.anchor import apply
+        self.first_patrol()
+        new, error = (8.0, 4.6), (0.0, 0.0, 1.5)  # across the ladder; 2.6 m from LEFT: nothing stored it could be
+        shapes = [rectangle(*self.LADDER, 1.5, 0.5), rectangle(*new, 0.3, 0.3), rectangle(new[0] + 1.2, new[1], 0.3, 0.3),
+                  rectangle(*self.LEFT, 0.3, 0.3)]
+        store = Store(self.root / "run-2")
+        survey = Survey(Rendered(kinds=["ladder"] + ["fire_extinguisher"] * 3), ObjectMap(self.folder),
+                        KeyframeStore(self.folder), store, CALIBRATION, interval=0, map_id="hall-v1")
+        stamp = 0.0
+        for target, sides in ((self.LADDER, (3, 4, 5) * 2), ((8.5, 3.3), (4,) * 4)):  # then all three in view
+            for side in sides:
+                true = facing(target, side, 2.5)
+                seen = rendered("a", (*apply(error, true[:2]), true[2]), [], stamp)
+                seen.depth, seen.outlines = render(true, shapes)
+                survey.feed(seen)
+                stamp += 1.0
+        survey.tidy()
+        self.assertEqual(len(self.events(store, "localisation_suspect")), 1)
+        self.assertEqual(sorted(o.id for o in survey.objects.all()), ["FEX-001", "FEX-002", "LAD-001"])
+        self.assertEqual(self.events(store, "object_found"), [])  # not even the stored ones it re-saw
 
     def test_a_drifted_patrol_is_lined_up_and_places_a_new_object_where_it_is(self):
         before = self.first_patrol()

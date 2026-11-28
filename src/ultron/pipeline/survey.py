@@ -118,6 +118,10 @@ class Survey:
                     None if site_object else landmark)
                 if landmark:
                     self._landmark(landmark, sighting)
+                if self.anchoring.state == Anchoring.SUSPECT:
+                    # Found off just now: what this frame made from its pose was discarded with the rest.
+                    seen = [o for o in seen if self.objects.get(o.id)]
+                    continue
             if site_object is None:
                 continue  # between two known objects and no way to tell which, or waiting to line up
             if self.anchoring and site_object.sightings == 1 and site_object.id not in self.anchoring.stored:
@@ -196,6 +200,9 @@ class Survey:
                 self.objects.remove(created)
                 self.keyframes.drop(created)
                 self._tracks = {t: i for t, i in self._tracks.items() if i != created}
+            for created in discarded:
+                self.seen_now.pop(created, None)
+            self.created.clear()
             if discarded:
                 self.store.emit("objects_discarded", objects=discarded, reason="localisation suspect")
         elif changed == Anchoring.ANCHORED:
@@ -209,9 +216,11 @@ class Survey:
         fragments were merged) reports whatever is left."""
         lined_up = not self.anchoring or self.anchoring.state == Anchoring.ANCHORED or (
             settled and self.anchoring.state == Anchoring.UNANCHORED)
+        if not lined_up:
+            # Poses not yet checked against the stored objects (or found off): new objects may be
+            # misplaced, and a stored one may have been taken for another of its kind nearby.
+            return
         for site_object in self.objects.all():
-            if site_object.id in self.created and not lined_up:
-                continue  # placed from a pose not yet checked against the stored objects
             now = self.seen_now.get(site_object.id, 0)
             if (site_object.id in self.announced or site_object.status == "REJECTED" or not now
                     or not (now >= min_sightings or site_object.verified)
