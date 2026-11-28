@@ -311,7 +311,10 @@ measured top, so `lift.lying(site_object)` tells from `objects.json` alone.
   lying ladder), which may make it reject the object.
 - **At the defaults nothing finds a lying ladder on the robot yet**: the detector runs at 640 (the
   lying prompt is inert there), lidar candidates are opt-in (`--candidates lidar`), and the relay
-  does not forward the cloud. See the recommended demo setting below.
+  does not forward the cloud. Recommended for the demo until it is recorded: keep 640 (1280 finds
+  the lying ladder in photos but splits objects on the hall recording); forward the cloud from the
+  relay and run `--candidates lidar` so lying candidates exist; have the navigation stack treat a
+  lying candidate's cells as an obstacle (`Candidate.cells`) even if the camera never confirms it.
 
 **Can the camera see one?** On the 7 demo-room photos (phone, 1.5 m up) YOLOE never boxed the
 lying wooden ladder with "ladder", "wooden ladder" or any other ladder prompt at its usual input
@@ -322,9 +325,11 @@ size 640 (at most 0.13). At 1280, "ladder lying on the floor" boxed it at 0.44, 
 the B2 at 1280 sees about as many pixels per degree as these photos at 1280 (14 against about 17),
 but from half the height, so the ladder is flatter still.
 On the hall recording at 1280 the prompt boxed a low paving platform as lying at 0.11-0.28 and
-nothing else. One survey at 1280 split the leaning ladder into two objects 0.3 m apart (and the
-vision model relabelled the hose cabinet an extinguisher), so 640 stays the default until the demo
-room is recorded. The lidar is the other way to find a lying ladder (below, and ONLINE.md).
+nothing else. But 1280 itself costs on the hall recording: in 3 of 3 surveys at 1280 (twice with
+the extra prompt, once without) one ladder was split into two objects 0.3-0.45 m apart and the
+vision model relabelled the hose cabinet an extinguisher; in 2 of 2 at 640 (with and without the
+extra prompt) the 5 objects came out right. So 640 stays the default until the demo room is
+recorded. The lidar is the other way to find a lying ladder (below, and ONLINE.md).
 
 **Glass** (`lift.doubt`, applied in `YoloDetector`). Behind the operator's fence, which is the main
 defence, a detection is dropped when:
