@@ -310,17 +310,16 @@ class ObjectMap:
                 found.apart = [i for i in found.apart if i != object_id]
             self._save()
 
-    def count_views(self, in_view, detected):
-        """Objects whose place a frame had in clear view ({id: viewing side}), and which it detected."""
+    def count_views(self, counts):
+        """Add clear views of objects' places and detections in them: {id: (side, views, detected)}."""
         with self._lock:
-            for object_id, side in in_view.items():
+            for object_id, (side, views, detected) in counts.items():
                 found = self._objects[object_id]
-                hit = object_id in detected
-                found.views += 1
-                found.detected += hit
-                counts = found.sides.setdefault(str(side), [0, 0])
-                counts[0], counts[1] = counts[0] + 1, counts[1] + hit
-            if in_view:
+                found.views += views
+                found.detected += detected
+                by_side = found.sides.setdefault(str(side), [0, 0])
+                by_side[0], by_side[1] = by_side[0] + views, by_side[1] + detected
+            if counts:
                 self._save()
 
     def update(self, object_id, **changes):

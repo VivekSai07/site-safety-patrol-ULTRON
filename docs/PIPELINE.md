@@ -231,19 +231,22 @@ What the open yard forced (the hall recording had none of it):
   leaned, the container wall stands at the footprint's distance and reads as "something there". The
   same holds for every wall-mounted kind (extinguisher, hose cabinet, alarm box).
 - **So gone is also "reliably found, now missed in clear view"** (`survey.py`). Every object counts,
-  per viewing side (45 degree steps), the frames that had its place in clear view (footprint inside
+  per viewing side (45 degree steps), the looks that had its place in clear view (footprint inside
   the image at 1-4.5 m, not hidden: `look_through` gives a verdict) and those that detected it. A
-  side counts once the object was found in at least 40 % of at least 5 clear views from it. A
+  look is what the robot sees until it moves 0.2 m or turns 10 degrees: frames from one spot count
+  once, so the counts barely depend on the frame rate (hall recording, rates 4-16: the ladders and
+  the extinguisher qualify, the hose cabinet never). A side counts once the object was found in at
+  least 40 % of at least 5 clear looks from it. A
   lined-up patrol that never detects a stored object, but has its place in clear view from such
-  sides in distinct looks (a new look after 0.2 m or 10 degrees, whatever the frame rate) from two
-  places 0.5 m apart, until missing a present object every time would be under 2 % likely by those
+  sides in distinct looks from two places 0.5 m apart, until missing a present object every time would be under 2 % likely by those
   sides' rates (at least 4 looks), marks it moved (`object_moved`, `reason: "not detected in clear
-  view"`). It is judged when the survey settles, after fragments are merged, so it never flips back
-  within a patrol. `status` lists per object the sides it can be judged from (`gone_if_missed_from`).
+  view"`). It is judged when the survey settles, after fragments are merged, so it does not flip
+  during the survey (detected during inspection later, it is `object_back`). `status` lists per object the sides it can be judged from (`gone_if_missed_from`).
   - Why per side: in the simulated yard the leaning ladders L10 and L11 were found in 42/42 and 49/49
     clear views from one side and 13/67 and 0/33 from another; with one overall rate, present L10
     went unfound for 9 looks from 3 places (C) and L11 for 6 (D): that would have been a false
-    "moved". Per side, the longest such run on C, D and D2 is 3 looks (no verdict). D2's stop
+    "moved". Per side, present objects' longest such run is 1 look on C, D and D2 and 2 on the
+    hall recording (no verdict). D2's stop
     faces L10's empty place from its poorly detected side: no verdict there either.
   - Why at settle: on the hall recording at 16 frames a second the A-frame's sightings went to a
     fragment for 14 looks; the fragment joins it only when the survey settles.
@@ -251,6 +254,13 @@ What the open yard forced (the hall recording had none of it):
     the depth image, as a wall would): LAD-001 (9 looks), LAD-002 (16), FEX-001 (5), ALM-001 (7)
     reported moved; HYD-001 (found in 2 of 7 clear views) is not judged. Unchanged run 2 at rates 4,
     8 and 16: nothing moved. Sim C, D, D2 (noisy): only L49, by look-through.
+  - Real recording split in its two passes (map from pass 1, pass 2 as the next patrol, rates 8 and
+    16): no false "moved", the four objects pass 2 sees keep their ids; LAD-002 with its detections
+    dropped is not judged (pass 2 sees it only from a side pass 1 did not find it reliably from).
+    One pass of a patrol is too little record: the check stays silent rather than guess.
+  - Patrol 1 must run on this code (`views`/`sides` are new; older maps have none) and see the object
+    within 1-4.5 m from the sides the next patrol will. At 2 frames a second the extinguisher gets
+    only 2 sightings and is not announced: run at 4 or more.
   - Its limit: an object present that the detector stops finding from its good sides (new lighting,
     a cover) is reported moved, and back when found again in a later patrol.
 - **Sightings beyond 12 m are not used.** With the D457's noise (`depth=noisy`, fitted by the

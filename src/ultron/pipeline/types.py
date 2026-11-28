@@ -49,8 +49,8 @@ class SiteObject:
     apart: list = field(default_factory=list)   # ids seen in the same frame: certainly other objects
     cells: dict = field(default_factory=dict)   # {"i,j": sightings covering that floor cell}: the footprint
     zband: list = None       # mean (low, high) height band relative to the camera: where to look for it
-    views: int = 0           # frames that had its place in clear view (near, in the image, not hidden) ...
-    detected: int = 0        # ... and of those, the frames the detector found it in
+    views: int = 0           # looks (frames from one spot count once) with its place in clear view ...
+    detected: int = 0        # ... and of those, the looks the detector found it in
     sides: dict = field(default_factory=dict)  # {"side": [views, detected]} by viewing direction (45 degree steps)
 
     def to_json(self):
