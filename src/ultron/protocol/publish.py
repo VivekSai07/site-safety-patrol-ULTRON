@@ -25,6 +25,12 @@ if len(ITEM_KEY) != sum(len(g[5]) for g in GROUPS) or any(
         ITEM_KEY[c.id].split(".")[0] != GROUP_OF_SECTION[c.section] for c in form.CRITERIA):
     raise ImportError("ultron.protocol.form and ultron.dashboard.checklist no longer describe the same form")
 
+# Pipeline events passed on to the dashboard's event list, under these type names.
+FORWARDED = {"object_found": "OBJECT_FOUND", "object_verified": "OBJECT_VERIFIED",
+             "object_relabelled": "OBJECT_RELABELLED", "object_rejected": "OBJECT_REJECTED",
+             "object_unclear": "OBJECT_UNCLEAR", "view_requested": "VIEW_REQUESTED", "view_failed": "VIEW_FAILED",
+             "checklist": "CHECKLIST_DONE", "stage": "STAGE"}
+
 ITEM_RESULT = {form.OK: "OK", form.DEFECT: "DEFECT", form.NOT_VISIBLE: "UNKNOWN",
                form.HUMAN_CHECK: "NOT_CHECKED", form.NOT_APPLICABLE: "N_A"}
 
@@ -174,6 +180,11 @@ class Publisher:
             self._event("READER_ERROR", stage=event.get("stage"), message=event.get("message"))
         elif kind == "protocol":
             self.publish(event["ladder"], event["number"])
+        elif kind in FORWARDED:
+            # Objects other than ladders have no record type on the dashboard yet: they appear
+            # in its event list, with their position where known.
+            data = {k: v for k, v in event.items() if k not in ("time", "kind", "object")}
+            self._event(FORWARDED[kind], event.get("object"), **data)
 
     def publish(self, ladder_id, number):
         sheet = self.store.ladder(ladder_id)

@@ -78,25 +78,41 @@ def calibration(path):
     raise ValueError(f"No {COLOR_INFO} in {path}")
 
 
+class LidarOdometry:
+    """Robot pose from successive lidar scans (KISS-ICP), in the frame of the first scan.
+
+    A stand-in for SLAM: it drifts over long distances and has no map, but needs nothing
+    except the scans. On the hall recording a 17 m loop closed to within 15 cm.
+    """
+
+    def __init__(self):
+        from kiss_icp.config import KISSConfig
+        from kiss_icp.kiss_icp import KissICP
+        config = KISSConfig()
+        config.data.min_range, config.data.max_range, config.data.deskew = LIDAR_MIN_RANGE, LIDAR_MAX_RANGE, False
+        config.mapping.voxel_size = LIDAR_MAX_RANGE / 100
+        self._odometry = KissICP(config)
+
+    def update(self, points):
+        """Feed one scan (Nx3, lidar frame). Returns the pose (x, y, yaw) after it."""
+        points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+        points = points[np.isfinite(points).all(axis=1)]
+        self._odometry.register_frame(points, np.zeros(len(points)))
+        pose = self._odometry.last_pose
+        return float(pose[0, 3]), float(pose[1, 3]), math.atan2(pose[1, 0], pose[0, 0])
+
+
 def lidar_trajectory(path):
     """Lidar odometry over the whole bag: arrays (stamps, x, y, unwrapped yaw) in the first scan's frame."""
-    from kiss_icp.config import KISSConfig
-    from kiss_icp.kiss_icp import KissICP
     from rosbags.rosbag2 import Reader
     store = _typestore()
-    config = KISSConfig()
-    config.data.min_range, config.data.max_range, config.data.deskew = LIDAR_MIN_RANGE, LIDAR_MAX_RANGE, False
-    config.mapping.voxel_size = LIDAR_MAX_RANGE / 100
-    odometry, rows = KissICP(config), []
+    odometry, rows = LidarOdometry(), []
     with Reader(Path(path)) as reader:
         for connection, nanoseconds, raw in reader.messages([c for c in reader.connections if c.topic == SCAN]):
             message = store.deserialize_cdr(raw, connection.msgtype)
             cloud = np.frombuffer(message.data, np.uint8).reshape(-1, message.point_step)
-            points = np.ascontiguousarray(cloud[:, :12]).view(np.float32).reshape(-1, 3).astype(np.float64)
-            points = points[np.isfinite(points).all(axis=1)]
-            odometry.register_frame(points, np.zeros(len(points)))
-            pose = odometry.last_pose
-            rows.append((nanoseconds / 1e9, pose[0, 3], pose[1, 3], math.atan2(pose[1, 0], pose[0, 0])))
+            points = np.ascontiguousarray(cloud[:, :12]).view(np.float32).reshape(-1, 3)
+            rows.append((nanoseconds / 1e9, *odometry.update(points)))
     if not rows:
         raise ValueError(f"No {SCAN} in {path}")
     stamps, x, y, yaw = np.array(rows).T
@@ -154,4 +170,6 @@ def frames(path, rate=2.0, pose="lidar"):
                     robot = tuple(float(np.interp(stamp, trajectory[0], values)) for values in trajectory[1:])
                 elif pose == "imu" and yaw is not None:
                     robot = (0.0, 0.0, yaw)
-                yield Frame(Image.fromarray(pixels), name=f"bag-{count:05}", stamp=stamp, pose=robot, depth=registered)
+                camera = Calibration(_intrinsics(color_info), (message.width, message.height)) if color_info else None
+                yield Frame(Image.fromarray(pixels), name=f"bag-{count:05}", stamp=stamp, pose=robot,
+                            depth=registered, camera=camera)

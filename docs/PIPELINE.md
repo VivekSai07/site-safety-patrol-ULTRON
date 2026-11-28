@@ -15,7 +15,39 @@ with their keyframes (STaR), and choosing frames per object by what they show in
 (DAAAM). Unlike both, it only looks for the kinds listed in `catalog.py`, and all state is plain
 JSON and JPEG that is written as it goes, so pause, resume and snapshot need no extra code.
 
-## Run
+## One system: robot → relay → patrol → dashboard
+
+```
+robot (ROS 2)                         GPU machine                          anywhere
+scripts/ros_relay.py  ──TCP 5600──▶  python -m ultron.pipeline patrol ──HTTP──▶ python -m ultron.dashboard
+ camera, depth, TF pose,              survey → check → inspect             mission, live view,
+ lidar if TF has no pose              (YOLOE, vision model)                ladder records, events
+```
+
+```bash
+# GPU machine
+python -m ultron.dashboard --port 8010 &
+python -m ultron.pipeline patrol --source relay:5600 --detector yolo --interval 0 \
+    --mission HALL-1 --site ctrl-hall --dashboard http://127.0.0.1:8010
+# robot, in a shell with ROS sourced (needs only rclpy, tf2_ros, numpy)
+python3 scripts/ros_relay.py --to GPU_MACHINE:5600
+```
+
+The survey runs until the relay stops, `--survey-seconds` pass or Ctrl-C is pressed once; then
+the objects are checked and inspected and the mission is closed. `--navigator` chooses how missing
+views are reached: `passive` (not at all), `operator` (a person drives), `dashboard` (goal through
+the dashboard bridge to Nav2) or `contract` (`ultron.autonomy` with `--map DIR`).
+
+Pose: the relay sends the robot's pose from TF (`map` ← `base_link`) when localisation publishes
+it, so objects land in the SLAM map and view goals are in the frame Nav2 expects. Without it the
+pipeline computes lidar odometry from the forwarded clouds, in a frame of its own.
+
+Tested by replaying the hall recording as ROS topics in a container on the workstation
+(`ros2 bag play` + the relay): 36 s of stream, live odometry, 6 objects, 5 confirmed by the vision
+model, both ladders on the dashboard, the other objects in its event list. Not tested: the real
+robot, a TF pose from running localisation, and any navigator other than `passive`.
+
+## Run the stages separately
 
 ```bash
 pip install -e '.[protocol,dashboard]'

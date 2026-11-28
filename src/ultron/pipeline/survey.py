@@ -56,6 +56,7 @@ class Survey:
         if not force and sharpness < self.min_sharpness:
             return []
         self._last = frame.stamp
+        self.calibration = self.calibration or frame.camera  # live sources bring their own camera model
         try:
             detections = distinct(self.detector.detect(frame))
         except Exception as error:  # a failing model must not end the patrol

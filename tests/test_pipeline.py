@@ -727,6 +727,58 @@ class NavigatorTest(unittest.TestCase):
             self.assertTrue(DashboardNavigator(call, timeout=5, poll=1, sleep=bridge_reports_arrival).go_to(self.REQUEST))
 
 
+class RelayTest(unittest.TestCase):
+    """The robot-side relay's stream, sent over a real local socket, becomes posed frames with depth."""
+
+    def test_messages_survive_the_wire(self):
+        from ultron.protocol.relay_wire import cloud_message, frame_message, unpack
+        import io
+        color = np.random.default_rng(0).integers(0, 255, (48, 64, 3), dtype=np.uint8)
+        depth = np.full((24, 32), 2000, dtype=np.uint16)
+        stream = io.BytesIO(frame_message(12.5, color, depth, (50, 50, 32, 24), (25, 25, 16, 12), np.eye(3), [0, 0, 0],
+                                          pose=(1.0, 2.0, 0.5)) + cloud_message(12.6, [[1, 2, 3], [4, 5, 6]]))
+        header, blobs = unpack(stream.read)
+        self.assertEqual((header["kind"], header["stamp"], header["pose"]), ("frame", 12.5, [1.0, 2.0, 0.5]))
+        self.assertEqual(np.frombuffer(blobs["color"], np.uint8).reshape(header["color_shape"]).tolist(), color.tolist())
+        header, blobs = unpack(stream.read)
+        self.assertEqual((header["kind"], header["count"]), ("cloud", 2))
+        with self.assertRaises(EOFError):
+            unpack(stream.read)
+        with self.assertRaises(ValueError):
+            unpack(io.BytesIO(b"GET / HTTP/1.1\r\n").read)  # something else knocking on the port
+
+    def test_relay_source_yields_posed_frames_with_registered_depth_and_camera(self):
+        import socket
+        from ultron.protocol.relay_wire import frame_message
+        from ultron.protocol.sources import relay
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        frames = relay(port, host="127.0.0.1", log=lambda line: None)
+        color = np.zeros((48, 64, 3), dtype=np.uint8)
+        depth = np.full((48, 64), 2500, dtype=np.uint16)
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as robot:
+            for stamp, pose in ((1.0, (0.0, 0.0, 0.0)), (2.0, (0.5, 0.0, 0.1))):
+                robot.sendall(frame_message(stamp, color, depth, (50, 50, 32, 24), (50, 50, 32, 24), np.eye(3),
+                                            [0, 0, 0], pose=pose))
+        received = list(frames)  # ends when the relay disconnects
+        self.assertEqual(received[-1].stamp, 2.0)
+        last = received[-1]
+        self.assertEqual((last.pose, last.image.size, last.depth.shape), ((0.5, 0.0, 0.1), (64, 48), (24, 32)))
+        self.assertAlmostEqual(float(np.median(last.depth[last.depth > 0])), 2.5, places=2)
+        self.assertEqual((last.camera.fx, last.camera.width), (50.0, 64))
+        sighting = lift(last, Detection("ladder", CENTRE))  # no calibration given: the frame's camera is not used here
+        self.assertIsNone(sighting.position)
+
+    def test_survey_takes_the_camera_from_live_frames(self):
+        with tempfile.TemporaryDirectory() as folder:
+            survey = Survey(SeesEverything(), ObjectMap(folder), KeyframeStore(folder), Store(folder), interval=0)
+            live = frame("ladder", (0.0, 0.0, 0.0), depth=3.0)
+            live.camera = CALIBRATION
+            self.assertEqual([o.id for o in survey.feed(live)], ["LAD-001"])
+            self.assertIsNotNone(survey.objects.get("LAD-001").position)
+
+
 class ContractNavigatorTest(unittest.TestCase):
     """Against the real navigation contract from ultron.autonomy, with a scripted backend instead of Nav2."""
     PARAMS = {"default_timeout_s": 30.0, "goal_xy_tolerance_m": 0.2, "goal_yaw_tolerance_rad": 0.2,

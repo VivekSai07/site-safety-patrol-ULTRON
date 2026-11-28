@@ -2,6 +2,7 @@
 
     folder:PATH                    images in name order (recorded data, the nesseler photos)
     bag:PATH[,rate=2][,pose=lidar] recorded ROS 2 bag from the B2: colour, registered depth, lidar odometry
+    relay[:PORT]                   live from the robot through scripts/ros_relay.py (default port 5600)
     cv:0 | cv:rtsp://... | cv:FILE OpenCV capture: webcam, network stream or video file
     ros2:/image[,pose=/odom][,cloud=/points]   ROS 2 topics (Image or CompressedImage)
     unitree[:INTERFACE]            B2 front camera through unitree_sdk2py
@@ -171,6 +172,58 @@ def unitree(interface=None, rate=5.0):
         time.sleep(1 / rate)
 
 
+def relay(port, host="0.0.0.0", log=print):
+    """Frames from the robot-side relay (`scripts/ros_relay.py`) over TCP.
+
+    The relay sends colour, depth, intrinsics and, if TF has it, the robot pose in the map.
+    Without a TF pose the lidar clouds it also sends are turned into odometry here. Returns
+    when the relay disconnects.
+    """
+    import socket
+
+    from .bag import LidarOdometry, register_depth
+    from .lidar import Calibration
+    from .relay_wire import unpack
+
+    server = socket.socket()
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind((host, int(port)))
+    server.listen(1)
+    log(f"Waiting for the relay on port {port} ...")
+    mailbox = Latest()
+
+    def serve():
+        connection, peer = server.accept()
+        log(f"Relay connected from {peer[0]}")
+        odometry, lidar_pose, count = None, None, 0
+        try:
+            while True:
+                header, blobs = unpack(connection.recv)
+                if header["kind"] == "cloud":
+                    odometry = odometry or LidarOdometry()
+                    lidar_pose = odometry.update(np.frombuffer(blobs["points"], np.float32).reshape(-1, 3))
+                    continue
+                color = np.frombuffer(blobs["color"], np.uint8).reshape(header["color_shape"])
+                depth = np.frombuffer(blobs["depth"], np.uint16).reshape(header["depth_shape"]).astype(np.float32) / 1000
+                size = (color.shape[1], color.shape[0])
+                registered = register_depth(depth, header["depth_k"], header["color_k"], size,
+                                            np.asarray(header["rotation"]).reshape(3, 3), np.asarray(header["translation"]))
+                count += 1
+                pose = header["pose"] or lidar_pose  # a pose in the SLAM map beats local odometry
+                mailbox.put(Frame(Image.fromarray(color), name=f"live-{count:05}", stamp=header["stamp"],
+                                  pose=tuple(pose) if pose else None, depth=registered,
+                                  camera=Calibration(header["color_k"], size)))
+        except (EOFError, OSError, ValueError) as error:
+            log(f"Relay stream ended: {error}")
+        finally:
+            connection.close()
+            server.close()
+            mailbox.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return mailbox
+
+
 def open_source(spec, pace=0.0):
     """Frame iterable for a source spec such as "folder:photos" or "ros2:/camera/image_raw"."""
     kind, _, rest = spec.partition(":")
@@ -181,6 +234,8 @@ def open_source(spec, pace=0.0):
         path, *options = rest.split(",")
         settings = dict(option.split("=", 1) for option in options)
         return bag.frames(path, float(settings.get("rate", 2.0)), settings.get("pose", "lidar"))
+    if kind == "relay":
+        return relay(rest or 5600)
     if kind == "cv":
         return opencv(rest)
     if kind == "ros2":
