@@ -236,38 +236,33 @@ full-system simulation acceptance, verified real B2 transport, and the
 independent hardware checks have been recorded. Earlier scoped component
 tests can proceed only with their own prerequisites and authorization.
 
-#### Phase 4 Nav2 parameter comparison
+### Phase 5 — Tune 3D SLAM on the tiled floor
 
-Prepare these five candidate settings for each branch. Start with the
-checked-in `config/autonomy/nav2_params.yaml` and change only the listed
-values. Apply inflation changes to both local and global costmaps. Keep
-velocity-scaled lookahead disabled for this comparison.
+Run this on `sahil/3d-slam-nav2` after Phase 4. Use the Phase 3 3D bag
+for repeatable replay with actuation isolated. Include a stationary tiled
+patch, a repeat pass, and known obstacles at floor level in the evidence.
+Keep TF, input data and playback conditions fixed. Start with the Phase 3
+hardware configuration and change one parameter group at a time. Begin
+each mapping replay with a fresh database and record effective parameters.
 
-| Profile | `FollowPath.lookahead_dist` (m) | Inflation radius (m) |
-|---|---:|---:|
-| Baseline | 0.60 | 1.00 |
-| Shorter lookahead | 0.50 | 1.00 |
-| Longer lookahead | 0.70 | 1.00 |
-| Smaller inflation radius | 0.60 | 0.90 |
-| Larger inflation radius | 0.60 | 1.10 |
+| Trial | Parameters and comparison |
+|---|---|
+| Baseline | Measure input and processed cloud rates, ICP odometry rate, occupancy publication rate, and acquisition-to-grid latency. Record gaps and Jetson CPU and memory use. |
+| Map update cadence | Compare `Rtabmap/DetectionRate` at 1, 2 and 4 Hz against measured input and compute capacity. At the best rate, compare the baseline `RGBD/LinearUpdate` and `RGBD/AngularUpdate` gates with small thresholds chosen from the observed pose noise. Check stationary churn and update delay during movement. |
+| Floor and reflection handling | Inspect raw and registered clouds over tile and near real low obstacles. Measure floor height in the grid frame before testing `Grid/MaxGroundHeight` and `Grid/NormalsSegmentation`. Compare conservative range limits with `Grid/RangeMax` and, separately, input range filtering if artifacts affect ICP. Check the 2D projection for both ghost obstacles and false free space. |
+| Registration stability | If ICP jumps or drops frames, compare `Icp/VoxelSize` and then `Icp/MaxCorrespondenceDistance` around the hardware baseline. Record whether the change applies to ICP odometry or RTAB-Map registration. Compare revisit alignment, wall duplication and pose discontinuities. |
 
-These are trial values. During N2, verify the effective parameters, planned
-path and gated command output for each profile with actuation isolated.
-N3 prerequisites apply to every physical trial. Use the same marked start,
-goal, map and route on a given branch. Hold the measured footprint, goal
-tolerances, cost scaling, motion limits and independent stop protections
-constant. Present one profile and route for approval at a time. Skip any
-profile whose shadow plan fails the approved clearance and stopping limits.
-
-For each physical trial, record minimum measured clearance, arrival error,
-stop time and distance, oscillations or stalls, operator intervention and
-goal outcome. Confirm the result with the operator before changing
-profiles. Select a profile only from runs that meet all approved limits,
-using completion and tracking consistency to compare them.
+Pick the configuration that preserves real low obstacles and unknown space,
+reduces persistent floor artifacts, and meets the approved update latency
+and localization limits. Score the 3D map and Nav2's 2D projection
+separately. Verify the selected settings on another pass, check saved-map
+reload and localization, and rerun the Phase 4 shadow goal with the tuned
+projection. Approve each trial separately and retain its bag, parameter
+dump, map and comparison notes locally.
 
 ### Slot order and evidence reuse
 
-1. Start with `sahil/sim-slam-nav2`. Complete offline preflight, stationary
+1. Start with `sahil/sim-slam-nav2`. Run Phases 1–4 after offline preflight, including stationary
    topics and supervised WASD checks, then mapping and Nav2. Capture a ROS
    bag during the Phase 3 mapping pass using the same live inputs consumed by
    SLAM.
@@ -278,6 +273,8 @@ using completion and tracking consistency to compare them.
 3. Capture a separate ROS bag during the 3D mapping pass. For each bag, log
    the branch and revision, actual SLAM input topics, required TF, clock
    source and message counts. Include the bag scope in the mapping approval.
+4. Run Phase 5 on the 3D branch using its Phase 3 bag, then verify the
+   selected SLAM settings on a separate pass.
 
 For 3D cross-patrol association, pair the saved RTAB-Map database with a
 persistent map ID and reload it in localization mode. Verify camera poses
