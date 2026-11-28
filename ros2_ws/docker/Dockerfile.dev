@@ -45,9 +45,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Repo python extras (pyproject: sim/autonomy/dashboard) so the existing unittest suite and the
 # MuJoCo sim bridge run in-container. numpy<2 keeps ABI compatibility with Humble's binaries.
-RUN python3 -m pip install --no-cache-dir "numpy<2" "mujoco>=3.3,<4" "Pillow>=9" \
+# pytest 7: anyio>=4 (pulled in by fastapi/httpx) auto-loads a pytest plugin that needs pytest>=7;
+# with apt pytest 6.2.5 every `python3 -m pytest` (and so ament_add_pytest_test) breaks.
+RUN python3 -m pip install --no-cache-dir "numpy<2" "pytest==7.4.4" "mujoco>=3.3,<4" "Pillow>=9" \
       "fastapi>=0.110,<1" "uvicorn>=0.29,<1" "httpx>=0.27,<1" "pypdf>=4,<7" "reportlab>=4,<5" \
-    && python3 -m pip freeze | grep -Ei '^(numpy|mujoco|pillow|fastapi|uvicorn|httpx|pypdf|reportlab)==' \
+    && python3 -m pip freeze | grep -Ei '^(numpy|pytest|mujoco|pillow|fastapi|uvicorn|httpx|pypdf|reportlab)==' \
        >> /opt/ultron/pip_installed.txt
 
 RUN rosdep update --rosdistro humble || true
