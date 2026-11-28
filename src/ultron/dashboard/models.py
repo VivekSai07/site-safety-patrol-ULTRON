@@ -128,6 +128,11 @@ class Photo(BaseModel):
         return safe_id(value)
 
 
+class CriterionDetail(BaseModel):
+    reason: str = Field(min_length=1, max_length=4000)
+    confidence: float = Field(ge=0, le=1, allow_inf_nan=False, description='Uncalibrated model score, not safe-use probability')
+
+
 class Inspection(BaseModel):
     """One ladder verdict in one mission. Bulky sim internals (views, geoms) are dropped."""
     model_config = ConfigDict(extra='ignore')
@@ -142,6 +147,10 @@ class Inspection(BaseModel):
     checklist: dict[str, ItemResult] = {}
     photos: list[Photo] = []
     item_photos: dict[str, list[str]] = {}
+    criterion_details: dict[str, CriterionDetail] = {}
+    assessment_source: str | None = None
+    view_coverage: dict[str, Any] = {}
+    retained_findings: dict[str, Any] = {}
     ladder: LadderData = LadderData()
     missing: list[str] = []
     label_status: str | None = None
@@ -186,6 +195,8 @@ class Inspection(BaseModel):
             raise ValueError('a defect or overdue inspection sticker must be FLAGGED')
         if (CheckResult.UNKNOWN in results or ItemResult.UNKNOWN in items) and self.status is Verdict.AUTOMATED_PASS:
             raise ValueError('an unknown check can never be AUTOMATED_PASS')
+        if not set(self.criterion_details) <= set(ALL_KEYS):
+            raise ValueError('Unknown criterion detail key')
         photo_ids = {p.id for p in self.photos}
         for key, refs in self.item_photos.items():
             if key not in ALL_KEYS or not set(refs) <= photo_ids:

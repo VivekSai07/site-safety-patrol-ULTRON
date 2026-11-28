@@ -14,12 +14,16 @@ from .planning import Grid
 from .scene import scenarios, safety_assets as default_safety_assets
 
 
-def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, viewer=False, motion='smooth', view_policy='bounded', detector='oracle', weights=None, inspector='oracle', qwen=None, allow_download=False, device='cpu', detector_family='yoloe', safety=False, nav='scripted'):
+def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, viewer=False, motion='smooth', view_policy='bounded', detector='oracle', weights=None, inspector='oracle', qwen=None, allow_download=False, device='cpu', detector_family='yoloe', safety=False, nav='scripted', dynamic_obstacles='off'):
     output=Path(output)
     # Evidence runs are immutable; refuse reuse BEFORE loading any model weights.
     if output.exists():
         raise SystemExit(f"Output directory '{output}' already exists; evidence runs are immutable. "
                          "Pick a new --out or remove the old run first.")
+    if view_policy=='full360' and (variant!='open-orbit' or detector!='oracle'):
+        raise ValueError('full360 currently requires --variant open-orbit --detector oracle: clearance and virtual camera are simulation-only')
+    if dynamic_obstacles!='off' and motion!='smooth':
+        raise ValueError('Dynamic obstacle guard requires smooth motion')
     from .runtime_perception import RuntimePerception
     perception=RuntimePerception(detector=detector,weights=weights,inspector=inspector,qwen=qwen,allow_download=allow_download,device=device,family=detector_family)
     output.mkdir(parents=True,exist_ok=False)
@@ -53,6 +57,10 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
             if variant=='blocked-closeup':
                 obstacles.append((1.4,4.4,4.6,4.5))
             grid=Grid((.2,.2,11.8,8.6),obstacles,radius=.65)
+            from .dynamic_obstacles import MotionGuard, InjectedObstacleSensor
+            guard=MotionGuard(grid,'ultron_mock_site_v1') if dynamic_obstacles!='off' else None
+            sensor=InjectedObstacleSensor(dynamic_obstacles,'ultron_mock_site_v1') if guard else None
+            motion_inhibited=False
             mid=db.start_mission('ultron_mock_site_v1')
             db.remember_objects(mid,'ultron_mock_site_v1',sim.geometry(False))
             inspected=set()
@@ -78,8 +86,20 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                     handle.write(json.dumps(event)+'\n')
                 print(f"[{mid} {sim.t:6.1f}s] {kind}: {payload.get('asset_id',payload.get('status',''))}",flush=True)
 
-            def capture(state):
-                frame,rgb,depth,seg=sim.capture()
+            def capture(state, target=None, key=None, band=None):
+                if band:
+                    from .band_capture import capture_band
+                    frame,rgb,depth,seg=capture_band(sim,target,key,band)
+                else:
+                    frame,rgb,depth,seg=sim.capture()
+                if key is not None:
+                    import mujoco
+                    import numpy as np
+                    body=mujoco.mj_name2id(sim.model,mujoco.mjtObj.mjOBJ_BODY,key)
+                    ids=np.where(sim.model.geom_bodyid==body)[0] if body>=0 else []
+                    vv,uu=np.nonzero(np.isin(seg[:,:,0],ids))
+                    frame['same_asset_confirmed']=len(uu)>=100
+                    if len(uu):frame['target_box_xyxy']=[int(uu.min()),int(vv.min()),int(uu.max())+1,int(vv.max())+1]
                 if planner is not None:
                     planner.observe(sim.pose[:2])
                 frame.update(mission_id=mid,state=state)
@@ -89,33 +109,60 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                 return frame,rgb,depth,seg
 
             def move(goal, state, yaw=math.pi/2):
-                path=grid.path(sim.pose[:2],goal)
-                if not path:
-                    emit('POSE_REJECTED',goal=list(goal),status='BLOCKED_OR_OUTSIDE_ZONE')
+                nonlocal motion_inhibited
+                from .motion import Command, motion_samples
+                from dataclasses import asdict
+                if motion_inhibited:
+                    emit('POSE_REJECTED',goal=list(goal),status='MOTION_INHIBITED')
                     return False
-                if motion=='legacy':
-                    for idx,p in enumerate(path):
-                        sim.t+=.25
-                        sim.place([*p,yaw])
-                        if idx%3==0 or idx==len(path)-1:
-                            capture(state)
-                else:
-                    from .motion import motion_samples
-                    from dataclasses import asdict
+                planning_grid=grid
+                for attempt in range(4):
+                    path=planning_grid.path(sim.pose[:2],goal)
+                    if not path:
+                        emit('POSE_REJECTED',goal=list(goal),status='BLOCKED_OR_OUTSIDE_ZONE')
+                        return False
+                    if motion=='legacy':
+                        for idx,p in enumerate(path):
+                            sim.t+=.25
+                            sim.place([*p,yaw])
+                            if idx%3==0 or idx==len(path)-1:
+                                capture(state)
+                        return True
+                    blocked=False
                     with (output/'motion_commands.jsonl').open('a') as commands:
+                        def log_command(command):
+                            commands.write(json.dumps(dict(asdict(command),time=sim.t,mission_id=mid,
+                                backend='KINEMATIC_SDK_COMMAND_SIMULATION'))+'\n')
                         for idx,(pose,command) in enumerate(motion_samples(sim.pose,path,yaw)):
                             command.validate()
-                            if not grid.free(pose):
-                                emit('MOTION_HALTED',status='FOOTPRINT_INVALID')
+                            reason='FOOTPRINT_INVALID'
+                            clear=grid.free(pose)
+                            snapshot=None
+                            if guard:
+                                snapshot=sensor.sample(sim.t,sim.pose,command)
+                                clear,reason=guard.check(sim.pose,pose,command.vx,sim.t,snapshot)
+                            if not clear:
+                                sim.motion_speed=0.
+                                log_command(Command(0.,0.,0.,.1,'StopMove'))
+                                emit('MOTION_HALTED',status=reason,goal=list(goal),
+                                     observation_source='SIMULATED_OCCUPANCY_INJECTION' if guard else 'STATIC_GRID',
+                                     dynamic_rectangles=list(snapshot.rectangles) if snapshot else [])
+                                capture('MOTION_HALTED')
+                                if guard and reason=='DYNAMIC_OR_STATIC_CLEARANCE' and attempt<3:
+                                    planning_grid=guard.grid_for(snapshot,speed=.5)
+                                    emit('DYNAMIC_REPLAN',attempt=attempt+1,goal=list(goal))
+                                    blocked=True
+                                    break
+                                motion_inhibited=True
                                 return False
                             sim.t+=command.dt
                             sim.motion_speed=abs(command.vx)
                             sim.place(pose)
-                            commands.write(json.dumps(dict(asdict(command),time=sim.t,mission_id=mid,
-                                backend='KINEMATIC_SDK_COMMAND_SIMULATION'))+'\n')
+                            log_command(command)
                             if idx%12==0 or command.operation=='StopMove':
                                 capture(state)
-                return True
+                    if not blocked:return True
+                return False
 
             emit('MISSION_START',mission_mode=mode,operator_interventions=interventions,
                  zone_bounds=list(grid.bounds),keepouts=grid.obstacles,base=list(sim.pose[:2]))
@@ -173,7 +220,7 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                                 stop='NEXT_POSE_UNSAFE_BLOCKED'
                                 break
                             sim.t+=.8
-                            frame,rgb,depth,seg=capture('INSPECT_'+name)
+                            frame,rgb,depth,seg=capture('INSPECT_'+name,key=key)
                             views.append(frame)
                             if perception.inspector is not None:
                                 checks,label,result=perception.read(sim,key,detection['position'],frame,rgb,depth,seg,views,REQUIRED[fixture['type']])
@@ -198,16 +245,24 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                                 break
                         result=perception.result(key,REQUIRED[fixture['type']]) if perception.inspector is not None else verdict(checks,REQUIRED[fixture['type']],label)
                         orbit_views=[]
-                        if view_policy=='orbit' and views and result['status']!='FLAGGED' and selection['action']=='INSPECT':
+                        if view_policy in ('orbit','full360') and views and (result['status']!='FLAGGED' or view_policy=='full360') and selection['action']=='INSPECT':
                             from .viewpoints import candidate_views
                             rear_missing=any(checks.get(c,'UNKNOWN')=='UNKNOWN' for c in ('rear_feet','spreader'))
-                            ring_allowed=variant=='open-orbit' and fixture['type']=='A_FRAME_STEPLADDER' and rear_missing
-                            candidates=candidate_views(detection['position'],fixture['type'],grid,full_orbit=True,start=sim.pose[:2],radius=2.2,
-                                open_space_confirmed=variant=='open-orbit',rear_evidence_missing=rear_missing)
+                            ring_allowed=variant=='open-orbit' and fixture['type']=='A_FRAME_STEPLADDER' and (rear_missing or view_policy=='full360')
+                            candidates=candidate_views(fixture['position'] if view_policy=='full360' else detection['position'],fixture['type'],grid,full_orbit=True,start=sim.pose[:2],radius=2.2,
+                                open_space_confirmed=variant=='open-orbit',rear_evidence_missing=rear_missing or view_policy=='full360')
                             for candidate in candidates:
                                 if move(candidate['position'],'ORBIT_APPROACH',yaw=candidate['yaw']):
+                                    if view_policy=='full360':
+                                        for band in ('lower','middle','upper'):
+                                            sim.t+=.8
+                                            frame,rgb,depth,seg=capture('INSPECT_360_'+band.upper(),fixture['position'],key,band)
+                                            views.append(frame)
+                                            emit('EVIDENCE_CAPTURED',asset_id=asset,view='360_'+band,azimuth_deg=frame['azimuth_deg'])
+                                        orbit_views.append(candidate['angle_deg'])
+                                        continue
                                     sim.t+=.8
-                                    frame,rgb,depth,seg=capture('INSPECT_ORBIT')
+                                    frame,rgb,depth,seg=capture('INSPECT_ORBIT',key=key)
                                     frame['view_angle_deg']=candidate['angle_deg']
                                     views.append(frame);orbit_views.append(candidate['angle_deg'])
                                     if perception.inspector is not None:
@@ -225,7 +280,7 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                             side_goal=(x-1.4,y-1.65)
                             if move(side_goal,'SECOND_LOOK',yaw=math.atan2(y-side_goal[1],x-side_goal[0])):
                                 sim.t+=.8
-                                frame,rgb,depth,seg=capture('INSPECT_SIDE')
+                                frame,rgb,depth,seg=capture('INSPECT_SIDE',key=key)
                                 views.append(frame)
                                 if perception.inspector is not None:
                                     checks,label,result=perception.read(sim,key,detection['position'],frame,rgb,depth,seg,views,REQUIRED[fixture['type']])
@@ -250,7 +305,19 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                             'run_id':run_id,'evidence_root':str(output.resolve()),'orbit_angles':orbit_views,
                             'perception_backend':{'detector':detector,'inspector':inspector},
                             'full_ring_executed':len(set(orbit_views))==8 and fixture['type']=='A_FRAME_STEPLADDER' and variant=='open-orbit'}
+                        if view_policy=='full360':
+                            from .assessment import assess_coverage
+                            from .patrol_assessment import record_manifest
+                            if not assess_coverage(record_manifest(payload,output))['complete'] and payload['status']!='FLAGGED':
+                                payload.update(status='MANUAL_REVIEW',reason='Full360 sampling incomplete',stop_reason='360_COVERAGE_GAPS')
+                        # Registry fuses unresolved historical failures before API evidence jobs.
                         db.append(mid,asset,payload)
+                        from .patrol_assessment import record_manifest
+                        job=record_manifest(payload,output)
+                        job_path=Path('assessment-jobs')/mid/(asset+'.json')
+                        (output/job_path).parent.mkdir(parents=True,exist_ok=True)
+                        (output/job_path).write_text(json.dumps(job,indent=2))
+                        emit('ASSESSMENT_READY',asset_id=asset,manifest=str(job_path),coverage=job['coverage'])
                         records.append(payload)
                         emit('INSPECTION_COMMITTED',asset_id=asset,status=payload['status'],retry_count=retry_count,reason=payload['reason'],
                              evidence=[view['rgb'] for view in views],checks=checks)
@@ -325,7 +392,7 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                     returned_to_base=move(decision['goal'],'RETURN_BASE')
                     emit('BASE_REACHED' if returned_to_base else 'BASE_UNREACHABLE',
                          status='KNOWN_ASSETS_HANDLED_COVERAGE_UNVERIFIED' if returned_to_base else 'AWAIT_OPERATOR')
-                mission_status='COVERAGE_INCOMPLETE' if detector!='oracle' or missing or skipped or len(inspected)<len(ladders) else 'MISSION_COMPLETE'
+                mission_status='COVERAGE_INCOMPLETE' if motion_inhibited or not returned_to_base or detector!='oracle' or missing or skipped or len(inspected)<len(ladders) else 'MISSION_COMPLETE'
                 summary={'mission_id':mid,'status':mission_status,'mission_mode':mode,
                     'planned_waypoints':len(route) if planner is None else planner.goals_issued,'reached_waypoints':reached,'skipped_waypoints':skipped,
                     'zone_bounds':list(grid.bounds),'keepout_rectangles':grid.obstacles,
@@ -336,7 +403,7 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                     'expected_ground_truth':len(ladders),'found':len(inspected),
                     'ladder_recall_simulation':len(inspected)/len(ladders) if detector=='oracle' else None,'missing_expected':missing,
                     'operator_interventions':interventions,'duration_sim_s':round(sim.t-clock,2),
-                    'records':records,'synthetic':True,'supervisor_decision':decision,'returned_to_base':returned_to_base,
+                    'records':records,'synthetic':True,'dynamic_obstacle_mode':dynamic_obstacles,'motion_inhibited':motion_inhibited,'supervisor_decision':decision,'returned_to_base':returned_to_base,
                     'recovery_attempts':sum(r['retry_count'] for r in records),
                     'recovery_resolved':sum(r['retry_count']==1 and r['status']!='MANUAL_REVIEW' for r in records),
                     'hard_fail_cases_oracle':sum(bool(a.get('defect')) or a['due']<'2026-11-27' for a in ladders),

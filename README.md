@@ -1,5 +1,7 @@
 # ULTRON · Site Safety Patrol
 
+**Readiness:** [Integrated launch commands, tested evidence and remaining hardware blockers](docs/HARDWARE_READINESS.md). Hardware motion remains NO-GO; SLAM/Nav2 and real sensor/control validation are outstanding.
+
 **API prompts:** [Versioned ladder and site-safety prompt packs, schemas and request-building adapter](docs/API_PROMPTS.md).
 
 **A lightweight Unitree B2 MuJoCo simulation for the nesseler challenge.** The existing demo has a robot model patrol a bounded construction scene, discover ladders, approach for evidence, request one second look, and remember ladder identities across patrols. Actual simulated RGB/depth frames become a traceable inspection report. Rerun export and ROS 2 Humble/RViz replay consume the same recording. The label-first baseline has a rendered synthetic capture-to-draft probe with manual fixture transcription, plus bounded browser-control checks; real OCR and real-world operation remain unverified. See the [baseline and source overview](docs/LABEL_FIRST_BASELINE.md).
@@ -31,11 +33,12 @@ Synthetic ground truth is not a detector.
 ## Seven-section assessment and photoreal dataset prompt pack
 
 The [assessment runbook](docs/ASSESSMENT_RUNBOOK.md) describes an optional
-live adapter and a separate 24-view simulation experiment. **Do not run
-`scripts/first-milestone.sh` or `ultron.assessment_live` without separate
-authorization and rights/privacy review:** they can send images and prompts
-to an external API. They were not run in this reconciliation; live inference,
-dashboard publication and real-data evaluation remain unverified.
+live adapter and a separate 24-view simulation experiment. The current
+[integrated patrol worker](docs/HARDWARE_READINESS.md#reproduce-on-the-laptop)
+uses the user-authorized OpenAI path when explicitly enabled; images and prompts
+leave the laptop and can incur API charges. Successful cloud inference and
+real-data accuracy remain unverified in this restricted execution environment.
+Default simulation makes no cloud calls.
 
 The existing [generation-prompt ZIP](deliverables/ULTRON_inspection_prompt_pack_v1.zip)
 contains scenario recipes and prompts, not reviewed images or a validated
@@ -52,7 +55,9 @@ PYTHONPATH=src python3 -m ultron.assessment request runs/my-360-capture/keyframe
 
 ## Weekend target architecture
 
-**Later team integration plan, not a claim of completed integration.** The current baseline is operator-driven simulation capture, starting with an overview and inspection label, followed by a local evidence-linked draft. Autonomous acquisition and the OpenAI worker are later integrations; any live API use requires separate authorization and rights/privacy review for both images and text. A deterministic supervisor owns movement and completion; a deterministic policy owns screening decisions. The seven nesseler sections are report categories, not seven defects a camera can always prove absent.
+**Target architecture; implemented and pending layers are distinguished in the [readiness matrix](docs/HARDWARE_READINESS.md).** The patrol now emits per-ladder evidence jobs to an optional live OpenAI worker and dashboard. Dynamic occupancy stop/replan and open-fixture 24-view acquisition are simulation integrations. SLAM/Nav2 and real B2 execution remain pending. The following paragraph describes the earlier baseline, not these new scoped integrations.
+
+**Earlier baseline:** The current baseline is operator-driven simulation capture, starting with an overview and inspection label, followed by a local evidence-linked draft. Autonomous acquisition and the OpenAI worker are later integrations; any live API use requires separate authorization and rights/privacy review for both images and text. A deterministic supervisor owns movement and completion; a deterministic policy owns screening decisions. The seven nesseler sections are report categories, not seven defects a camera can always prove absent.
 
 ```mermaid
 flowchart TB

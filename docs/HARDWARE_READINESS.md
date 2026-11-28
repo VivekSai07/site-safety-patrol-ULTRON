@@ -1,0 +1,71 @@
+# Integrated readiness — 28 November 2026
+
+**Hardware motion: NO-GO.** This baseline exercises inspection and safety plumbing in a kinematic simulation. It does not establish a complete B2 autonomy stack or authorize connecting to the robot. The required gate remains [SIM_TO_HARDWARE.md](SIM_TO_HARDWARE.md).
+
+## What is connected now
+
+The patrol emits a checksum-bound, per-ladder `ASSESSMENT_READY` manifest as soon as acquisition ends. `dashboard.live_tail --assess-openai` runs one background Responses API request at a time using the seven-section/23-criterion prompt pack. It uploads evidence, then publishes the assessment while the patrol can continue. Dashboard ladder details retain criterion reasons, uncalibrated scores, image references and view-sampling coverage. Refusals, malformed responses, timeouts, exhausted request budgets and missing jobs become manual review, never oracle success. A known failure remains FLAGGED.
+
+Model flags have a separate persistent assessment ledger. Repeated observations cannot clear a flag; historical defects retain their original mission, bundle, reason, score and photo hashes. New clean images are not presented as proof of an old defect. The ledger does not update the navigation map or grant motion authority. To retain flags across run folders, explicitly share `--assessment-ledger` **only when the same map/asset identity registry is shared**. A new map/identity scheme needs a new ledger. Human resolution of flags is not implemented.
+
+`--dynamic-obstacles` checks fresh map-scoped occupancy before each smooth-motion sample, including swept-path clearance and a proposed braking margin. Invalid, stale, reordered, wrong-map or disabled observations cause a logged `StopMove`; freshness/localization failures latch inhibition. A fresh blockage can trigger at most three replans per move; persistent blockage inhibits motion. `MOTION_HALTED` reaches dashboard robot-stop alerts. The provider here is explicitly simulated occupancy injection, not camera/lidar perception or an independent watchdog.
+
+## Per-layer status and remaining acceptance
+
+| Layer | Evidence in this baseline | Required before integrated hardware use | Owner |
+|---|---|---|---|
+| SLAM/localization | Patrol uses known scene geometry and exact simulation pose. No SLAM is run by `ultron demo`. | Run Sahil's branch with timestamped scan/odom/TF, verify localization loss/recovery, map persistence and map versions. | Sahil |
+| Navigation | Coverage goals use `ultron.navigation_goal/v1`; execution is kinematic A*. Sahil's separate branch contains Nav2 adapter, localization checks, scan obstacle layers and motion gate. | Integrate/cancel goals against that adapter and validate actual ROS execution. This environment has Humble core but no Nav2/slam_toolbox package directories; base Python cannot import rclpy. | Sahil + Vivek |
+| Dynamic obstacles | Swept-path guard, freshness/identity checks, stop/replan tests and rendered injection cases. | Fresh real lidar/depth costmap updates, people crossing, sensor dropout, unknown-space treatment; measure stopping distance, footprint and latency. Verify independent command watchdog, RC priority and E-stop. | Sahil + named robot operator |
+| Ladder detection | Existing optional YOLO runtime; default and this 360 acceptance run use segmentation oracle. No new learned-detector recall result is claimed. | Om's ladder-capable weights, negatives/occlusion tests and annotated real replay; stock COCO classes do not establish ladder support. | Om |
+| Identity/spatial memory | SQLite map-scoped associations, conservative history, separate model-flag ledger. Scene-object seed still comes from simulator truth. | Replace scene truth with observed detector/depth/TF objects; test two nearby ladders, revisits, changed maps and ambiguous identity. | Kaan |
+| 360 acquisition | Open A-frame patrol acquired all 8 azimuth × 3 height sampling cells with 27 total images, target boxes and image hashes; returned to base. Virtual camera aiming is explicit. | Real camera field of view/extrinsics and reachable camera/robot poses; account for walls, upper surfaces and occlusion. An inaccessible sector remains a gap requiring human review, never a claimed complete inspection. | Vivek + Sahil |
+| Seven-section assessment | Strict schema/evidence validation, worker, review fallbacks, persistent failure history and dashboard plumbing tested. A real API attempt failed transport here. | Successful account/model-specific API round trip on authorized captures; evaluate seeded defects and unknowns against human labels. Functional/tactile checks remain human-only. | Vivek |
+| Other site safety | Existing fire/first-aid/escape/PPE sweep feeds events/photos; optional model mode remains MODEL_PROPOSAL. | Real-image evaluation and evidence for each visual criterion; no inference of functional extinguisher/first-aid availability from appearance alone. | Om + Vivek |
+| Frontend/report | Real dashboard ASGI routes/store preserve evidence and all 23 explained findings. Browser/live TCP and PDF sign-off are not established by that test. | Aravind verifies live HTTP/browser updates, media, flags, unavailable API state, report content and restart recovery on operator laptop. | Aravind |
+| B2 control | Organizer physics simulator retained separately; patrol motion is not physical walking. | Verified B2 SportClient/ROS transport, named supervised operator, bounded tests and independent safety validation. | Sahil + operator |
+
+**Full-system simulation acceptance is incomplete:** no integrated SLAM/Nav2/detector/live-cloud/physical-controller run has passed. The tests below are scoped component/integration evidence.
+
+## Reproduce on the laptop
+
+Use a dedicated loopback dashboard with default dashboard-only notifications. No robot command bridge or dashboard goals are enabled. These commands use installed simulation/dashboard extras; they do not install ROS packages.
+
+Terminal 1:
+
+```bash
+cd /home/vivek/ULTRON
+PYTHONPATH=src python3 -m ultron.dashboard --port 8001 \
+  --db runs/readiness-dashboard.sqlite --media runs/readiness-media
+```
+
+Terminal 2, before starting the simulation (uses the existing `.env`; never source it). `--assess-openai` explicitly sends images/prompts and can spend credits; at most eight jobs receive an API attempt. Set `ULTRON_OPENAI_MODEL` in `.env` or pass `--model` for an available vision model supporting Responses structured outputs. A failed/incomplete job is not automatically retried with another paid call.
+
+```bash
+cd /home/vivek/ULTRON
+PYTHONPATH=src python3 -m ultron.dashboard.live_tail runs/my-integrated-01 \
+  --url http://127.0.0.1:8001 --site ultron-readiness --tag=-R01 \
+  --assess-openai --max-assessments 8
+```
+
+Terminal 3:
+
+```bash
+cd /home/vivek/ULTRON
+PYTHONPATH=src MUJOCO_GL=egl LP_NUM_THREADS=2 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+  python3 -m ultron demo --out runs/my-integrated-01 --patrols 1 \
+  --variant open-orbit --view-policy full360 --nav auto --dynamic-obstacles clear
+```
+
+Open `http://127.0.0.1:8001`. Pick a fresh run folder and mission tag each time. This 360 mode deliberately requires the open fixture and oracle identity; it is not a real detector/robot acceptance test. Omit `--assess-openai` for a no-cloud run; then the dashboard uses explicitly synthetic baseline verdicts. `--dynamic-obstacles crossing` and `stale` inject separate safety failure cases; do not assume either run completes all inspection goals. `--safety` on a normal-site run adds existing site-safety props/events; the original bounded acquisition policy remains the default there.
+
+## Evidence recorded in this session
+
+- `runs/integrated-360-20261128-final`: one fixture discovered, **24/24 sampling cells**, 27 image frames with target boxes; 97.4% planner observation estimate; returned to base. Motion, visibility and pose are simulation-derived, not validated robot behavior.
+- `runs/integrated-dynamic-stale-20261128-a`: stale observations emitted StopMove, latched inhibition, `COVERAGE_INCOMPLETE`; no return-to-base claim.
+- `runs/integrated-dynamic-crossing-20261128-a`: dynamic-clearance stops and replan events, returned to base; zero ladders found on this scripted-route case, so `COVERAGE_INCOMPLETE`. This is a stop/replan case, not mission acceptance or moving-person perception.
+- `runs/integrated-360-20261128-a/cloud-validation`: configured-key API attempt recorded `API_TRANSPORT_FAILED`; all 23 criteria become review findings. No successful cloud inference is claimed.
+- New focused regressions cover missing/stale/invalid occupancy, swept path/braking margin, historical failure precedence, budget limits, publication retries/lost responses, retained evidence provenance and mission closure failure. Actual dashboard ASGI/store test uses an injected model response, inline notification dispatch and filesystem evidence verification; TCP, executor wakeups, browser rendering and media HTTP serving are not verified by it.
+- Full discovery encountered the existing TestClient hang and four socket-creation errors (`EPERM`) in dashboard/teleop networking tests. The supported subset excludes these 23 infrastructure-dependent cases. The supported subset completed 212 cases: 197 passed and 15 skipped. These 23 excluded cases remain unverified, not passed. The new rendered stale-observation integration test passed separately; the existing rendered workflow suite also passed all seven cases (autonomous patrol, blocked inspections, standalone 360 capture, full ring, site safety, and two-patrol identity/history). Thus eight rendered checks passed separately. JavaScript syntax and staged whitespace checks passed.
+
+Generated runs and model weights remain local and ignored by Git. No physical robot connection, hardware configuration change or movement was performed.

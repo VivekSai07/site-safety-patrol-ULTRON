@@ -101,7 +101,7 @@ def build_request(manifest,root,model):
         digest=hashlib.sha256(data).hexdigest()
         if digest!=v.get('sha256'):raise ValueError('Keyframe checksum mismatch')
         seen[v['image_id']]=digest
-        content.extend([{'type':'input_text','text':json.dumps({'image_id':v['image_id'],'band':v.get('band'),'azimuth_deg':v.get('azimuth_deg')})},
+        content.extend([{'type':'input_text','text':json.dumps({'image_id':v['image_id'],'band':v.get('band'),'azimuth_deg':v.get('azimuth_deg'),'target_box_xyxy':v.get('target_box_xyxy'),'target_instruction':'Assess only the indicated target; do not attribute nearby ladders to this asset'})},
             {'type':'input_image','image_url':'data:image/jpeg;base64,'+base64.b64encode(data).decode(),'detail':'high'}])
     metadata={k:manifest.get(k) for k in ('asset_id','mission_id','map_version','ladder_type','inspection_date','verified_not_applicable')}
     metadata['bundle_id']=evidence_bundle_id(manifest)

@@ -36,3 +36,10 @@ This is ULTRON's team-side Unitree B2 ladder patrol repository. The user explici
 - Preserve the distinction between map observations and proof of complete site coverage.
 - Synthetic detector boxes come from segmentation; scenario defect truth is not an image-level visibility annotation. Keep each physical ladder/session group in only one train or evaluation split.
 - Uncalibrated model proposals never become a safe-use probability or a scoped automated pass.
+
+## Integrated patrol assessment
+- Consult `docs/HARDWARE_READINESS.md` for the current per-layer evidence and blockers; a passing known-map demo is not SLAM/Nav2 or hardware readiness.
+- Keep cloud assessment off the motion thread and opt-in. Preserve image hashes, all criterion reasons and explicit review fallbacks; a missing job or exhausted request budget must never fall back to oracle success in cloud mode.
+- Preserve unresolved model flags in the assessment ledger with original evidence provenance. Current clean images cannot serve as evidence for an older defect. Ledger updates require the interprocess lock.
+- `full360` patrol acquisition currently requires the open synthetic A-frame and oracle identity; virtual pan/tilt and sampling completeness do not establish physical B2 camera reach or full surface visibility.
+- Dynamic-obstacle providers in the demo are explicitly injected occupancy snapshots. Never substitute them for measured sensors, independent watchdogs or B2 stopping validation.
