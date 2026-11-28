@@ -147,6 +147,7 @@ class Gate:
         self.require_map = require_map      # no map yet: refuse (True) or judge without one (False)
         self.also = also                    # another is_free(x, y), e.g. a saved map's footprint check
         self.robot = None                   # robot (x, y, yaw), set by the caller each frame
+        self.extra = None                   # callable -> [[x, y], ...] more cells to keep clear (lying candidates)
         self.reason = ""                    # why the last check failed
 
     def __call__(self, x, y):
@@ -179,9 +180,12 @@ class Gate:
         return True, ""
 
     def too_close(self, x, y):
+        keep = self.clearance + self.object_margin
+        extra = self.extra() if self.extra else []
+        if extra and np.hypot(*(np.asarray(extra, dtype=float) - (x, y)).T).min() < keep:
+            return "something lying on the floor"
         if self.objects is None:
             return None
-        keep = self.clearance + self.object_margin
         for site_object in self.objects.all():
             if site_object.status in ("REJECTED", "MOVED"):
                 continue

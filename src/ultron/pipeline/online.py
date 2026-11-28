@@ -42,6 +42,7 @@ import threading
 import time
 
 from .coverage import missing_views
+from .discover import CELL as DISCOVER_CELL
 from .keyframes import view_name
 from .navigate import BUSY, PREEMPTED, UNAVAILABLE
 from .types import ViewRequest
@@ -117,6 +118,8 @@ class Candidate:
     last_look: float = None
     state: str = "new"           # new (seen once) | open | explained | dismissed
     explained_by: str = None
+    lying: bool = False          # a low, long blob on the floor: maybe a ladder lying there
+    cells: list = None           # its map cells in metres [[x, y], ...]: kept clear by goals, sent as obstacles
 
 
 class OnlinePatrol:
@@ -185,6 +188,7 @@ class OnlinePatrol:
         self.pose = frame.pose or self.pose
         if hasattr(self.is_free, "robot"):
             self.is_free.robot = self.pose  # the gate checks goals are reachable from here
+            self.is_free.extra = self.lying_cells
         self._operator()
         self._apply_results()
         self._take_new()
@@ -511,7 +515,7 @@ class OnlinePatrol:
             return
         self._obstacles_at = self.clock()
         from .gate import obstacle_cells
-        cells = obstacle_cells(self.objects)
+        cells = obstacle_cells(self.objects) + self.lying_cells()
         if cells != self._obstacles_sent:
             self._obstacles_sent = cells
             self.publish_obstacles(cells)
@@ -531,16 +535,22 @@ class OnlinePatrol:
 
     # --- lidar candidates --------------------------------------------------------------------
     def _candidates(self, frame):
-        for x, y in self.find_candidates(frame) or ():
+        for found in self.find_candidates(frame) or ():
+            x, y = found[0], found[1]
+            flat = bool(getattr(found, "lying", False))
+            cells = [[round((i + 0.5) * DISCOVER_CELL, 3), round((j + 0.5) * DISCOVER_CELL, 3)]
+                     for i, j in getattr(found, "cells", ())] or None
             near = min(self.candidates, key=lambda c: math.dist(c.position, (x, y)), default=None)
             if near and math.dist(near.position, (x, y)) < CANDIDATE_MERGE:
                 near.hits += 1
+                near.lying = near.lying or flat
+                near.cells = cells or near.cells
                 if near.state == "new" and near.hits >= CANDIDATE_HITS:
                     near.state = "open"
                     self.store.emit("candidate", candidate=near.id, position=list(near.position), hits=near.hits)
                 continue
             self.candidates.append(Candidate(f"CAND-{len(self.candidates) + 1:03}", (x, y),
-                                             state="open" if CANDIDATE_HITS <= 1 else "new"))
+                                             state="open" if CANDIDATE_HITS <= 1 else "new", lying=flat, cells=cells))
         live = [o for o in self.objects.all() if o.position and o.status not in ("REJECTED", "MOVED")]
         for candidate in self.candidates:
             if candidate.state not in ("new", "open"):
@@ -549,12 +559,17 @@ class OnlinePatrol:
             if near and math.dist(near.position, candidate.position) <= EXPLAINED:
                 candidate.state, candidate.explained_by = "explained", near.id
                 self.store.emit("candidate_explained", candidate=candidate.id, object=near.id)
-            elif (candidate.state == "open" and self._in_view(candidate.position)
+            elif (candidate.state == "open" and not candidate.lying and self._in_view(candidate.position)
                   and (candidate.last_look is None or self.stamp - candidate.last_look >= LOOK_GAP)):
                 candidate.looks, candidate.last_look = candidate.looks + 1, self.stamp
                 if candidate.looks >= DISMISS_LOOKS:
                     candidate.state = "dismissed"
                     self.store.emit("candidate_dismissed", candidate=candidate.id, looks=candidate.looks)
+
+    def lying_cells(self):
+        """Cells of lying candidates no object explains: the camera mostly cannot see a ladder on the
+        floor, so they stay obstacles for goals and for the navigation stack, confirmed or not."""
+        return [cell for c in self.candidates if c.lying and c.state in ("new", "open") and c.cells for cell in c.cells]
 
     def _in_view(self, position):
         distance = self._distance(position)

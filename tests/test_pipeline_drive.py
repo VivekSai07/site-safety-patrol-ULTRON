@@ -239,6 +239,35 @@ class DriveTest(Workspace):
         self.assertIn("navigation_held", self.kinds())
         self.assertEqual(self.objects.get("LAD-001").status, "INSPECTED")
 
+    def test_a_lying_candidate_is_never_dismissed_and_kept_clear_by_goals_and_navigation(self):
+        from ultron.pipeline.discover import Candidate
+        lying = Candidate(3.0, 1.0, lying=True, cells=[[i, 5] for i in range(10, 20)])  # 0.2 m cells: x 2-4 m
+        dashboard = FakeDashboard()
+        online = self.online(dashboard, gate=Gate(ROOM, clearance=0.4), candidates=lambda f: [lying],
+                             obstacles=lambda cells: dashboard.call("PUT", "/api/obstacles", {"cells": cells}))
+        for stamp in range(12):  # the robot looks straight at it from 2 m, many times: the camera finds nothing
+            online.step(frame(f"nothing-{stamp}", (3.0, -1.0, math.pi / 2), float(stamp), depth=2.0))
+            self.now[0] += 3.0
+        self.assertEqual(online.candidates[0].state, "open")
+        self.assertEqual(online.is_free.check(3.0, 1.1)[1], "too close to something lying on the floor")
+        self.assertIn([3.1, 1.1], dashboard.obstacles["cells"])
+        online.finish()
+
+    def test_a_detection_seen_through_glass_is_dropped_by_the_survey(self):
+        import unittest.mock
+        from ultron.pipeline import survey as survey_module
+        real = survey_module.lift
+
+        def doubted(*args, **kwargs):
+            sighting = real(*args, **kwargs)
+            sighting.doubt = "no depth"
+            return sighting
+
+        with unittest.mock.patch.object(survey_module, "lift", doubted):
+            for stamp in range(3):
+                self.see("ladder", A, 0, 3.0, float(stamp))
+        self.assertEqual((self.objects.all(), self.survey.doubted), ([], {"no depth": 3}))
+
     def test_known_footprints_go_to_the_navigation_stack(self):
         dashboard = FakeDashboard()
         online = self.online(dashboard, obstacles=lambda cells: dashboard.call("PUT", "/api/obstacles", {"cells": cells}))

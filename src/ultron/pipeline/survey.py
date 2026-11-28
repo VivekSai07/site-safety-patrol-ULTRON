@@ -10,7 +10,7 @@ from PIL import Image
 
 from .anchor import Anchoring
 from .catalog import KINDS
-from .lift import lift
+from .lift import lift, lying
 from .moved import look_through
 from .objects import MIN_SHARE, footprint, offset, touching
 from .types import Sighting
@@ -108,6 +108,7 @@ class Survey:
         self.seen_now = {}  # object id -> sightings in this run: a patrol reports what it saw itself
         self.inside = None  # inside(x, y): the room's fence (gate.Fence.contains); sightings outside are dropped
         self.outside = 0    # sightings dropped for lying outside it
+        self.doubted = {}   # reason -> detections dropped as seen on or through glass
 
     def feed(self, frame, force=False):
         """Process one frame. Returns the objects seen in it (empty if skipped or nothing found)."""
@@ -134,6 +135,12 @@ class Survey:
         # Detections the tracker already knows go first, so a newcomer cannot take their object.
         for detection in sorted(detections, key=lambda d: d.track not in self._tracks):
             sighting = lift(frame, detection, self.calibration)
+            if getattr(sighting, "doubt", None):  # on or through glass (lift.doubt); YOLO drops these itself
+                self.doubted[sighting.doubt] = self.doubted.get(sighting.doubt, 0) + 1
+                if self.doubted[sighting.doubt] in (1, 10, 100, 1000):
+                    self.store.emit("detection_doubted", reason=sighting.doubt, object_kind=detection.kind,
+                                    count=self.doubted[sighting.doubt])
+                continue
             if sighting.distance and not sighting.approximate and sighting.distance > MAX_RANGE:
                 continue
             if self.inside and sighting.position is not None and not sighting.approximate \
@@ -355,12 +362,13 @@ class Survey:
         """The keyframes the vision model is shown, loaded into memory (a better frame may replace
         the file meanwhile): [(image, box, keyframe id, measured height or None)]."""
         views = []
+        flat = lying(site_object)  # a ladder on the floor is 0.1 m "tall": that would tell the model it is none
         for view in self.keyframes.select(site_object, budget=VERIFY_VIEWS):
             with Image.open(self.keyframes.root / view.file) as image:
                 # Boxes cut off by the image edge show only a part: their height says nothing.
                 whole = EDGE < view.box[1] and view.box[3] < 1000 - EDGE
                 height = None
-                if self.calibration and view.distance and whole:
+                if self.calibration and view.distance and whole and not flat:
                     height = (view.box[3] - view.box[1]) / 1000 * image.height / self.calibration.fy * view.distance
                 views.append((image.convert("RGB"), view.box, view.id, height))
         return views

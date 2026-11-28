@@ -38,7 +38,8 @@ def build_detector(args, vlm):
     if kind == "vlm":
         return VlmDetector(vlm)
     if kind == "yolo":
-        return YoloDetector(option or "yoloe-11l-seg.pt", prompts=load_prompts(args.data))
+        return YoloDetector(option or "yoloe-11l-seg.pt", prompts=load_prompts(args.data), imgsz=args.imgsz,
+                            guard=not args.no_glass_guard)
     if kind == "replay":
         with open(option) as handle:
             return ReplayDetector(json.load(handle))
@@ -216,8 +217,9 @@ def realtime(frames):
 
 
 def build_candidates(args):
-    """--candidates lidar: upright blobs in the lidar cloud the camera should look at (needs a source
-    whose frames carry `cloud` in the map frame: sim:PATH,lidar=1 today)."""
+    """--candidates lidar: upright blobs in the lidar cloud the camera should look at, and low long blobs
+    (ladders lying on the floor) kept clear as obstacles. Needs frames that carry `cloud` in the map
+    frame: sim:PATH,lidar=1, bag:PATH,lidar=1 and relay (when the robot side forwards clouds)."""
     if args.candidates == "lidar":
         from .discover import LidarCandidates
         return LidarCandidates(floor=args.floor)
@@ -288,7 +290,9 @@ def command_fence(args):
 
 def command_calibrate(args):
     """Pick prompt and threshold per kind from sample frames, judged by the vision model."""
-    detector = YoloDetector(args.detector.partition(":")[2] or "yoloe-11l-seg.pt", track=False)
+    # No extra classes here: their boxes would count for every ladder prompt on trial.
+    detector = YoloDetector(args.detector.partition(":")[2] or "yoloe-11l-seg.pt", track=False, also=(),
+                            imgsz=args.imgsz)
     frames = list(open_source(args.source))
     report = calibrate.calibrate(frames, detector, Verifier(build_vlm(args)), per_prompt=args.per_prompt)
     print(f"{len(frames)} frames; saved {calibrate.save(report, args.data)}")
@@ -345,6 +349,10 @@ def main(argv=None):
     common.add_argument("--no-cache", action="store_true")
     common.add_argument("--fence", help="room polygon JSON {frame_id, polygon: [[x, y], ...]} in the map frame "
                                         "(default: the dashboard's): no goal or object outside it")
+    common.add_argument("--imgsz", type=int, help="detector input size (default $ULTRON_DETECTOR_IMGSZ or 640); "
+                                                  "1280 finds a lying ladder but split objects on the hall bag")
+    common.add_argument("--no-glass-guard", action="store_true",
+                        help="keep detections with no depth or seen over a sill (lift.doubt drops them)")
     common.add_argument("--no-verify", action="store_true", help="survey without the vision model's second opinion")
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -384,7 +392,7 @@ def main(argv=None):
     live.add_argument("--pause-cap", type=float, default=90.0, help="longest pause of the explorer for one batch of objects (s)")
     live.add_argument("--realtime", action="store_true", help="replay a recording at the pace it was recorded")
     live.add_argument("--candidates", choices=["none", "lidar"], default="none",
-                      help="where things worth a look come from besides the detector")
+                      help="lidar: also upright and lying blobs in the lidar cloud (sim/bag with lidar=1, relay)")
     live.add_argument("--floor", type=float, help="floor height in the map frame for lidar candidates (default: estimated)")
     live.set_defaults(action=command_online)
 
