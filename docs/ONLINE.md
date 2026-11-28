@@ -207,6 +207,11 @@ Unit tests: `tests/test_pipeline_online.py`. A gated reader proves the survey ke
 collecting the next ladder while the first is being read. The other tests cover reject before
 read, reopen, off-thread view goals, and candidate explained or dismissed.
 
+**Hall recording, everything on** (after merging the gate, lying ladders, the glass guard and lidar
+from the bag; `bag:...,lidar=1 --candidates lidar --realtime`, 2026-11-28): the same 5 objects as
+before, all confirmed by the object check, 4 read during the walk. 33 lidar candidates: 8 explained
+by objects, 4 dismissed by looking. No detection doubted as glass, no errors.
+
 **Reflections in glass (demo-room photos, phone camera, 2026-11-28).** The room's glass wall
 mirrors its ladders. The object check now counts "a reflection or mirror image in a window or
 glass" as none. Qwen3-VL 8B on six hand-cut crops:
