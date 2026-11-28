@@ -12,8 +12,9 @@ from pathlib import Path
 import re
 
 SAFE_ID=re.compile(r'^[A-Za-z0-9_.-]{1,64}$')
-PACKS=('inspection_v1','site_safety_v1')
-SCHEMA_NAMES={'inspection_v1':'ultron_seven_sections_v1','site_safety_v1':'ultron_site_safety_v1'}
+LADDER_PACKS=('inspection_v1','inspection_v2')
+PACKS=(*LADDER_PACKS,'site_safety_v1')
+SCHEMA_NAMES={'inspection_v1':'ultron_seven_sections_v1','inspection_v2':'ultron_seven_sections_v2','site_safety_v1':'ultron_site_safety_v1'}
 
 
 def _pack(manifest):
@@ -64,7 +65,7 @@ def _reference_views(manifest):
     if not isinstance(refs,list) or len(refs)>4:
         raise ValueError('Use at most four verified reference images')
     if not refs:return []
-    if _pack(manifest)!='inspection_v1':raise ValueError('Design references are ladder-only')
+    if _pack(manifest) not in LADDER_PACKS:raise ValueError('Design references are ladder-only')
     design=manifest.get('design_id')
     if not isinstance(design,str) or not SAFE_ID.fullmatch(design):
         raise ValueError('Verified references require an explicit design ID')
@@ -208,7 +209,7 @@ def validate_proposal(proposal,manifest):
 
 def dashboard_payload(proposal,manifest):
     """Exact current dashboard field names; model-only no-defect always needs review."""
-    if _pack(manifest)!='inspection_v1':
+    if _pack(manifest) not in LADDER_PACKS:
         raise ValueError('dashboard_payload supports the ladder pack only; site safety publishes events')
     validate_proposal(proposal,manifest)
     photo_ids={p['image_id']:p['photo_id'] for p in photo_upload_plan(manifest)}
@@ -216,10 +217,10 @@ def dashboard_payload(proposal,manifest):
     if not isinstance(position,list) or len(position)!=3 or any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in position):
         raise ValueError('Real map position required; never fabricate [0,0,0]')
     items={key:item['state'] for key,item in proposal['criteria'].items()}
-    for key,c in _criteria().items():
+    for key,c in _criteria(_pack(manifest)).items():
         if c['mode']=='person' and items[key] in ('UNKNOWN','NOT_CHECKED'):items[key]='NOT_CHECKED'
     checklist=dict(items)
-    for s in rubric()['sections']:
+    for s in rubric(_pack(manifest))['sections']:
         values={items[c['key']] for c in s['criteria']}
         checklist[s['key']]=next((v for v in ('DEFECT','UNKNOWN','OK','NOT_CHECKED') if v in values),'N_A')
     label=proposal['label'];overdue=False

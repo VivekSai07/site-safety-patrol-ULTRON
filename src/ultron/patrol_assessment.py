@@ -7,7 +7,9 @@ from .assessment import (assess_coverage, build_request, dashboard_payload,
                          parse_api_response, review_proposal, SAFE_ID, evidence_bundle_id, photo_upload_plan)
 
 
-def record_manifest(record, root):
+def record_manifest(record, root, *, pack='inspection_v1'):
+    from .assessment import LADDER_PACKS
+    if pack not in LADDER_PACKS:raise ValueError('Use a supported ladder assessment pack')
     root=Path(root).resolve()
     views=[]
     for n, frame in enumerate(record.get('views', [])):
@@ -27,6 +29,7 @@ def record_manifest(record, root):
                     synthetic=record.get('synthetic',False), views=views, verified_not_applicable=[],
                     prior_status=record.get('status'), prior_checks=record.get('checks', {}),
                     identity_source='SIMULATION_ORACLE' if record.get('oracle_key') else 'CALLER_VERIFICATION_REQUIRED')
+    if pack!='inspection_v1':manifest['pack']=pack
     manifest['coverage']=assess_coverage(manifest)
     return manifest
 

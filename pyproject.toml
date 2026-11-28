@@ -37,6 +37,8 @@ ultron = [
     "assets/schemas/generic_ladder_draft_v1.json",
     "assets/inspection_v1/*.json",
     "assets/inspection_v1/*.txt",
+    "assets/inspection_v2/*.json",
+    "assets/inspection_v2/*.txt",
     "assets/site_safety_v1/*.json",
     "assets/site_safety_v1/*.txt",
     "dashboard/static/*",

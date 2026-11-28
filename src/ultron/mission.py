@@ -14,7 +14,7 @@ from .planning import Grid
 from .scene import scenarios, safety_assets as default_safety_assets
 
 
-def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, viewer=False, motion='smooth', view_policy='bounded', detector='oracle', weights=None, inspector='oracle', qwen=None, allow_download=False, device='cpu', detector_family='yoloe', safety=False, nav='scripted', dynamic_obstacles='off'):
+def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, viewer=False, motion='smooth', view_policy='bounded', detector='oracle', weights=None, inspector='oracle', qwen=None, allow_download=False, device='cpu', detector_family='yoloe', safety=False, nav='scripted', dynamic_obstacles='off', assessment_pack='inspection_v1'):
     output=Path(output)
     # Evidence runs are immutable; refuse reuse BEFORE loading any model weights.
     if output.exists():
@@ -303,17 +303,17 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                             'views':views,'model_evidence':perception.findings.get(key,[]),'retry_count':retry_count,'stop_reason':stop,
                             'source':'MODEL_PROPOSALS' if inspector!='oracle' or detector!='oracle' else 'SIMULATION_ORACLE','oracle_key':key if detector=='oracle' else None,'synthetic':True,
                             'run_id':run_id,'evidence_root':str(output.resolve()),'orbit_angles':orbit_views,
-                            'perception_backend':{'detector':detector,'inspector':inspector},
+                            'perception_backend':{'detector':detector,'inspector':inspector},'assessment_pack':assessment_pack,
                             'full_ring_executed':len(set(orbit_views))==8 and fixture['type']=='A_FRAME_STEPLADDER' and variant=='open-orbit'}
                         if view_policy=='full360':
                             from .assessment import assess_coverage
                             from .patrol_assessment import record_manifest
-                            if not assess_coverage(record_manifest(payload,output))['complete'] and payload['status']!='FLAGGED':
+                            if not assess_coverage(record_manifest(payload,output,pack=assessment_pack))['complete'] and payload['status']!='FLAGGED':
                                 payload.update(status='MANUAL_REVIEW',reason='Full360 sampling incomplete',stop_reason='360_COVERAGE_GAPS')
                         # Registry fuses unresolved historical failures before API evidence jobs.
                         db.append(mid,asset,payload)
                         from .patrol_assessment import record_manifest
-                        job=record_manifest(payload,output)
+                        job=record_manifest(payload,output,pack=assessment_pack)
                         job_path=Path('assessment-jobs')/mid/(asset+'.json')
                         (output/job_path).parent.mkdir(parents=True,exist_ok=True)
                         (output/job_path).write_text(json.dumps(job,indent=2))

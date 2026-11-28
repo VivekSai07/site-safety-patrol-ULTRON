@@ -138,7 +138,7 @@ class LiveTail:
                     continue
                 if self.assessment_worker:
                     from ultron.patrol_assessment import record_manifest
-                    fallback=record_manifest({**record,'mission_id':mission},self.run)
+                    fallback=record_manifest({**record,'mission_id':mission},self.run,pack=record.get('assessment_pack','inspection_v1'))
                     relative=Path('assessment-fallbacks')/mission/(record['asset_id']+'.json')
                     (self.run/relative).parent.mkdir(parents=True,exist_ok=True)
                     (self.run/relative).write_text(json.dumps(fallback))

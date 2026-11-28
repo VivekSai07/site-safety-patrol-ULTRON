@@ -1,0 +1,5 @@
+# Prompt v2 and publication
+
+Preserve all tested v1 prompts and real-response provenance. Create an opt-in inspection_v2 candidate with the same seven sections and 23 criterion schema. Clarify local confirmed-defect precedence, ambiguity without a verified intended design, and anomaly-led actionable summaries. Preserve human-only restrictions and safe_to_use=false. Keep v1 the default until unseen damaged/intact evaluation supports adoption. Add an assessment-pack selector to new patrol manifests without mutating existing runs.
+
+Verify v1 assets/bundle compatibility, v2 schema/criteria/evidence contracts, reference isolation and hard-fail precedence. Record that prompt wording alone has no new model-accuracy evidence. Fetch remote, merge any incoming work without overwriting teammates, commit changes, and publish all local changes. Terminal Git DNS is blocked; use the GitHub connector if required, preserve original local history in a backup branch before any metadata-driven reconstruction, verify published trees, update main by compare-and-swap without force, and synchronize local tracking state.

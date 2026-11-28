@@ -1,0 +1,914 @@
+{
+  "type": "object",
+  "properties": {
+    "bundle_id": {
+      "type": "string"
+    },
+    "asset_id": {
+      "type": "string"
+    },
+    "criteria": {
+      "type": "object",
+      "properties": {
+        "holme.verformung": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "holme.beschaedigung": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "holme.kanten": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "holme.abnutzung": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "holme.schutz": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "sprossen.verformung": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "sprossen.beschaedigung": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "sprossen.kanten": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "sprossen.verbindung": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "sprossen.abnutzung": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "spreiz.vollstaendigkeit": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "spreiz.funktion": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "spreiz.beschaedigung": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "beschlag.beschaedigung": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "beschlag.vollstaendigkeit": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "beschlag.funktion": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "beschlag.abnutzung": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "beschlag.schmierung": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "fuesse.vollstaendigkeit": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "fuesse.abnutzung": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "fuesse.funktion": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "zubehoer.vollstaendigkeit": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        },
+        "kennzeichnung.betriebsanleitung": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": [
+                "OK",
+                "DEFECT",
+                "UNKNOWN",
+                "NOT_CHECKED",
+                "N_A"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "evidence_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "confidence",
+            "evidence_ids"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "holme.verformung",
+        "holme.beschaedigung",
+        "holme.kanten",
+        "holme.abnutzung",
+        "holme.schutz",
+        "sprossen.verformung",
+        "sprossen.beschaedigung",
+        "sprossen.kanten",
+        "sprossen.verbindung",
+        "sprossen.abnutzung",
+        "spreiz.vollstaendigkeit",
+        "spreiz.funktion",
+        "spreiz.beschaedigung",
+        "beschlag.beschaedigung",
+        "beschlag.vollstaendigkeit",
+        "beschlag.funktion",
+        "beschlag.abnutzung",
+        "beschlag.schmierung",
+        "fuesse.vollstaendigkeit",
+        "fuesse.abnutzung",
+        "fuesse.funktion",
+        "zubehoer.vollstaendigkeit",
+        "kennzeichnung.betriebsanleitung"
+      ],
+      "additionalProperties": false
+    },
+    "label": {
+      "type": "object",
+      "properties": {
+        "raw_text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "due_date_iso": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "due_date_explicit": {
+          "type": "boolean"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "raw_text",
+        "due_date_iso",
+        "due_date_explicit",
+        "evidence_ids"
+      ],
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "bundle_id",
+    "asset_id",
+    "criteria",
+    "label",
+    "summary"
+  ],
+  "additionalProperties": false
+}

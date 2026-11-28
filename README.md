@@ -2,7 +2,7 @@
 
 **Readiness:** [Integrated launch commands, tested evidence and remaining hardware blockers](docs/HARDWARE_READINESS.md). Hardware motion remains NO-GO; SLAM/Nav2 and real sensor/control validation are outstanding.
 
-**API prompts:** [Versioned ladder and site-safety prompt packs, schemas and request-building adapter](docs/API_PROMPTS.md).
+**API prompts:** [Versioned ladder and site-safety prompt packs, schemas and request-building adapter](docs/API_PROMPTS.md). Targeted `inspection_v2` wording is available as an opt-in candidate; the evaluated v1 baseline is preserved. [Evaluation plan](docs/PROMPT_V2_EVALUATION.md).
 
 **A lightweight Unitree B2 MuJoCo simulation for the nesseler challenge.** The existing demo has a robot model patrol a bounded construction scene, discover ladders, approach for evidence, request one second look, and remember ladder identities across patrols. Actual simulated RGB/depth frames become a traceable inspection report. Rerun export and ROS 2 Humble/RViz replay consume the same recording. The label-first baseline has a rendered synthetic capture-to-draft probe with manual fixture transcription, plus bounded browser-control checks; real OCR and real-world operation remain unverified. See the [baseline and source overview](docs/LABEL_FIRST_BASELINE.md).
 

@@ -10,6 +10,7 @@ Review rights and privacy for both text and images before any external use.
 
 | Pack | Files | Scope |
 |---|---|---|
+| `inspection_v2` (candidate, opt-in) | [Prompt folder](../src/ultron/assets/inspection_v2/) | Same seven sections/23 keys; clearer defect precedence, rung-layout uncertainty and actionable summaries; model evaluation pending |
 | `inspection_v1` (default) | [Prompt folder](../src/ultron/assets/inspection_v1/) | Seven proposed ladder sections and 23 internal criterion IDs; form equivalence and rights unverified |
 | `site_safety_v1` | [Prompt folder](../src/ultron/assets/site_safety_v1/) | Four site-safety sections, nine criteria: fire extinguisher, first aid, escape routes and PPE |
 
@@ -50,3 +51,9 @@ PYTHONPATH=src python3 -m unittest discover -s tests -p test_assessment.py -v
 ```
 
 These are contract/evidence-integrity checks. They do not establish model accuracy, a successful API call or physical inspection. No key, generated image, recording or partner PDF is part of the prompt-pack publication.
+
+## Candidate v2 and evaluation
+
+`inspection_v1` is retained unchanged for baseline reproduction. `inspection_v2` adds targeted common instructions used by all seven sections and refines the rung-damage section. It keeps the same response shape and 23 keys, personal-check restrictions and conservative dashboard decisions. Missing views of another component cannot erase an established visible defect; irregular spacing alone cannot establish damage. Summaries must lead with confirmed defects and suspicious anomalies, their uncertainty, and needed evidence. This wording has not yet been evaluated through the live model.
+
+Select the candidate using `"pack": "inspection_v2"` in a new manifest, or add `--assessment-pack inspection_v2` to `python3 -m ultron demo`. The latter tags newly emitted patrol evidence jobs for the live tailer. Existing runs are immutable and v1 remains the default. References remain optional and require verified design/provenance. See [candidate evaluation criteria](PROMPT_V2_EVALUATION.md). Do not combine or reinterpret previously recorded v1 proposals as v2 results.
