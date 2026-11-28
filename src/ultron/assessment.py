@@ -44,6 +44,59 @@ def _identity(manifest):
     return set(ids)
 
 
+REFERENCE_POLICY = """
+Optional verified intact design references are provided as REFERENCE_ONLY images.
+They are not current inspection evidence and do not establish current condition,
+coverage, identity, mechanical function or safe use. The caller has verified the
+matching design and the intact reference's provenance. Compare visible structural
+layout and component interfaces only where viewpoint and visibility support it.
+Report a clear visible structural discrepancy under the appropriate criterion;
+normal viewpoint, lighting, labels and occlusion differences are not defects.
+If intended geometry or comparison remains ambiguous, retain UNKNOWN.
+Cite only CURRENT inspection image IDs in findings and label evidence_ids.
+Never cite a REFERENCE_ONLY ID as evidence of current condition.
+Human-only checks and the seven-section conservative policy remain unchanged.
+""".strip()
+
+
+def _reference_views(manifest):
+    refs=manifest.get('reference_views',[])
+    if not isinstance(refs,list) or len(refs)>4:
+        raise ValueError('Use at most four verified reference images')
+    if not refs:return []
+    if _pack(manifest)!='inspection_v1':raise ValueError('Design references are ladder-only')
+    design=manifest.get('design_id')
+    if not isinstance(design,str) or not SAFE_ID.fullmatch(design):
+        raise ValueError('Verified references require an explicit design ID')
+    ids=_identity(manifest)
+    for ref in refs:
+        if not isinstance(ref,dict):raise ValueError('Invalid reference')
+        name=ref.get('image_id')
+        if not isinstance(name,str) or not SAFE_ID.fullmatch(name) or name in ids:
+            raise ValueError('Reference image IDs must be distinct from current evidence')
+        ids.add(name)
+        if ref.get('design_id')!=design or ref.get('design_match_verified') is not True or ref.get('intact_verified') is not True:
+            raise ValueError('Reference design match and intact condition must be verified by caller')
+        if not isinstance(ref.get('verification_source'),str) or not ref['verification_source'].strip():
+            raise ValueError('Reference verification provenance required')
+    return refs
+
+
+def _verified_jpeg(view,root):
+    if not isinstance(view.get('path'),str) or not view['path']:
+        raise ValueError('Image path required')
+    if not isinstance(view.get('sha256'),str) or not re.fullmatch('[a-f0-9]{64}',view['sha256']):
+        raise ValueError('Valid image checksum required')
+    path=(root/view['path']).resolve()
+    if not path.is_relative_to(root):raise ValueError('Image path escapes evidence root')
+    data=path.read_bytes()
+    if not data.startswith(b'\xff\xd8') or not 0<len(data)<5_000_000:raise ValueError('Use dashboard-compatible JPEGs under 5 MB')
+    from PIL import Image
+    with Image.open(path) as im:im.verify()
+    if hashlib.sha256(data).hexdigest()!=view.get('sha256'):raise ValueError('Keyframe checksum mismatch')
+    return data
+
+
 def evidence_bundle_id(manifest):
     """Bind the immutable job context and pixel hashes to the exact prompt/schema."""
     _identity(manifest)
@@ -52,6 +105,10 @@ def evidence_bundle_id(manifest):
         'ladder_type','position','verified_not_applicable','synthetic')}
     if pack!='inspection_v1':context['pack']=pack
     context['views']=manifest.get('views',[])
+    refs=_reference_views(manifest)
+    if refs:
+        context.update(design_id=manifest['design_id'],reference_views=refs,
+                       reference_policy_sha256=hashlib.sha256(REFERENCE_POLICY.encode()).hexdigest())
     context['prompt_fingerprints']={p.name:hashlib.sha256(p.read_bytes()).hexdigest()
         for p in sorted(_assets(pack).iterdir()) if p.suffix in ('.txt','.json')}
     raw=json.dumps(context,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
@@ -87,26 +144,31 @@ def build_request(manifest,root,model):
     _identity(manifest)
     pack=_pack(manifest);assets=_assets(pack)
     if not manifest.get('views'):raise ValueError('At least one keyframe is required')
-    if len(manifest['views'])>32:raise ValueError('At most 32 selected keyframes per request')
+    refs=_reference_views(manifest)
+    if len(manifest['views'])+len(refs)>32:raise ValueError('At most 32 selected images per request including references')
     if not model or not isinstance(model,str):raise ValueError('An explicit tested model ID is required')
-    root=Path(root).resolve();content=[];seen={}
+    root=Path(root).resolve();content=[]
     for v in manifest['views']:
         if v.get('same_asset_confirmed') is not True:raise ValueError('Only confirmed same-asset images may be combined')
-        path=(root/v['path']).resolve()
-        if not path.is_relative_to(root):raise ValueError('Image path escapes evidence root')
-        data=path.read_bytes()
-        if not data.startswith(b'\xff\xd8') or not 0<len(data)<5_000_000:raise ValueError('Use dashboard-compatible JPEGs under 5 MB')
-        from PIL import Image
-        with Image.open(path) as im:im.verify()
-        digest=hashlib.sha256(data).hexdigest()
-        if digest!=v.get('sha256'):raise ValueError('Keyframe checksum mismatch')
-        seen[v['image_id']]=digest
-        content.extend([{'type':'input_text','text':json.dumps({'image_id':v['image_id'],'band':v.get('band'),'azimuth_deg':v.get('azimuth_deg'),'target_box_xyxy':v.get('target_box_xyxy'),'target_instruction':'Assess only the indicated target; do not attribute nearby ladders to this asset'})},
+        data=_verified_jpeg(v,root)
+        info={'image_id':v['image_id'],'band':v.get('band'),'azimuth_deg':v.get('azimuth_deg'),
+              'target_box_xyxy':v.get('target_box_xyxy'),
+              'target_instruction':'Assess only the indicated target; do not attribute nearby ladders to this asset'}
+        if refs:info['role']='CURRENT'
+        content.extend([{'type':'input_text','text':json.dumps(info)},
+            {'type':'input_image','image_url':'data:image/jpeg;base64,'+base64.b64encode(data).decode(),'detail':'high'}])
+    for ref in refs:
+        data=_verified_jpeg(ref,root)
+        content.extend([{'type':'input_text','text':json.dumps({
+            'role':'REFERENCE_ONLY','image_id':ref['image_id'],'design_id':ref['design_id'],
+            'verification_source':ref['verification_source']})},
             {'type':'input_image','image_url':'data:image/jpeg;base64,'+base64.b64encode(data).decode(),'detail':'high'}])
     metadata={k:manifest.get(k) for k in ('asset_id','mission_id','map_version','ladder_type','inspection_date','verified_not_applicable')}
     metadata['bundle_id']=evidence_bundle_id(manifest)
+    if refs:metadata.update(design_id=manifest['design_id'],current_image_ids=sorted(_identity(manifest)),reference_image_ids=[r['image_id'] for r in refs])
     content.insert(0,{'type':'input_text','text':'Inspect only this evidence bundle: '+json.dumps(metadata)})
     prompt=(assets/'system.txt').read_text()+'\n'+'\n'.join(p.read_text() for p in sorted(assets.glob('section_*.txt')))
+    if refs:prompt+='\n'+REFERENCE_POLICY
     return {'model':model,'store':False,'instructions':prompt,'input':[{'role':'user','content':content}],
         'text':{'format':{'type':'json_schema','name':SCHEMA_NAMES[pack],'strict':True,
                          'schema':json.loads((assets/'response_schema.json').read_text())}}}
