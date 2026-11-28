@@ -119,3 +119,19 @@ class RenderedWorkflowTests(unittest.TestCase):
             self.assertTrue(manifest['views'])
             validate_proposal(review_proposal(manifest, 'MANUAL REVIEW: offline'), manifest)
             evidence_bundle_id(manifest)
+
+    def test_auto_nav_patrol_selects_goals_and_returns_base(self):
+        os.environ.setdefault('MUJOCO_GL','egl')
+        from ultron.mission import run_demo
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / 'auto'
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = run_demo(out, patrols=1, nav='auto')
+            events = [json.loads(line) for line in (out / 'events.jsonl').read_text().splitlines()]
+            goals = [e for e in events if e['type'] == 'PATROL_GOAL_SELECTED']
+            self.assertTrue(goals)
+            self.assertTrue(all(e['goal']['schema'] == 'ultron.navigation_goal/v1' for e in goals))
+            start = next(e for e in events if e['type'] == 'MISSION_START')
+            self.assertIn('zone_bounds', start)
+            summary = result['missions'][0]
+            self.assertIsNotNone(summary.get('observed_coverage_pct'))

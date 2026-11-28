@@ -14,7 +14,7 @@ from .planning import Grid
 from .scene import scenarios, safety_assets as default_safety_assets
 
 
-def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, viewer=False, motion='smooth', view_policy='bounded', detector='oracle', weights=None, inspector='oracle', qwen=None, allow_download=False, device='cpu', detector_family='yoloe', safety=False):
+def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, viewer=False, motion='smooth', view_policy='bounded', detector='oracle', weights=None, inspector='oracle', qwen=None, allow_download=False, device='cpu', detector_family='yoloe', safety=False, nav='scripted'):
     output=Path(output)
     # Evidence runs are immutable; refuse reuse BEFORE loading any model weights.
     if output.exists():
@@ -61,6 +61,11 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
             skipped=0
             reached=0
             route=[(1.5,1.5),(3.,3.2),(6.,3.2),(9.,3.2),(8.,2.),(1.5,1.5)]
+            planner=None
+            if nav=='auto':
+                from .patrol_planner import CoveragePlanner
+                planner=CoveragePlanner(grid)
+                planner.observe(sim.pose[:2])
             interventions=1 if variant=='intervention' and patrol==0 else 0
             mode='DEGRADED_TELEOP_ASSISTED' if interventions else 'AUTONOMOUS_SIMULATION'
 
@@ -73,6 +78,8 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
 
             def capture(state):
                 frame,rgb,depth,seg=sim.capture()
+                if planner is not None:
+                    planner.observe(sim.pose[:2])
                 frame.update(mission_id=mid,state=state)
                 all_frames.append(frame)
                 with (output/'telemetry.jsonl').open('a') as handle:
@@ -108,11 +115,21 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                                 capture(state)
                 return True
 
-            emit('MISSION_START',mission_mode=mode,operator_interventions=interventions)
+            emit('MISSION_START',mission_mode=mode,operator_interventions=interventions,
+                 zone_bounds=list(grid.bounds),keepouts=grid.obstacles,base=list(sim.pose[:2]))
             if interventions:
                 emit('OPERATOR_INTERVENTION',reason='INJECTED_TEST',motion_halted=True)
             try:
-                for waypoint in route:
+                def waypoints():
+                    if planner is None:
+                        yield from route
+                        return
+                    from .patrol_planner import make_nav_goal
+                    while (goal:=planner.next_goal(sim.pose[:2])) is not None:
+                        record=make_nav_goal(mid,goal[0],goal[1],math.pi/2,'coverage')
+                        emit('PATROL_GOAL_SELECTED',goal=record,coverage_pct=round(100*planner.coverage(),1))
+                        yield goal
+                for waypoint in waypoints():
                     emit('PATROL_WAYPOINT',goal=list(waypoint))
                     if not move(waypoint,'PATROL'):
                         skipped+=1
@@ -308,11 +325,12 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                          status='KNOWN_ASSETS_HANDLED_COVERAGE_UNVERIFIED' if returned_to_base else 'AWAIT_OPERATOR')
                 mission_status='COVERAGE_INCOMPLETE' if detector!='oracle' or missing or skipped or len(inspected)<len(ladders) else 'MISSION_COMPLETE'
                 summary={'mission_id':mid,'status':mission_status,'mission_mode':mode,
-                    'planned_waypoints':len(route),'reached_waypoints':reached,'skipped_waypoints':skipped,
+                    'planned_waypoints':len(route) if planner is None else planner.goals_issued,'reached_waypoints':reached,'skipped_waypoints':skipped,
                     'zone_bounds':list(grid.bounds),'keepout_rectangles':grid.obstacles,
                     'robot_inflation_radius_m':grid.radius,'grid_resolution_m':grid.resolution,
-                    'waypoint_coverage_pct':100*reached/len(route),'unscanned_area_pct':None,
-                    'coverage_note':'Waypoint completion is NOT measured area coverage',
+                    'waypoint_coverage_pct':100*reached/len(route) if planner is None else (100*reached/max(planner.goals_issued,1)),'unscanned_area_pct':None,
+                    'observed_coverage_pct':round(100*planner.coverage(),1) if planner else None,
+                    'coverage_note':'Planner grid-cell observation estimate, not certified area coverage' if planner else 'Waypoint completion is NOT measured area coverage',
                     'expected_ground_truth':len(ladders),'found':len(inspected),
                     'ladder_recall_simulation':len(inspected)/len(ladders) if detector=='oracle' else None,'missing_expected':missing,
                     'operator_interventions':interventions,'duration_sim_s':round(sim.t-clock,2),
