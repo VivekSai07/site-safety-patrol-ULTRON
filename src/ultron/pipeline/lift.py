@@ -13,7 +13,22 @@ from .types import Sighting
 from ..protocol.lidar import BOX_CORE, MIN_POINTS, MIN_RANGE, NEAR_PERCENTILE, locate
 
 ASSUMED_RANGE = 2.5  # metres, used only when neither depth nor lidar hits the box
-OUTLINE_PERCENTILE = 35  # of depths inside the outline: thin rails let some background through
+# Inside a ladder's outline most pixels may be background seen between rails and rungs (seen 10 m
+# away the rails are a pixel or two wide: on the simulated yard a quarter of the outline is ladder).
+# The object is a dense peak of the depths: NEAR_SHARE of them within +-WINDOW of one range. Of
+# such peaks the nearest is taken that reaches across the outline (the detector drew the outline
+# around the object), as background seen through the object does too; something smaller in front,
+# caught by a sloppy outline, does not.
+NEAR_SHARE = 0.15   # of the outline's pixels
+WINDOW = 0.1        # share of the range: depth spread of an object, and coarser depth further away
+SPAN = 0.7          # share of the widest-reaching peak's rows and columns a peak must reach
+# A mask that takes in floor (the object's shadow, the ground around its feet) gives depths from
+# the camera to the object and beyond. The floor is found as a plane in the lower half of each
+# depth image and left out.
+FLOOR_BAND = 0.08   # metres above the floor plane still taken as floor
+FLOOR_FIT = 0.03    # metres from the plane that a floor pixel lies within
+FLOOR_TILT = 0.2    # largest slope of the floor seen from the camera (about 11 degrees of pitch or roll)
+FLOOR_SHARE = 0.2   # of the lower half's pixels that must lie on it
 CELL = 0.1          # metres: floor grid of object footprints
 COLUMN_BAND = 0.25  # metres: per image column, pixels this far behind the nearest one are background seen through gaps
 
@@ -28,6 +43,60 @@ def _depth_range(depth, box):
     return float(np.percentile(valid, NEAR_PERCENTILE)) if valid.size >= MIN_POINTS else None
 
 
+def _camera_points(depth, calibration, rows, columns):
+    """(x, y, z) in the colour camera (x right, y down) of depth pixels at `rows`, `columns`."""
+    z = depth[rows, columns]
+    u = (columns + 0.5) * calibration.width / depth.shape[1]
+    v = (rows + 0.5) * calibration.height / depth.shape[0]
+    return (u - calibration.cx) / calibration.fx * z, (v - calibration.cy) / calibration.fy * z, z
+
+
+def floor_plane(depth, calibration, tries=60):
+    """(a, b, c): the floor at y = a*x + b*z + c in the camera (y down, c its height), or None."""
+    height, width = depth.shape
+    rows, columns = (g.ravel() for g in np.mgrid[height // 2:height:4, 0:width:4])
+    valid = np.isfinite(depth[rows, columns]) & (depth[rows, columns] > MIN_RANGE)
+    if valid.sum() < 50:
+        return None
+    x, y, z = _camera_points(depth, calibration, rows[valid], columns[valid])
+    design = np.stack([x, z, np.ones_like(z)], axis=1)
+    random = np.random.default_rng(0)
+    best = None
+    for _ in range(tries):
+        pick = random.choice(len(z), 3, replace=False)
+        try:
+            a, b, c = np.linalg.solve(design[pick], y[pick])
+        except np.linalg.LinAlgError:
+            continue
+        if abs(a) > FLOOR_TILT or abs(b) > FLOOR_TILT or c <= 0.1:
+            continue
+        inliers = np.abs(design @ (a, b, c) - y) < FLOOR_FIT
+        if best is None or inliers.sum() > best.sum():
+            best = inliers
+    if best is None or best.sum() < FLOOR_SHARE * len(z):
+        return None
+    return tuple(np.linalg.lstsq(design[best], y[best], rcond=None)[0])
+
+
+def off_floor(frame, depth, calibration):
+    """Pixels of `depth` that are not floor (all of them when no floor is seen); kept on the frame."""
+    cached = getattr(frame, "_off_floor", None)
+    if cached is not None and cached.shape == depth.shape:
+        return cached
+    keep = np.ones(depth.shape, dtype=bool)
+    plane = floor_plane(depth, calibration)
+    if plane is not None:
+        rows, columns = np.nonzero(np.isfinite(depth) & (depth > MIN_RANGE))
+        x, y, z = _camera_points(depth, calibration, rows, columns)
+        a, b, c = plane
+        keep[rows, columns] = a * x + b * z + c - y > FLOOR_BAND
+    try:
+        frame._off_floor = keep
+    except AttributeError:
+        pass
+    return keep
+
+
 def _mask(shape, outline):
     height, width = shape
     mask = Image.new("1", (width, height))
@@ -35,23 +104,49 @@ def _mask(shape, outline):
     return np.asarray(mask, dtype=bool)
 
 
-def _outline_range(depth, outline):
-    """Range to the object from the depth pixels inside its outline."""
-    inside = depth[_mask(depth.shape, outline)]
-    valid = inside[np.isfinite(inside) & (inside > MIN_RANGE)]
-    return float(np.percentile(valid, OUTLINE_PERCENTILE)) if valid.size >= MIN_POINTS else None
+def _outline_range(depth, outline, keep=None):
+    """Range to the object from the depth pixels inside its outline (and `keep`): the median of
+    the depths around the nearest dense range that reaches across the outline."""
+    mask = _mask(depth.shape, outline) & np.isfinite(depth) & (depth > MIN_RANGE)
+    rows, columns = np.nonzero(mask if keep is None else mask & keep)
+    if rows.size < MIN_POINTS:
+        return None
+    depths = depth[rows, columns]
+    peaks = []  # (nearest depth, reach, pixels)
+    for low, high in _peaks(depths):
+        inside = (depths >= low) & (depths < high)
+        reach = min(len(np.unique(rows[inside])) / len(np.unique(rows)),
+                    len(np.unique(columns[inside])) / len(np.unique(columns)))
+        peaks.append((low, reach, depths[inside]))
+    widest = max(reach for _, reach, _ in peaks)
+    return float(np.median(min((p for p in peaks if p[1] >= SPAN * widest), key=lambda p: p[0])[2]))
 
 
-def footprint(depth, outline, calibration, pose, kind, distance):
+def _peaks(depths, share=NEAR_SHARE):
+    """(low, high) depth windows (+-WINDOW, relative) around each dense peak of `depths`; the
+    densest one when none holds `share` of them."""
+    logs = np.log(depths)
+    width = WINDOW / 5
+    bins = ((logs - logs.min()) / width).astype(int)
+    mass = np.convolve(np.bincount(bins), np.ones(11, dtype=int), "same")  # +-5 bins: +-WINDOW
+    top = (mass >= np.append(0, mass[:-1])) & (mass >= np.append(mass[1:], 0))
+    found = np.nonzero(top & (mass >= share * depths.size))[0]
+    found = found if found.size else [int(np.argmax(mass))]
+    return [(math.exp(logs.min() + (i - 5) * width), math.exp(logs.min() + (i + 6) * width)) for i in found]
+
+
+def footprint(depth, outline, calibration, pose, kind, distance, keep=None):
     """Floor cells covered by the object's visible surface, and their centroid, in the map frame.
 
     Every depth pixel inside the outline is placed on the floor. Pixels more than the kind's extent
     nearer or further than the object's measured `distance` belong to something else (a ladder in
     front, the far wall). Of the rest, pixels further than COLUMN_BAND behind the nearest pixel of
     their own image column are background seen past the object (a ladder is mostly gaps).
+    Only pixels in `keep` (default: all) count: see `off_floor`.
     Returns (cells, (x, y)) or (None, None) with too few pixels.
     """
-    rows, columns = np.nonzero(_mask(depth.shape, outline) & np.isfinite(depth) & (depth > MIN_RANGE))
+    mask = _mask(depth.shape, outline) & np.isfinite(depth) & (depth > MIN_RANGE)
+    rows, columns = np.nonzero(mask if keep is None else mask & keep)
     z = depth[rows, columns]
     keep = np.abs(z - distance) <= KINDS[kind].extent
     columns, z = columns[keep], z[keep]
@@ -108,9 +203,10 @@ def lift(frame, detection, calibration=None):
     distance = None
     if depth is not None:
         depth = np.asarray(depth, dtype=float)
-        distance = (_outline_range(depth, detection.outline) if detection.outline else None) or _depth_range(depth, detection.box)
+        keep = off_floor(frame, depth, calibration) if detection.outline else None
+        distance = (_outline_range(depth, detection.outline, keep) if detection.outline else None) or _depth_range(depth, detection.box)
         if detection.outline and distance:
-            cells, centre = footprint(depth, detection.outline, calibration, frame.pose, detection.kind, distance)
+            cells, centre = footprint(depth, detection.outline, calibration, frame.pose, detection.kind, distance, keep)
             if cells:
                 # The middle of the visible surface, not a point along the box's centre ray.
                 return Sighting(detection, centre, distance, height=_box_height(detection.box, calibration, distance),

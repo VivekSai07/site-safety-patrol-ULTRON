@@ -8,7 +8,7 @@ there means it may still be there; something in front of it hides the place and 
 import numpy as np
 
 from ..protocol.lidar import MIN_RANGE
-from .lift import CELL
+from .lift import CELL, off_floor
 from .objects import footprint
 
 GOOD_RANGE = (1.0, 4.5)  # metres: nearer the object may not fit in the image, further depth is too coarse
@@ -33,6 +33,9 @@ def look_through(frame, calibration, site_object):
         return None
     depth = np.asarray(depth, dtype=float)
     height, width = depth.shape
+    # Floor is not the place: a stored height band can reach below the floor (a box that took in
+    # the object's shadow), and then the rows below the object show floor at its distance.
+    standing = off_floor(frame, depth, calibration)
     x, y, yaw = frame.pose
     middle = (cells + 0.5) * CELL - (x, y)
     ahead = middle[:, 0] * np.cos(yaw) + middle[:, 1] * np.sin(yaw)
@@ -54,8 +57,9 @@ def look_through(frame, calibration, site_object):
         bottom = int((calibration.cy - bottom_height * calibration.fy / forward) * height / calibration.height)
         if first < 0 or last >= width:
             continue  # may lie beside the image
-        band = depth[max(top, 0):min(bottom, height), first:last + 1]
-        band = band[np.isfinite(band) & (band > MIN_RANGE)]
+        rows = slice(max(top, 0), min(bottom, height))
+        band = depth[rows, first:last + 1]
+        band = band[np.isfinite(band) & (band > MIN_RANGE) & standing[rows, first:last + 1]]
         if band.size < MIN_PIXELS:
             continue
         if float((np.abs(band - forward) <= BEHIND).mean()) >= SOMETHING:

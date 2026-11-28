@@ -227,6 +227,70 @@ class FootprintTest(unittest.TestCase):
         self.assertLess(math.dist(full.position, (3.5, 3.0)), 0.3)
 
 
+def floor_scene(boards, height=0.8, wall=25.0):
+    """Depth image (CALIBRATION camera `height` above a floor, looking along +x from the origin) of
+    upright boards (distance ahead, left from, left to, bottom, top above the floor) and a wall."""
+    v, u = np.mgrid[0:480, 0:640] + 0.5
+    right, down = (u - CALIBRATION.cx) / CALIBRATION.fx, (v - CALIBRATION.cy) / CALIBRATION.fy
+    depth = np.where(down * wall <= height, wall, np.inf)
+    with np.errstate(divide="ignore"):
+        depth = np.minimum(depth, np.where(down > 0, height / np.where(down > 0, down, 1), np.inf))
+    for ahead, left_from, left_to, bottom, top in boards:
+        hit = ((-right * ahead >= left_from) & (-right * ahead <= left_to)
+               & (down * ahead >= height - top) & (down * ahead <= height - bottom))
+        depth = np.where(hit, np.minimum(depth, ahead), depth)
+    return np.where(np.isfinite(depth), depth, 0.0).astype(np.float32)
+
+
+def ladder_boards(ahead, half_width=0.25, top=2.5, rails=0.05, rungs=0.03):
+    """A ladder seen face-on: two rails and a rung every 0.3 m, mostly gaps."""
+    return ([(ahead, half_width - rails, half_width, 0.0, top), (ahead, -half_width, -half_width + rails, 0.0, top)]
+            + [(ahead, -half_width, half_width, h, h + rungs) for h in np.arange(0.3, top, 0.3)])
+
+
+def box_outline(ahead, left_from, left_to, bottom, top, height=0.8, below=0):
+    """Outline (thousandths) of what lies between those bounds at `ahead`, reaching `below` rows lower."""
+    columns = [CALIBRATION.cx - CALIBRATION.fx * left / ahead for left in (left_to, left_from)]
+    rows = [CALIBRATION.cy + CALIBRATION.fy * (height - h) / ahead for h in (top, bottom)]
+    x0, x1 = columns[0] * 1000 / 640, columns[1] * 1000 / 640
+    y0, y1 = rows[0] * 1000 / 480, min(rows[1] + below, 479) * 1000 / 480
+    return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+
+
+class FloorTest(unittest.TestCase):
+    """Range, footprint and empty places with the floor and the far background in the picture."""
+
+    def sighting(self, depth, outline):
+        frame = Frame(Image.new("RGB", (640, 480)), name="a", pose=(0.0, 0.0, 0.0), depth=depth)
+        box = [min(p[0] for p in outline), min(p[1] for p in outline), max(p[0] for p in outline), max(p[1] for p in outline)]
+        return lift(frame, Detection("ladder", box, outline=outline), CALIBRATION)
+
+    def test_a_far_ladder_is_placed_at_its_rails_not_at_the_background_seen_through_it(self):
+        depth = floor_scene(ladder_boards(10.0))
+        sighting = self.sighting(depth, box_outline(10.0, -0.3, 0.3, 0.0, 2.6, below=3))
+        self.assertAlmostEqual(sighting.distance, 10.0, delta=0.3)
+        self.assertLess(math.dist(sighting.position, (10.0, 0.0)), 0.3)
+
+    def test_floor_inside_the_outline_does_not_pull_the_ladder_nearer(self):
+        """A mask that took in the ladder's shadow down to the image's lower edge."""
+        depth = floor_scene(ladder_boards(5.0))
+        sighting = self.sighting(depth, box_outline(5.0, -0.3, 0.3, 0.0, 2.6, below=480))
+        self.assertAlmostEqual(sighting.distance, 5.0, delta=0.2)
+        self.assertLess(math.dist(sighting.position, (5.0, 0.0)), 0.3)
+
+    def test_the_floor_where_an_object_stood_is_not_taken_for_the_object(self):
+        """Its stored height band reaches below the floor (the box held its shadow): the rows below
+        it see floor at its distance. The place is empty, not occupied."""
+        from ultron.pipeline.moved import look_through
+        from ultron.pipeline.types import SiteObject
+        cells = {f"{i},{j}": 5 for i in range(33, 37) for j in range(-2, 2)}
+        stored = SiteObject("LAD-001", "ladder", [3.5, 0.0], sightings=5, cells=cells, zband=[-1.1, 1.0])
+        empty = Frame(Image.new("RGB", (640, 480)), name="a", pose=(0.0, 0.0, 0.0), depth=floor_scene([]))
+        self.assertEqual(look_through(empty, CALIBRATION, stored), "empty")
+        there = Frame(Image.new("RGB", (640, 480)), name="b", pose=(0.0, 0.0, 0.0), depth=floor_scene(ladder_boards(3.5)))
+        self.assertEqual(look_through(there, CALIBRATION, stored), "occupied")
+
+
 class DepthRegistrationTest(unittest.TestCase):
     def test_depth_is_reprojected_into_the_colour_camera(self):
         from ultron.protocol.bag import register_depth

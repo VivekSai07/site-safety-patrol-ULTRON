@@ -85,7 +85,7 @@ announced only once it is, and discarded if it turns out suspect.
 | `catalog.py` | Kinds to look for, detector prompts, views and sides each form needs | works; values are first guesses |
 | `types.py` | Records passed between modules | works |
 | `detect.py` | `YoloDetector` (open-vocabulary YOLOE with tracking and masks), `VlmDetector` (vision model returns boxes), `ReplayDetector` | YOLO works on the real recording; VLM detector tested with fakes only |
-| `lift.py` | Detection → map position from lidar, depth image or assumed range | depth path run on the real recording; **assumes the camera looks along the robot's +x from its origin** |
+| `lift.py` | Detection → map position from lidar, depth image or assumed range; floor plane removed | depth path run on the real recording and the simulated yard; **assumes the camera looks along the robot's +x from its origin** |
 | `objects.py` | Object map: associate sightings by track, then by floor footprint (radius without one), merge fragments, stable ids, saved every change | works on the real recording |
 | `anchor.py` | Lines a patrol up with the objects stored by earlier ones on the same map; gross-error guard | replay of the real recording with injected pose errors; synthetic |
 | `moved.py` | Looks through a stored object's footprint with the depth image: still there, hidden, or gone | real recording (no false "moved"; planted empty spots found); synthetic |
@@ -176,6 +176,38 @@ Limits of this evidence: one recording, one hall. Thresholds and size ranges are
 two ladders stand 3 m apart; two ladders side by side rely on tracking and on being seen in one
 frame at least once, which is tested with synthetic data only.
 
+## On simulated patrols (ladderworld, sim evidence)
+
+Three patrols of one simulated ladder yard (Isaac Sim, the B2's sensor rig at its real mounts;
+51 ladders, scaffolds, containers): A from the south end, B from the north end, C from the south
+with the A-frame L49 moved 2 m. Read by `protocol/sim.py`; the poses are the simulator's, so all
+three are in one map frame:
+
+```bash
+python -m ultron.pipeline survey --source sim:PATROL,rate=5 --calibration sim:PATROL --detector yolo \
+    --interval 0 --map-id s3h --site yard        # error=DEG/DX/DY on the source misplaces every pose
+```
+
+Result, A then B then C on one map id, scored against the yard's ground truth:
+- A: 23 objects: 22 real ladders, each once; one rolling scaffold taken for a ladder (detector).
+- B: lined up with A's objects (shift 0.01 m); every object A found keeps its id; 7 ladders only
+  seen from the north are added; no duplicates.
+- C: lined up; L49's old place is seen empty from three places and reported `object_moved`; the
+  ladder at its new place is a new object 0.00 m from the truth. Nothing else changes.
+- The first-aid point is never detected with the current prompts (detector, not association).
+
+What the open yard forced (the hall recording had none of it):
+- **Range from the nearest dense depth peak that spans the outline**, not a percentile: seen 10 m
+  away a ladder is a quarter of its outline, the rest background between the rails, and the 35th
+  percentile fell behind it (the footprint then lay up to 4.5 m beyond the ladder and split it).
+  A small object in front, caught by a sloppy outline, does not span it and is passed over.
+- **The floor is removed**: a plane fitted to the lower half of each depth image (camera 0.87 m
+  above it in the simulator). Masks that take in an object's shadow otherwise put it on the floor
+  in front, and a stored height band that reaches below the floor made the empty floor where a
+  moved ladder stood look occupied.
+- The simulated depth has no noise; the real D457's error grows with the square of the range
+  (tens of centimetres at 8 m). Half of the yard sightings are beyond 10 m.
+
 ## Tuning itself: the vision model supervises the detector
 
 A vision-language model (Qwen3-VL 8B through Ollama, any OpenAI-compatible endpoint works) is
@@ -227,9 +259,9 @@ planner, Om's detection evaluation, and non-ladder objects on the dashboard.
 
 - Form reading has run on real frames only from two to three metres, with one small model. How
   well any model reads the fine rows and the sticker from a real close-up is unknown.
-- A second patrol from a different start, a real localised (`map`) pose, and a real object moved
-  between patrols: only synthetic tests and replays of the one recording (same start; injected pose
-  errors; fake objects planted on open floor). Pose errors of 0.7-1 m are flagged as gross: stored
+- A second patrol from a different start and an object moved between patrols: simulated patrols
+  (above) and synthetic tests only; on real data, replays of the one recording (same start; injected
+  pose errors; fake objects planted on open floor). No real localised (`map`) pose yet. Pose errors of 0.7-1 m are flagged as gross: stored
   landmarks are known only to 0.3-0.6 m, so the guard cannot tell them apart and changes nothing.
 - Displacements over 2 m (beyond the reach in which an unmatched sighting is taken for a stored
   object) are not caught by the guard: such an object is created anew.
