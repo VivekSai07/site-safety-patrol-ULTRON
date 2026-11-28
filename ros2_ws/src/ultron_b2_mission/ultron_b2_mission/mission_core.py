@@ -310,6 +310,8 @@ class MissionCore:
         self.active_goal = None
         self._event('GOAL_RESULT', f'{status}: {reason}', goal_id=goal_id, status=status, settled=bool(settled),
                     asset_id=g.get('asset_id', ''))
+        if status == NAV_SUCCESS and not settled:
+            status, reason = 'FAILED', f'REACHED_NOT_SETTLED: {reason}'
         ok = status == NAV_SUCCESS
         kind = g['kind']
         if kind == 'EXPLORE':
@@ -341,8 +343,6 @@ class MissionCore:
             t = self.target
             if t is None:
                 self._goto(PATROL, 'No target')
-            elif ok and not settled:
-                self._await_operator('View reached without confirmed settling')
             elif ok:
                 t['settled'] = bool(settled)
                 self._goto(SETTLE, 'View pose reached (settled=%s)' % bool(settled))

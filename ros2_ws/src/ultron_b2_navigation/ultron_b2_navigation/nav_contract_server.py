@@ -331,8 +331,7 @@ class NavContractServer(Node):
                 if now - reached_at > self.p['settle_timeout_s']:
                     with self.lock:
                         r = tracker.settle_expired(now, pose, self.p['settle_timeout_s'])
-                    if r.status == 'FAILED':
-                        r.stop_acknowledged = self._wait_still()
+                    r.stop_acknowledged = self._wait_still()
                     return self._finish(handle, r)
             elif status in TERMINAL:
                 r = tracker.result

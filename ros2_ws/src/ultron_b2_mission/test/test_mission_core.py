@@ -116,7 +116,9 @@ def test_unsettled_view_does_not_start_capture():
     goal = h.core.active_goal
     h.core.on_nav_result(goal['goal_id'], 'REACHED', 'not settled', settled=False)
     h.process(h.core.drain())
-    assert h.core.state == mc.AWAIT_OPERATOR
+    assert h.core.state == mc.APPROACH
+    assert h.core.active_goal['goal_id'] != goal['goal_id']
+    assert len(h.core.target['failed']) == 1
     assert not h.captures
 
 

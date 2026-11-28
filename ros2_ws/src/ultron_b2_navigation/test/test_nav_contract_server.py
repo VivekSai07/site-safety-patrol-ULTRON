@@ -35,6 +35,31 @@ def test_cancel_after_backend_success_during_settle(
     assert not result.capture_ready
 
 
+@pytest.mark.parametrize('stop_ack', [True, False])
+def test_unsettled_backend_success_reports_independent_stop_ack(monkeypatch, stop_ack):
+    goal = server_module.NavigationGoal(
+        'goal', 'mission', 'map', 1, 1.0, 0.0, 0.0, 0.2, 0.2, 90.0, 'test')
+    handle = SimpleNamespace(request=SimpleNamespace(goal_id='goal'))
+
+    def send_nav2(goal, tracker, state):
+        tracker.on_backend_status(goal.goal_id, 4, 1.0, 'backend succeeded')
+
+    server = SimpleNamespace(
+        lock=threading.RLock(), p=dict(NAV_DEFAULTS, settle_timeout_s=-1), now=lambda: 1.0,
+        _to_goal=lambda request: goal, precheck=lambda goal: (True, 'OK'),
+        _send_nav2=send_nav2, _interrupt_reason=lambda handle: None,
+        _pose=lambda: [1.0, 0.0, 0.0], _fresh_odom=lambda: None,
+        _wait_still=lambda: stop_ack,
+        get_logger=lambda: SimpleNamespace(info=lambda message: None),
+        _finish=lambda handle, result: result,
+    )
+    monkeypatch.setattr(server_module.rclpy, 'ok', lambda: True)
+    result = NavContractServer._run(server, handle)
+    assert result.status == 'REACHED'
+    assert result.stop_acknowledged is stop_ack
+    assert not result.capture_ready
+
+
 @pytest.mark.parametrize('stamp,received,speed,expected', [
     (None, None, 0.0, False),
     (9.0, 20.0, 0.0, False),

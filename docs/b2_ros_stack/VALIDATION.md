@@ -444,8 +444,14 @@ _Not assembled. Reviewer decision: pending (human)._
   that run did not demonstrate cancellation specifically during settling.
   The mission manager now also requires a stop acknowledgment for non-rejected navigation
   results, even if cancellation originated at the gate rather than the mission. A busy-goal
-  rejection or an unsettled view routes to operator review rather than another goal or capture.
-  These behaviors are mock-tested, not full-system acceptance.
+  rejection or an unconfirmed stop routes to operator review. An unsettled view is never captured;
+  another view may be tried only after a fresh-odometry stop acknowledgment. These behaviors are
+  mock-tested, not full-system acceptance.
+- A full-budget attempt with the experimental overlay and mission safety guards stopped in
+  AWAIT_OPERATOR after two simulated view captures: the next view was reported REACHED but not
+  settled and lacked stop acknowledgment. The moving-HOLD probe recorded 54 zero-output samples.
+  The subsequent independent stop check on settle expiry has not yet been validated in this
+  full simulation. Artifacts: `ros2_ws/runs/sim_full_budget_result/`.
 - Replay checkpoint `7d7444f` from `om/b2-ros-stack-replay-accept` is integrated.
   Its 32 tests passed; the replay clock guard reports stale
   localization when the clock stops, and measured queue-overflow drops fell to zero. One
