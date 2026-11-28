@@ -48,8 +48,9 @@ python -m ultron.pipeline online --source sim:~/data/sim_hall/patrol_A_south,rat
     --calibration sim:~/data/sim_hall/patrol_A_south --detector yolo --interval 0 --realtime \
     --candidates lidar --floor 0 --data runs/online-simA --mission SIM-A
 
-# hall recording
-python -m ultron.pipeline online --source bag:BAG,rate=8 --calibration bag:BAG --detector yolo --interval 0 --realtime
+# hall recording (lidar=1 and --candidates lidar: candidates from its scans)
+python -m ultron.pipeline online --source bag:BAG,rate=8,lidar=1 --calibration bag:BAG --detector yolo --interval 0 \
+    --realtime --candidates lidar
 
 # robot: a person drives (teleop), follows the focus events and types n + Enter when done with one
 python -m ultron.pipeline online --source relay:5600 --detector yolo --interval 0 --navigator operator \
@@ -64,7 +65,7 @@ sheet only.
 ## Discovery from the lidar
 
 `discover.LidarCandidates` looks at the cloud (map frame, z up) about once a second:
-1. Keep points 0.3–2.8 m above the floor and 1–10 m from the robot.
+1. Keep points 0.3–2.8 m above the floor and 1–6 m from the robot.
 2. Bin them on a 20 cm grid and find connected blobs.
 3. Keep blobs whose longest side from above is 0.2–1.8 m and that reach at least 1 m high.
 
@@ -73,14 +74,49 @@ in two clouds counts. An object found within 1.5 m explains it. If the camera lo
 1–5 m in five looks (at least 1 s apart) and finds nothing, it is dismissed for this patrol. While no object is collecting, the nearest
 open candidate becomes a look goal: stand 2.5 m away and face it.
 
-Simulated patrol A, scored against the yard's ground truth: all 11 ladders the route passes within
-8 m were found, including the five leaning on containers. There were also 12 candidates with no
-ladder within 1.2 m (not identified further), which the camera has to dismiss.
+**Lying ladders** (on by default, `lying=False` turns it off). Points 4–25 cm above the local floor
+(estimated per 1 m tile, as odometry tilts the floor) are kept over clouds in a map grid, with
+every cell that ever had a taller return. A cell counts when a quarter of its near-floor returns
+are raised and nothing taller stands on or beside it; joined blobs 1–6 m long and at most 0.9 m
+wide are candidates with `.lying` True. One sweep hits a ladder pointing away only where its floor
+rings cross it (2–5 m out they lie 0.3–1.3 m apart): walking on fills the gaps. The B2's lidar sees
+the floor densely (hall recording: floor returns from 0.6 m to 8 m and beyond, field of view -53
+to +15 degrees), but no recording has a lying ladder in it. `online.py` treats a lying candidate
+like any other (a look goal), and nothing sends it to the navigation stack as an obstacle yet.
 
-**On the real robot it is not wired yet.** Two things are missing:
-1. The relay has to forward the cloud with the frame, transformed to `map` with TF
-   (`map ← lidar`). Today it uses the cloud only for odometry.
-2. The floor height has to be set (`--floor`), or estimated per cloud, which is the default.
+**Reach.** 6 m by default (10 m before): it covers a 10 x 8 m room from its middle and keeps the
+per-cloud floor estimate local.
+
+**Hall recording** (`bag:...,lidar=1`: each frame carries the latest scan, moved into the odometry
+frame with that scan's own pose), scored against the 5 objects of the survey, a candidate within
+1.5 m explaining an object:
+
+| Reach | Objects explained | Unexplained upright candidates (seen in 2+ clouds) | Unexplained lying |
+|---|---|---|---|
+| 10 m | 4 of 5 (extinguisher missed) | 50 (34 more than 4 m from the route) | 14 |
+| 6 m | 5 of 5 | 23 | 12 |
+
+The hall is open on one side with people, booths and chairs, which make most of the unexplained
+candidates; the lying ones include the edges of a low paving platform, which the camera also
+boxed as "ladder lying on the floor" at 0.11–0.28. A few candidates lie beyond the hall's west and
+south walls (3 at 6 m, 5 at 10 m: the lidar sees through the interior window and doors); the fence
+must remove those. The wall-mounted kinds (alarm box, hose cabinet, extinguisher) join the wall's
+blob by design: the candidates that explain them may be a neighbour's (the leaning ladder stands
+1.2 m from the hose cabinet).
+
+`online --candidates lidar` on the hall recording at recorded pace (rate 8): the same 5 objects as
+without candidates, 33 candidates counted, 8 explained by the 5 objects (each object explains at
+least one), 4 dismissed by looking, the rest left open (a replay cannot walk to them).
+
+Simulated patrol A (sim evidence), at 10 m and before lying candidates: all 11 ladders the route
+passes within 8 m found, including the five leaning on containers, and 12 candidates with no ladder
+within 1.2 m. With lying candidates on: 33 such candidates at 10 m, 26 at 6 m (the yard has pallets
+and other low things; its three lying ladders are never nearer than 13 m), and 9 of the 11 ladders
+at 6 m (the two missed stand 6–8 m from the route).
+
+**On the robot**: the relay still has to forward the cloud with the frame, transformed to `map`
+with TF (`map ← lidar`); recordings now carry it (`bag:...,lidar=1`). The floor height is
+estimated per cloud unless `--floor` is set.
 
 Do not put the cloud in `frame.points`: `lift.py` then ranges detections from the lidar instead
 of the depth image. The attribute is `frame.cloud`.
@@ -135,7 +171,8 @@ read, reopen, off-thread view goals, and candidate explained or dismissed.
 ## Not verified
 
 - Never run on the robot or with Nav2. Moving navigators are tested only with a scripted navigator.
-- The hall recording has no lidar in its frames, so the candidates have only run on sim data.
+- Lidar candidates on real data: one hall recording only; lying-ladder candidates have never seen a
+  real lying ladder (rendered sweeps only).
 - A form read takes 10–40 s with Qwen3-VL 8B (eight section calls per ladder). In the sim yard the
   robot finds ladders faster than they are read, so the reader falls behind. The robot never waits
   for it, and what is left is read when the stream ends.
