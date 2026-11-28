@@ -111,6 +111,15 @@ def test_full_mission_captures_ladders_and_returns_to_base():
         assert s in states
 
 
+def test_unsettled_view_does_not_start_capture():
+    h = _harness_in(mc.APPROACH)
+    goal = h.core.active_goal
+    h.core.on_nav_result(goal['goal_id'], 'REACHED', 'not settled', settled=False)
+    h.process(h.core.drain())
+    assert h.core.state == mc.AWAIT_OPERATOR
+    assert not h.captures
+
+
 @pytest.mark.parametrize('status', ['FAILED', 'REACHED'])
 def test_frontier_blacklisting_uses_centroid_not_distant_goal(status):
     grid = room(unknown_rect=(6.0, 0.1, 9.9, 7.9))

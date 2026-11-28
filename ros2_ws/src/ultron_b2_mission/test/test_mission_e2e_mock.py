@@ -73,6 +73,7 @@ class MockWorld(Node):
         self.nav_busy = False
         self.busy_rejections = 0
         self.stop_acknowledged = True
+        self.unsolicited_result = None
         self.events = []
         self.map_pub = self.create_publisher(OccupancyGrid, 'map', latched)
         self.loc_pub = self.create_publisher(LocalizationState, 'state/localization', 10)
@@ -158,6 +159,14 @@ class MockWorld(Node):
                                'x': g.target.pose.position.x, 'y': g.target.pose.position.y})
         t_end = time.monotonic() + NAV_DELAY_S
         while time.monotonic() < t_end:
+            if self.unsolicited_result:
+                with self.lock:
+                    self.nav_busy = False
+                gh.abort()
+                reason = ('GOAL_ALREADY_ACTIVE' if self.unsolicited_result == 'REJECTED'
+                          else 'no stop confirmation')
+                return NavigateToView.Result(status=self.unsolicited_result, reason=reason,
+                                             stop_acknowledged=False, settled=False)
             if gh.is_cancel_requested:
                 with self.lock:
                     self.cancels.append(g.goal_id)
@@ -194,6 +203,47 @@ def _stop(proc):
             proc.kill()
             proc.wait()
     return proc.stdout.read() if proc.stdout else ''
+
+
+@pytest.mark.parametrize('status', ['CANCELLED', 'REACHED', 'REJECTED'])
+def test_unsolicited_unconfirmed_stop_requires_operator(artifacts, status):
+    from ultron_b2_interfaces.action import RunMission
+    from ultron_b2_perception.registry_store import open_registry
+    zone = artifacts / 'zone.yaml'
+    zone.write_text('zone_id: TEST\nframe: map\nboundary: [[0,0],[10,0],[10,8],[0,8]]\n')
+    registry = open_registry(artifacts / 'registry.sqlite')
+    assets = {
+        'LAD-901': registry.associate((5.0, 4.0, 0.0), 'TRESTLE', 'hall@1')[0],
+        'LAD-902': registry.associate((7.5, 2.5, 0.0), 'LAYHER_A_FRAME_STEPLADDER', 'hall@1')[0],
+    }
+    registry.close()
+    mission = _spawn('ultron_b2_mission.mission_manager', {
+        'zone_file': str(zone), 'memory_db': str(artifacts / 'registry.sqlite'),
+        'run_dir': str(artifacts / 'runs'), 'detect_dwell_s': 0.2}, dict(os.environ))
+    rclpy.init()
+    world = MockWorld(assets)
+    world.unsolicited_result = status
+    ex = MultiThreadedExecutor(num_threads=4)
+    ex.add_node(world)
+    threading.Thread(target=ex.spin, daemon=True).start()
+    try:
+        assert world.run_client.wait_for_server(timeout_sec=30.0)
+        time.sleep(1.0)
+        goal = RunMission.Goal(schema_version='ultron.run_mission/v1', mission_id='E2E',
+                               zone_id='TEST', map_id='hall', map_version=1, mode='EXPLORE')
+        send = world.run_client.send_goal_async(goal)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and 'AWAIT_OPERATOR' not in world.states:
+            time.sleep(0.05)
+        assert send.done() and send.result().accepted
+        assert 'AWAIT_OPERATOR' in world.states
+        assert len(world.goals) == 1
+        assert not any(e.event_type == 'CAPTURE_RESULT' for e in world.events)
+    finally:
+        ex.shutdown()
+        world.destroy_node()
+        rclpy.shutdown()
+        print(_stop(mission)[-6000:])
 
 
 @pytest.mark.parametrize('stop_acknowledged', [True, False])

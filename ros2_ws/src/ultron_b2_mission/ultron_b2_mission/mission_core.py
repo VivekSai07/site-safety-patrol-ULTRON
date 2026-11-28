@@ -341,6 +341,8 @@ class MissionCore:
             t = self.target
             if t is None:
                 self._goto(PATROL, 'No target')
+            elif ok and not settled:
+                self._await_operator('View reached without confirmed settling')
             elif ok:
                 t['settled'] = bool(settled)
                 self._goto(SETTLE, 'View pose reached (settled=%s)' % bool(settled))

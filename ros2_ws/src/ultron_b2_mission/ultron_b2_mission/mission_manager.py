@@ -477,16 +477,16 @@ def main(argv=None):
             with self.lock:
                 self.nav_handles.pop(gid, None)
                 self.nav_inflight = None
-                was_cancelled = gid in self.cancel_requested
                 self.cancel_requested.discard(gid)
                 try:
                     wrapped = fut.result()
                     r = wrapped.result
                     status = r.status or status_names.get(wrapped.status, 'FAILED')
-                    if was_cancelled and status != 'REJECTED' and not r.stop_acknowledged:
+                    if ((status != 'REJECTED' and not r.stop_acknowledged)
+                            or (status == 'REJECTED' and r.reason == 'GOAL_ALREADY_ACTIVE')):
                         self.nav_deferred = None
                         if self.core.state not in TERMINAL:
-                            self.core._await_operator('Cancelled navigation did not acknowledge a stop')
+                            self.core._await_operator('Navigation did not acknowledge a stop')
                         self._flush()
                         return
                     self.core.on_nav_result(gid, status, r.reason, settled=bool(r.settled))

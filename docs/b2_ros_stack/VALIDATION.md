@@ -435,6 +435,17 @@ _Not assembled. Reviewer decision: pending (human)._
   acknowledgment. Artifacts: `ros2_ws/runs/sim_tf2_02520_result/`. This single mixed-ABI
   comparison supports further investigation but does not establish a root cause or validate
   a downgrade. Hardware use remains NO-GO.
+- A subsequent experimental-overlay mission with the cancellation-during-settling fix
+  moved, stopped during HOLD (54 sampled commands zero after the allowance), resumed and
+  captured one simulated view. It did not complete within the test's 450 s result window,
+  which was shorter than the mission's 900 s budget. Localization STALE/DEGRADED holds,
+  Nav2 failures and goal timeouts persisted; no full mission acceptance is claimed.
+  Artifacts: `ros2_ws/runs/sim_cancel_fix_result/`. The navigation fix has focused tests;
+  that run did not demonstrate cancellation specifically during settling.
+  The mission manager now also requires a stop acknowledgment for non-rejected navigation
+  results, even if cancellation originated at the gate rather than the mission. A busy-goal
+  rejection or an unsettled view routes to operator review rather than another goal or capture.
+  These behaviors are mock-tested, not full-system acceptance.
 - Replay checkpoint `7d7444f` from `om/b2-ros-stack-replay-accept` is integrated.
   Its 32 tests passed; the replay clock guard reports stale
   localization when the clock stops, and measured queue-overflow drops fell to zero. One
