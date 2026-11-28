@@ -105,7 +105,7 @@ class LadderTracker:
         """Fuse one frame of observations. Returns the set of changed candidate ids."""
         if self.map_key is None:
             raise RuntimeError('tracker has no map scope; call set_map first')
-        changed, claimed = set(), set()
+        changed, claimed, uncertain = set(), set(), set()
         for obs in sorted(observations, key=lambda o: (o['position'][0], o['position'][1])):
             pos = np.asarray(obs['position'], float)
             if not np.all(np.isfinite(pos)):
@@ -124,6 +124,7 @@ class LadderTracker:
                 for _, c in near:
                     c.ambiguous_observations += 1
                     changed.add(c.candidate_id)
+                    uncertain.add(c.candidate_id)
                 continue
             if target is not None and target.candidate_id not in claimed:
                 self._fuse(target, obs, pos, stamp)
@@ -140,7 +141,7 @@ class LadderTracker:
             changed.add(cand.candidate_id)
         for cid in view_checks:
             cand = self.candidates.get(cid)
-            if cand is None or cid in claimed:
+            if cand is None or cid in claimed or cid in uncertain:
                 continue
             cand.misses += 1
             if cand.misses >= self.missing_after and cand.state != MISSING:

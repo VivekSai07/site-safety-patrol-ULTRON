@@ -122,6 +122,68 @@ def test_unsettled_view_does_not_start_capture():
     assert not h.captures
 
 
+def test_exploration_interleaves_inspections_when_enabled():
+    grid = room(unknown_rect=(6.0, 0.1, 9.9, 7.9))
+    cfg = MissionConfig(mode=mc.MODE_EXPLORE, views_per_ladder=1, settle_dwell_s=0.1,
+                        detect_dwell_s=0.1, max_inspections_before_explore=1)
+    h = Harness(grid, [cand('L1', 3.0, 4.0), cand('L2', 4.0, 4.0)], cfg=cfg,
+                robot=(1.0, 2.0, 0.0))
+    h.start()
+    assert h.run_until(lambda: any(g['reason'] == 'FRONTIER' for g in h.sent))
+    assert len(h.core.inspected) == 1
+    assert h.run_until(lambda: len(h.core.inspected) == 2)
+
+
+def test_fairness_survey_is_not_preempted_by_existing_pending_ladder():
+    grid = room(unknown_rect=(6.0, 0.1, 9.9, 7.9))
+    cfg = MissionConfig(mode=mc.MODE_EXPLORE, views_per_ladder=1, settle_dwell_s=0.1,
+                        max_inspections_before_explore=1)
+    h = Harness(grid, [cand('L1', 3.0, 4.0), cand('L2', 4.0, 4.0)], cfg=cfg,
+                robot=(1.0, 2.0, 0.0))
+    h.start()
+    assert h.run_until(lambda: len(h.core.inspected) == 1)
+    h.auto = False
+    h.step()
+    goal = h.core.active_goal
+    assert goal['kind'] == 'EXPLORE'
+    h.step()
+    assert h.core.active_goal['goal_id'] == goal['goal_id']
+    assert goal['goal_id'] not in h.cancelled
+    h.inp.candidates.append(cand('L3', 3.5, 5.0))
+    h.step()
+    assert h.core.state == mc.DETECT
+    assert goal['goal_id'] in h.cancelled
+
+
+def test_default_schedule_keeps_inspection_priority():
+    grid = room(unknown_rect=(6.0, 0.1, 9.9, 7.9))
+    cfg = MissionConfig(mode=mc.MODE_EXPLORE, views_per_ladder=1, settle_dwell_s=0.1)
+    h = Harness(grid, [cand('L1', 3.0, 4.0), cand('L2', 4.0, 4.0)], cfg=cfg,
+                robot=(1.0, 2.0, 0.0))
+    h.start()
+    assert h.run_until(lambda: len(h.core.inspected) == 2)
+    assert not any(g['reason'] == 'FRONTIER' for g in h.sent)
+
+
+def test_failed_fairness_survey_preserves_gap_and_allows_inspection():
+    grid = room(unknown_rect=(6.0, 0.1, 9.9, 7.9))
+    cfg = MissionConfig(mode=mc.MODE_EXPLORE, views_per_ladder=1, settle_dwell_s=0.1,
+                        max_inspections_before_explore=1)
+    h = Harness(grid, [cand('L1', 3.0, 4.0), cand('L2', 4.0, 4.0)], cfg=cfg,
+                robot=(1.0, 2.0, 0.0))
+    h.start()
+    assert h.run_until(lambda: len(h.core.inspected) == 1)
+    h.auto = False
+    h.step()
+    goal = h.core.active_goal
+    assert goal['kind'] == 'EXPLORE'
+    h.core.on_nav_result(goal['goal_id'], 'FAILED', 'test')
+    h.step()
+    assert h.core.active_goal['kind'] == 'VIEW'
+    assert h.core.frontier_blacklist
+    assert h.core._gaps()
+
+
 @pytest.mark.parametrize('status', ['FAILED', 'REACHED'])
 def test_frontier_blacklisting_uses_centroid_not_distant_goal(status):
     grid = room(unknown_rect=(6.0, 0.1, 9.9, 7.9))

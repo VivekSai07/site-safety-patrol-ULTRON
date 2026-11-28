@@ -5,13 +5,15 @@ All topic names are relative (mode namespace). Every numeric parameter is **PROP
 
 | Node | In | Out |
 | --- | --- | --- |
-| `ladder_detector` | `sensors/cam_head/color/image_raw`, `.../color/camera_info`; oracle only: `ground_truth/pose` (EVALUATION_ONLY) + `sensors/cam_head/depth/image_rect_raw`, or `sensors/cam_head/oracle/segmentation` | `perception/ladder_detections`, `perception/ladder_detector/status` |
+| `ladder_detector` | `sensors/cam_head/color/image_raw`, `.../color/camera_info`; simulation oracle: `sim/oracle/cam_head/ladder_labels` or ground-truth pose for projection | `perception/ladder_detections`, `perception/ladder_detector/status` |
 | `ladder_localizer` | detections, `sensors/cam_head/depth/image_rect_raw` + `depth/camera_info`, TF map←camera **at the image stamp** | `perception/ladder_observations`, `perception/ladder_localizer/stats` |
 | `ladder_tracker` | observations, `map`, `state/localization` | `perception/ladder_candidates` (latched; map-scoped) |
 
 Backends (`backend` param):
-* `oracle_sim` — simulation ground truth projected into the camera (`config/oracle_hall_ladders.yaml`,
-  `source: SIMULATION_GROUND_TRUTH_ORACLE`). Refused unless `run_mode:=sim`. Every detection carries
+* `oracle_sim` — simulation-only rendered instance labels matched to the exact color frame; the
+  optional projection mode uses `config/oracle_hall_ladders.yaml` and can report occluded ladders
+  without depth occlusion filtering. Instance IDs follow the simulator's name-sorted ladder labels.
+  Refused unless `run_mode:=sim`. Every detection carries
   `is_oracle=true` and label `ORACLE_SIM:<type>`; candidates and registry rows keep the ORACLE label.
   **Oracle detections are not learned perception and validate nothing about real detection.**
 * `yolo` / `owlv2` — load only if the libraries and local weights (`weights`, `model_dir`) exist. Weights

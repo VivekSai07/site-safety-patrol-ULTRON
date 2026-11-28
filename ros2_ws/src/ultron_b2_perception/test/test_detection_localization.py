@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ultron_b2_perception import backends  # noqa: E402
 from ultron_b2_perception.geometry import BODY_FROM_OPTICAL, planar  # noqa: E402
+from ultron_b2_perception.ladder_detector import FramePairs, frame_stamp_ns, oracle_segmentation_ids  # noqa: E402
 from ultron_b2_perception.localizer_core import Rejected, localize, visible_candidates  # noqa: E402
 from ultron_b2_perception.oracle import ORACLE_LABEL_PREFIX, project_ladders, segmentation_boxes  # noqa: E402
 
@@ -47,6 +48,34 @@ def test_segmentation_boxes_are_oracle_labelled():
     assert boxes[0]['bbox'] == (20.0, 10.0, 40.0, 60.0) and boxes[0]['label'].startswith(ORACLE_LABEL_PREFIX)
 
 
+def test_segmentation_pairs_exact_frames_in_either_arrival_order():
+    pairs = FramePairs(limit=2)
+    assert pairs.add('image', 1, 'image1') is None
+    assert pairs.add('labels', 2, 'labels2') is None
+    assert pairs.add('labels', 1, 'labels1') == ('image1', 'labels1')
+    assert pairs.add('image', 2, 'image2') == ('image2', 'labels2')
+    for t in (3, 4, 5):
+        assert pairs.add('image', t, f'image{t}') is None
+    assert pairs.add('labels', 3, 'stale') is None
+    assert pairs.add('labels', 5, 'labels5') == ('image5', 'labels5')
+
+
+def test_segmentation_ids_follow_sorted_simulator_ladder_names():
+    ladders = [{'name': 'ladder_07', 'type': 'TRESTLE'},
+               {'name': 'ladder_01', 'type': 'LAYHER'}]
+    ids = oracle_segmentation_ids(ladders)
+    assert [ids[i]['name'] for i in ids] == ['ladder_01', 'ladder_07']
+    with pytest.raises(ValueError):
+        oracle_segmentation_ids(ladders + [ladders[0]])
+
+
+def test_frame_pair_keys_preserve_nanoseconds_at_large_timestamps():
+    from types import SimpleNamespace
+    stamp = SimpleNamespace(sec=1_700_000_000, nanosec=1)
+    msg = SimpleNamespace(header=SimpleNamespace(stamp=stamp))
+    assert frame_stamp_ns(msg) == 1_700_000_000_000_000_001
+
+
 def test_oracle_backend_refused_outside_sim_and_learned_backends_unavailable_without_weights():
     with pytest.raises(backends.BackendUnavailable):
         backends.make_backend('oracle_sim', 'hardware')
@@ -78,6 +107,10 @@ def test_visible_candidates_excludes_occluded_and_out_of_view():
              {'candidate_id': 'side', 'position': [0.5, 4.0, 0.6]}]
     assert visible_candidates(cands, depth, K, T) == ['in']
     depth[:] = 2.0  # wall in front of the candidate
+    assert visible_candidates(cands, depth, K, T) == []
+    depth[:] = np.nan  # no depth return is not evidence of an unoccluded view
+    assert visible_candidates(cands, depth, K, T) == []
+    depth[:] = 0.0
     assert visible_candidates(cands, depth, K, T) == []
 
 

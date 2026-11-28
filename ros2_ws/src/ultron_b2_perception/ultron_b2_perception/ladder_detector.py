@@ -28,6 +28,34 @@ def load_oracle_ladders(path):
     return data['ladders']
 
 
+def oracle_segmentation_ids(ladders):
+    """Match the simulator's one-based, name-sorted ladder instance labels."""
+    names = [item['name'] for item in ladders]
+    if len(set(names)) != len(names):
+        raise ValueError('duplicate ladder names in oracle configuration')
+    return {i: item for i, item in enumerate(sorted(ladders, key=lambda x: x['name']), 1)}
+
+
+class FramePairs:
+    """Pair exact-stamp color and oracle labels regardless of arrival order."""
+    def __init__(self, limit=30):
+        self.images, self.labels, self.limit = {}, {}, limit
+
+    def add(self, kind, stamp, value):
+        own, other = (self.images, self.labels) if kind == 'image' else (self.labels, self.images)
+        if stamp in other:
+            partner = other.pop(stamp)
+            return (value, partner) if kind == 'image' else (partner, value)
+        own[stamp] = value
+        if len(own) > self.limit:
+            own.pop(min(own))
+        return None
+
+
+def frame_stamp_ns(msg):
+    return msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
+
+
 def main(argv=None):
     import rclpy
     from rclpy.node import Node
@@ -94,12 +122,16 @@ def main(argv=None):
                 if depth_topic:
                     self.create_subscription(Image, depth_topic, self._on_depth, self.sensor_qos)
             elif self.oracle_source == 'segmentation':
-                with open(self.declare_parameter('oracle_segmentation_ids_file', '').value) as fh:
-                    data = yaml.safe_load(fh)
-                self.seg_ids = {int(k): v for k, v in data['instances'].items()}
-                self.seg = {}
+                ids_file = self.declare_parameter('oracle_segmentation_ids_file', '').value
+                if ids_file:
+                    with open(ids_file) as fh:
+                        data = yaml.safe_load(fh)
+                    self.seg_ids = {int(k): v for k, v in data['instances'].items()}
+                else:
+                    self.seg_ids = oracle_segmentation_ids(load_oracle_ladders(self.oracle_file))
+                self.frame_pairs = FramePairs()
                 self.create_subscription(Image, self.declare_parameter(
-                    'oracle_segmentation_topic', 'sensors/cam_head/oracle/segmentation').value, self._on_seg,
+                    'oracle_segmentation_topic', 'sim/oracle/cam_head/ladder_labels').value, self._on_seg,
                     self.sensor_qos)
             else:
                 raise ValueError(f'unknown oracle_source {self.oracle_source}')
@@ -118,17 +150,25 @@ def main(argv=None):
             self.depth = (stamp_to_float(msg.header.stamp), depth_to_metres(image_to_numpy(msg), msg.encoding))
 
         def _on_seg(self, msg):
-            self.seg[stamp_to_float(msg.header.stamp)] = image_to_numpy(msg)
-            if len(self.seg) > 30:
-                self.seg.pop(min(self.seg))
+            pair = self.frame_pairs.add('labels', frame_stamp_ns(msg), image_to_numpy(msg))
+            if pair is not None:
+                self._process_image(*pair)
 
         def _on_image(self, msg):
+            if self.backend.is_oracle and self.oracle_source == 'segmentation':
+                pair = self.frame_pairs.add('image', frame_stamp_ns(msg), msg)
+                if pair is not None:
+                    self._process_image(*pair)
+                return
+            self._process_image(msg)
+
+        def _process_image(self, msg, labels=None):
             t = stamp_to_float(msg.header.stamp)
             if t - self.last_t < 1.0 / self.max_rate:
                 return
             self.last_t = t
             try:
-                found = self._oracle(msg, t) if self.backend.is_oracle else self._learned(msg)
+                found = self._oracle(msg, t, labels) if self.backend.is_oracle else self._learned(msg)
             except Exception as exc:  # one bad frame must not kill the node
                 self.get_logger().warn(f'frame skipped: {exc}', throttle_duration_sec=5.0)
                 return
@@ -148,14 +188,11 @@ def main(argv=None):
                 out.detections.append(d)
             self.pub.publish(out)
 
-        def _oracle(self, msg, t):
+        def _oracle(self, msg, t, labels=None):
             if self.oracle_source == 'segmentation':
-                if not self.seg:
+                if labels is None or labels.shape != (msg.height, msg.width):
                     return None
-                key = min(self.seg, key=lambda s: abs(s - t))
-                if abs(key - t) > self.oracle_pose_tol:
-                    return None
-                return segmentation_boxes(self.seg[key], self.seg_ids)
+                return segmentation_boxes(labels, self.seg_ids)
             if self.K is None or not self.gt_poses:
                 return None
             gt_t, T_world_base = min(self.gt_poses, key=lambda tp: abs(tp[0] - t))
@@ -177,6 +214,7 @@ def main(argv=None):
             return self.backend.detect(np.ascontiguousarray(rgb))
 
     return run_node(LadderDetector, argv)
+
 
 if __name__ == '__main__':
     sys.exit(main())

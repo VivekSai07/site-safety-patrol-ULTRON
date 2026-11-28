@@ -97,7 +97,12 @@ class GridMap:
         key = round(clearance_m, 3)
         if key not in self._clear_cache:
             blocked = ~self.free
-            self._clear_cache[key] = self.free & ~dilate(blocked, clearance_m / self.resolution)
+            radius_cells = clearance_m / self.resolution
+            padding = max(0, int(math.ceil(radius_cells)))
+            if padding:
+                blocked = np.pad(blocked, padding, constant_values=True)
+                blocked = dilate(blocked, radius_cells)[padding:-padding, padding:-padding]
+            self._clear_cache[key] = self.free & ~blocked
         return self._clear_cache[key]
 
     def reachable_from(self, xy, clearance_m, *, snap_m=0.5):

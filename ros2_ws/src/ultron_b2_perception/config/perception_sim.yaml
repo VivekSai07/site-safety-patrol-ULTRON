@@ -3,7 +3,7 @@
   ros__parameters:
     # ladder_detector
     backend: oracle_sim            # ORACLE in sim; yolo/owlv2 need locally supplied weights (owner: Om)
-    oracle_source: projection      # projection (ground-truth boxes) | segmentation (F's oracle topic)
+    oracle_source: segmentation    # visible simulator instance labels; projection remains optional
     oracle_pose_topic: sim/ground_truth/base_pose   # F ultron_b2_sim (PoseStamped, frame ultron_sim_world); EVALUATION ONLY
     max_rate_hz: 5.0
     score_threshold: 0.25

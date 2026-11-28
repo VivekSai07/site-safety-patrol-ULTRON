@@ -8,6 +8,7 @@ hall. Expected with C (localization + map), D (nav/navigate_to_view, twist_mux o
 * at least one ladder captured, every capture from ORACLE detections (labelled ORACLE);
 * a HOLD injected while an active view goal is moving cancels that goal and the mission resumes;
 * the gated ``cmd_vel`` is zero while the HOLD is asserted (after a short stop allowance);
+* the simulation bridge reports no collision-stop events through mission completion;
 * the mission returns to base (RETURN_BASE goal sent) before it ends;
 * the mission nodes publish no velocity topics.
 Optional env: ULTRON_E2E_LAUNCH_ARGS (extra launch args, e.g. ``map:=<dir> odom_source:=mola viz:=foxglove``),
@@ -39,8 +40,9 @@ def test_full_sim_mission_hall():
     from rclpy.action import ActionClient
     from rclpy.executors import MultiThreadedExecutor
     from rclpy.node import Node
+    from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from geometry_msgs.msg import Twist
-    from std_msgs.msg import Bool
+    from std_msgs.msg import Bool, String
     from ultron_b2_interfaces.action import RunMission
     from ultron_b2_interfaces.msg import MissionEvent, MissionStatus, OperatorEnable
 
@@ -63,6 +65,11 @@ def test_full_sim_mission_hall():
     cmd_vel = []
     node.create_subscription(Twist, 'cmd_vel', lambda m: cmd_vel.append((
         time.monotonic(), m.linear.x, m.linear.y, m.linear.z, m.angular.x, m.angular.y, m.angular.z)), 50)
+    bridge_status = []
+    latched = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE,
+                         durability=DurabilityPolicy.TRANSIENT_LOCAL)
+    node.create_subscription(String, 'sim/bridge_status',
+                             lambda m: bridge_status.append(json.loads(m.data)), latched)
     seq = [0]
 
     def heartbeat():
@@ -155,6 +162,22 @@ def test_full_sim_mission_hall():
         assert all(b[0] - a[0] <= HOLD_MAX_SAMPLE_GAP_S for a, b in zip(held, held[1:])), \
             'cmd_vel observation gap during HOLD'
         assert all(all(v == 0.0 for v in sample[1:]) for sample in held), ('motion during HOLD', held)
+        deadline = time.monotonic() + 5
+        end_stamps = []
+        while time.monotonic() < deadline and not end_stamps:
+            end_stamps = [e.header.stamp.sec + e.header.stamp.nanosec * 1e-9
+                          for _, e in events if e.event_type == 'MISSION_END']
+            if not end_stamps:
+                time.sleep(0.1)
+        assert end_stamps, 'missing MISSION_END event'
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not any(
+                s.get('sim_time_s', -1) >= end_stamps[-1] for s in bridge_status):
+            time.sleep(0.1)
+        assert bridge_status and bridge_status[-1].get('sim_time_s', -1) >= end_stamps[-1], \
+            'no bridge status through mission completion'
+        assert all(type(s.get('collisions')) is int and s['collisions'] == 0 for s in bridge_status), \
+            ('simulation collision stops', bridge_status[-1])
         reached = {e.goal_id for _, e in events if e.event_type == 'GOAL_RESULT'
                    and json.loads(e.payload_json).get('status') == 'REACHED'
                    and json.loads(e.payload_json).get('settled') is True}
@@ -181,6 +204,7 @@ def test_full_sim_mission_hall():
                 'observed_area_m2': res.coverage.observed_area_m2 if res else None,
                 'pre_hold_cmd_vel': moving_sample[1:] if moving_sample else None,
                 'hold_cmd_vel_samples': len(held),
+                'bridge_status': bridge_status[-1] if bridge_status else None,
                 'hold_cmd_vel_max_abs': max((abs(v) for sample in held for v in sample[1:]), default=None)},
                 indent=2))
         node.destroy_node()

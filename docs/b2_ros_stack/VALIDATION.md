@@ -452,6 +452,117 @@ _Not assembled. Reviewer decision: pending (human)._
   settled and lacked stop acknowledgment. The moving-HOLD probe recorded 54 zero-output samples.
   The subsequent independent stop check on settle expiry has not yet been validated in this
   full simulation. Artifacts: `ros2_ws/runs/sim_full_budget_result/`.
+- The subsequent full-budget experimental-overlay attempt completed `DONE_WITH_GAPS` after
+  exceeding its 900 s mission budget and reached the return-base goal settled at 952.9 s.
+  The acceptance test **failed** because no exploration goal was sent or reached: all 69
+  non-base goals were inspection views. Of 47 view results, 24 were settled REACHED, 18 were
+  unsettled REACHED, four were rejected and one was cancelled; other goals were cancelled and
+  had late results ignored. HOLD cancelled the selected goal, resumed, and all 54 sampled
+  post-allowance gated commands were zero. The test stopped at the exploration assertion, so
+  its later publisher-authority assertion did not run.
+  The summary reported 116.03 m² observed, remaining unknown and unreachable areas, and
+  incomplete coverage. It listed 52 known ladder IDs and 12 captured IDs, while the hall
+  scene contains seven simulated ladders: these IDs and captures do not establish 12 distinct
+  ladders or successful search. Candidate association/localization needs investigation;
+  its cause is not yet established. The bridge's final status also reported 28 simulated
+  collision-stop events; these represent rejected simulated motions, not physical collisions,
+  and require investigation before acceptance. The run used ORACLE detections and the unvalidated mixed-ABI
+  tf2 0.25.20 diagnostic overlay, not a supported hardware configuration. Artifacts remain local
+  under `ros2_ws/runs/sim_stop_ack_result/` and `ros2_ws/runs/sim_stop_ack_home/`.
+- Two independent perception defects found while reviewing this run are fixed locally:
+  missing-depth pixels no longer count as unoccluded absence checks, and an ambiguous detection
+  no longer counts as absence evidence against any of its possible matches. These changes do not
+  establish the cause of the excess ladder identities or resolve the full simulation failure.
+  The perception package's 19 tests pass, including focused regressions for both defects.
+  Projection-oracle detections in this run were configured without a depth-occlusion topic;
+  projected boxes can therefore include occluded ladders. This is a plausible contributor to
+  false candidates, not a proven explanation of the reported identities. The simulation default
+  now uses rendered instance-label boxes paired with the exact color frame instead; an isolated
+  simulator graph test verified matching labels and ORACLE provenance. This is still privileged
+  simulation truth, not learned perception, and does not by itself validate localization or
+  identity association. The end-to-end test now also requires bridge status through mission
+  completion and zero simulated collision stops. A subsequent experimental 0.25.20-overlay
+  run with the segmentation oracle failed at 210 s in `AWAIT_OPERATOR`: Nav2 aborted a view
+  and the navigation server did not acknowledge a stop. It captured five simulated frames,
+  saw 54 zero-output HOLD samples, and its last bridge status reported zero collision stops.
+  The local registry already contained 29 IDs in the seven-ladder scene, so switching the
+  oracle alone did not resolve identity proliferation. Repeated localization stale/degraded
+  inhibits also occurred. Other validation and a TF source build overlapped this run, so CPU
+  contention is a confounder and the run is not a controlled comparison. Artifacts:
+  `ros2_ws/runs/sim_segmentation_result/` and
+  `ros2_ws/runs/sim_segmentation_home/`.
+- Upstream geometry2 tag 0.25.24 (`404b7224d623d614f18fa9738dbf1716403d857e`)
+  explicitly includes the backported ABBA-deadlock fix in tf2; this image has tf2 0.25.23
+  despite tf2_ros 0.25.24. A separate local source-built tf2/tf2_ros 0.25.24 overlay passed
+  all 11 upstream `test_buffer` tests, including the deadlock regression, and `ldd -r`
+  reported no undefined controller symbols. This is a stronger diagnostic candidate, not proof
+  of local root cause, full ABI compatibility or hardware readiness. Building tf2 tests was
+  blocked by the missing benchmark package; the main tf2 library was built with its tests off.
+  Official ROS package retrieval failed TLS hostname verification, which was not bypassed.
+- A full-budget diagnostic run using the source-built 0.25.24 overlay and rendered-label oracle
+  **failed** after approximately 952 s in `AWAIT_OPERATOR`: the time-budget return-base goal
+  was cancelled by the localization-stale gate. No exploration goal was sent, and the registry
+  contained 42 IDs in the seven-ladder scene; the 24 simulated capture results cannot be counted
+  as 24 distinct ladders. HOLD samples were zero and the last bridge status reported zero
+  collision stops, but the test stopped before its final acceptance assertions. TF extrapolation
+  and localization stale/degraded events persisted; the controller's reported latest TF time
+  advanced near the end, unlike the earlier permanent freeze. This is diagnostic evidence only,
+  not a controlled proof of the TF root cause or an accepted configuration. Artifacts:
+  `ros2_ws/runs/sim_tf2_02524_result/` and `ros2_ws/runs/sim_tf2_02524_home/`.
+- A separate rendered-scene probe sampled free simulator poses and localized visible-label
+  bounding boxes using the current depth estimator and assumed camera geometry. Of 88 estimates,
+  24 were more than the proposed 0.65 m association radius from the corresponding simulated
+  ladder centre; the largest discrepancy was 6.62 m. Surface-to-centre offsets are expected,
+  and this is not a calibrated accuracy benchmark, but large errors expose the bounding-box
+  depth ambiguity: other objects or background inside a box can be selected as foreground.
+  Instance-label boxes alone do not provide pixel masks to the depth localizer. Avoid increasing
+  the association radius or interpreting these candidate IDs as distinct assets without a
+  validated depth/segmentation and association approach.
+- An opt-in scheduler limit now interleaves a reachable frontier after a configured number of
+  completed inspection attempts in EXPLORE mode; zero keeps the prior inspection-first behavior.
+  The sim mission launch proposes three attempts, while live/replay default to zero. A failed
+  frontier remains blacklisted and reported as a coverage gap; no safety gate is bypassed.
+  Core/mock regressions passed, but this scheduling change has not passed full simulation
+  acceptance. The saved map has three reachable frontiers from the initial pose under the
+  proposed search settings; this is not evidence that they remain reachable throughout a mission.
+- A bounded fairness probe with the source-built 0.25.24 diagnostic overlay sent frontier
+  requests after three inspection attempts and six simulated captures, but the first two
+  frontiers were rejected as `TARGET_FOOTPRINT_OCCUPIED` and `TARGET_OUTSIDE_MAP`. It ended
+  without demonstrating a settled exploration. Its final bridge status reported zero simulated
+  collision stops, and the registry contained 25 candidate IDs. Artifacts:
+  `ros2_ws/runs/sim_fairness_probe/` and `ros2_ws/runs/sim_fairness_home/`.
+  The mission planner subsequently treats space outside its occupancy grid as blocked when
+  inflating clearance, and simulation mission clearance is at least the proposed 0.55 m
+  navigation precheck and configured simulated footprint. These changes do not reconcile
+  potentially different live and saved maps, establish a physical footprint, or bypass
+  navigation checks. Focused planner tests and the mission launch suite passed; one initial
+  launch-suite run failed on a shutdown-only `rclpy` KeyboardInterrupt traceback, then passed
+  when rerun in isolation.
+- In a follow-up bounded clearance probe, three inspection attempts produced six simulated
+  captures and frontier requests began, but already-pending ladder candidates immediately
+  preempted each frontier; seven requests were cancelled and no settled exploration was
+  demonstrated. The final bridge status reported zero simulated collision stops. Artifacts:
+  `ros2_ws/runs/sim_clearance_probe/` and `ros2_ws/runs/sim_clearance_home/`.
+  The scheduler now snapshots pending candidate IDs when issuing a survey goal and preempts
+  only for a newly pending candidate; safety inhibits and motion checks remain unchanged.
+  Focused core and planner regressions pass. Candidate ID proliferation can still cause
+  repeated preemption and remains unresolved.
+- A further bounded probe after that scheduler change still did not reach a frontier: six
+  frontier requests were preempted by newly pending candidates, and the next was cancelled
+  when the probe ended. Localization also went stale during a view goal. The simulator's
+  final bridge status reported **1,298 collision-stop events**, i.e. rejected simulated motions,
+  not physical collisions. The elevated count and repeated candidate preemption require
+  investigation; this is a failed diagnostic, not full-system acceptance. Artifacts:
+  `ros2_ws/runs/sim_preemption_probe/` and `ros2_ws/runs/sim_preemption_home/`.
+- A default-image mission acceptance attempt using the saved MOLA map entered
+  `AWAIT_OPERATOR` after localization remained `INITIALIZING` for 30 simulated seconds.
+  No inspection goal or HOLD test was reached; the last bridge status reported zero
+  simulated collision stops and zero odometry distance. Separate mapping and saved-map
+  localization-only smoke checks reported `VALID`; they do not establish why mission
+  initialization failed or demonstrate end-to-end acceptance. The mission/perception
+  focused tests passed (90), and the launch suite passed on rerun (7) after an initial
+  shutdown traceback. Artifacts: `ros2_ws/runs/manual_e2e_20261128_124209/` and
+  `ros2_ws/runs/manual_localization_probe_20261128_124431/`.
 - Replay checkpoint `7d7444f` from `om/b2-ros-stack-replay-accept` is integrated.
   Its 32 tests passed; the replay clock guard reports stale
   localization when the clock stops, and measured queue-overflow drops fell to zero. One

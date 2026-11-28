@@ -52,6 +52,7 @@ class MissionConfig:
     require_operator_enable: bool = True
     max_explore_failures: int = 5
     max_frontier_visits: int = 2            # PROPOSED: frontier reached this often but unresolved => blacklisted
+    max_inspections_before_explore: int = 0  # 0 preserves inspection-first scheduling
     modalities: tuple = ('color', 'depth')
     view: ViewPlannerConfig = field(default_factory=ViewPlannerConfig)
 
@@ -108,6 +109,7 @@ class MissionCore:
         self.frontier_blacklist = []
         self.frontier_visits = []            # frontier centroids reached by their associated goals
         self.explore_failures = 0
+        self.inspections_since_explore = 0
         self.survey_exhausted = False
         self.last_unreachable_frontiers = []
         self.result = None                   # (status, reason) once terminal
@@ -317,6 +319,7 @@ class MissionCore:
         if kind == 'EXPLORE':
             if ok:
                 self.explore_failures = 0
+                self.inspections_since_explore = 0
                 if g.get('route'):
                     self.route_index += 1
                 else:
@@ -403,6 +406,11 @@ class MissionCore:
         grid, robot = self.inputs.grid, self.inputs.robot
         reach = self._reach()
         survey = self._survey_goal(reach)
+        if (self.cfg.mode == MODE_EXPLORE and survey is not None
+                and self.cfg.max_inspections_before_explore > 0
+                and self.inspections_since_explore >= self.cfg.max_inspections_before_explore):
+            return {'action': 'SURVEY', 'goal': survey,
+                    'reason': 'Continue bounded search after inspection batch'}
         options = []
         for c in self._pending():
             plan = plan_views(self.key(c), c['position'][:2], c.get('ladder_type', 'UNKNOWN'), grid, self.zone,
@@ -459,6 +467,7 @@ class MissionCore:
             self._send_nav('EXPLORE', x, y, yaw, 'SURVEY_ROUTE' if is_route else 'FRONTIER')
             self.active_goal['route'] = is_route
             self.active_goal['frontier_centroid'] = centroid
+            self.active_goal['pending_at_start'] = {self.key(c) for c in self._pending()}
         elif d['action'] == 'AWAIT_OPERATOR':
             self._await_operator(d['reason'])
         else:
@@ -481,7 +490,8 @@ class MissionCore:
             self._goto(PATROL, 'No active survey goal')
             return
         # Pre-empt the survey goal when a new pending ladder appears (re-plan at DETECT).
-        if self._pending() and not self.active_goal.get('preempt_checked'):
+        pending = {self.key(c) for c in self._pending()}
+        if pending - self.active_goal.get('pending_at_start', set()) and not self.active_goal.get('preempt_checked'):
             self.active_goal['preempt_checked'] = True
             gid = self.active_goal['goal_id']
             self._emit('CANCEL_NAV', goal_id=gid, reason='LADDER_DETECTED')
@@ -595,6 +605,7 @@ class MissionCore:
             self.inspected[t['key']] = payload
         else:
             self.capture_failed[t['key']] = payload
+        self.inspections_since_explore += 1
         self.target = None
         self._goto(PATROL, 'Committed evidence (verdict pending)')
 

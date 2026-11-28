@@ -65,6 +65,16 @@ def test_equidistant_observation_is_not_fused_into_either():
         assert np.allclose(c.position, before[k]) and c.ambiguous_observations == 1
 
 
+def test_ambiguous_detection_is_not_evidence_that_candidates_are_missing():
+    tr = LadderTracker(missing_after=1)
+    tr.set_map('hall', 1)
+    ids = tr.update([obs(4.0, 4.0), obs(4.8, 4.0)], 1.0)
+    tr.update([obs(4.4, 4.0)], 2.0, view_checks=ids)
+    for cid in ids:
+        assert tr.candidates[cid].state != MISSING
+        assert tr.candidates[cid].misses == 0
+
+
 def test_incompatible_type_creates_new_candidate():
     tr = LadderTracker()
     tr.set_map('hall', 1)

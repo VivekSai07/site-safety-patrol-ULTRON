@@ -102,8 +102,8 @@ def visible_candidates(candidates, depth_m, K_depth, T_map_optical, *, max_range
             continue
         u, v = int(px[0]), int(px[1])
         patch = depth_m[max(0, v - 5):v + 6, max(0, u - 5):u + 6]
-        valid = patch[np.isfinite(patch)]
-        if valid.size and float(np.median(valid)) < p[2] - margin_m:
-            continue  # something clearly in front: occluded, not evidence of absence
+        valid = patch[np.isfinite(patch) & (patch > 0)]
+        if not valid.size or float(np.median(valid)) < p[2] - margin_m:
+            continue
         out.append(cand['candidate_id'])
     return out

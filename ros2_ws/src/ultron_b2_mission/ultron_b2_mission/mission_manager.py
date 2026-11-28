@@ -78,6 +78,7 @@ def main(argv=None):
                 'detect_dwell_s': float(p('detect_dwell_s', 2.0).value),
                 'settle_dwell_s': float(p('settle_dwell_s', 0.5).value),
                 'views_per_ladder': int(p('views_per_ladder', 2).value),
+                'max_inspections_before_explore': int(p('max_inspections_before_explore', 0).value),
                 'hold_timeout_s': float(p('hold_timeout_s', 120.0).value),
                 'loc_loss_timeout_s': float(p('loc_loss_timeout_s', 30.0).value),
                 'operator_enable_timeout_s': float(p('operator_enable_timeout_s', 1.0).value),

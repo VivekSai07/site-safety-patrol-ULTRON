@@ -1,11 +1,33 @@
 """Frontier bounding, coverage gaps, view-pose gates and zone loading."""
 import math
 
+import numpy as np
+
 from mission_fixtures import room, zone_for
 from ultron_b2_mission.coverage_reporter import compute_coverage
 from ultron_b2_mission.frontier_explorer import find_frontiers
+from ultron_b2_mission.grid import GridMap
 from ultron_b2_mission.view_pose_planner import plan_views
 from ultron_b2_mission.zone import PatrolZone, load_route, map_from_world
+
+
+def test_clearance_rejects_footprints_extending_outside_map():
+    grid = GridMap(np.zeros((10, 10), dtype=int), 0.1, (0, 0))
+    free = grid.traversable(0.2)
+    assert not free[0, 5] and not free[1, 5]
+    assert not free[5, 0] and not free[5, 9]
+    assert free[2, 5] and free[5, 2]
+    assert grid.traversable(0.0).all()
+    assert not grid.traversable(2.0).any()
+
+
+def test_clearance_does_not_change_unknown_cells_or_coverage():
+    data = np.zeros((10, 10), dtype=int)
+    data[5, 5] = -1
+    grid = GridMap(data, 0.1, (0, 0))
+    unknown = grid.unknown.copy()
+    assert not grid.traversable(0.2)[5, 4]
+    np.testing.assert_array_equal(grid.unknown, unknown)
 
 
 def test_frontiers_stay_inside_zone_and_ignore_unknown_outside():

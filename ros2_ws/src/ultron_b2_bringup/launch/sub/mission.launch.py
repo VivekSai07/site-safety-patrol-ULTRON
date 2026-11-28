@@ -10,7 +10,10 @@ The mission never publishes velocities; it moves only through nav/navigate_to_vi
 Extra arguments (zone_file, route_file, memory_db, run_dir, evidence_dir, ladder_backend, weights)
 can only be set when this file is launched directly; the stack passes the sub-launch contract only.
 """
+import math
 import os
+
+import yaml
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
@@ -53,6 +56,17 @@ def _nodes(context):
                        'model_dir': expand('model_dir')}
     if backend == 'oracle_sim':
         detector_params['oracle_ladders_file'] = _share('ultron_b2_perception', 'config', 'oracle_hall_ladders.yaml')
+    mission_params = {'zone_file': zone_file, 'route_file': expand('route_file'),
+                      'memory_db': memory_db, 'run_dir': expand('run_dir'),
+                      'max_inspections_before_explore': 3 if run_mode == 'sim' else 0}
+    if run_mode == 'sim':
+        with open(_share('ultron_b2_description', 'config', 'footprint.yaml')) as fh:
+            footprint = yaml.safe_load(fh)['sim']
+        radius = footprint.get('radius_m')
+        if footprint.get('type') != 'circle' or not isinstance(radius, (int, float)) \
+                or not math.isfinite(radius) or radius <= 0:
+            raise RuntimeError('simulation footprint must have a finite positive circle radius')
+        mission_params['clearance_m'] = max(float(radius), 0.55)
     return [
         Node(package='ultron_b2_perception', executable='ladder_detector', name='ladder_detector', output='screen',
              parameters=[perception_cfg, detector_params]),
@@ -61,8 +75,7 @@ def _nodes(context):
         Node(package='ultron_b2_perception', executable='ladder_tracker', name='ladder_tracker', output='screen',
              parameters=[perception_cfg, {'memory_db': memory_db}]),
         Node(package='ultron_b2_mission', executable='mission_manager', name='mission_manager', output='screen',
-             parameters=[mission_cfg, {'zone_file': zone_file, 'route_file': expand('route_file'),
-                                       'memory_db': memory_db, 'run_dir': expand('run_dir')}]),
+             parameters=[mission_cfg, mission_params]),
         Node(package='ultron_b2_mission', executable='capture_coordinator', name='capture_coordinator',
              output='screen', parameters=[{'evidence_dir': expand('evidence_dir')}]),
     ]
