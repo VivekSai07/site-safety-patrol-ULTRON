@@ -127,6 +127,7 @@ All stack nodes use **relative** topic names and launch under a namespace:
 | head camera | `sensors/cam_head/{color/image_raw,color/camera_info,depth/image_rect_raw,depth/camera_info}` | Image/CameraInfo |
 | odometry | `state/odom` | Odometry |
 | localization state | `state/localization` | `ultron_b2_interfaces/LocalizationState` |
+| map info (latched) | `map/info` | `ultron_b2_interfaces/MapInfo` (map_manager; read by motion_gate, nav_contract_server) |
 | map | `map`, `map_metadata` | OccupancyGrid |
 | 3D map (throttled) | `viz/map_cloud` | PointCloud2 |
 | autonomy command | `nav/cmd_vel_raw` → (velocity_smoother) → `control/in/autonomy` | Twist |
@@ -141,7 +142,9 @@ All stack nodes use **relative** topic names and launch under a namespace:
 that can reach `sim_driver` or `b2_sport_bridge` passes, in this order:
 source mux → `collision_monitor` → `motion_gate` → `cmd_vel`. `motion_gate`
 is the only node allowed to publish `cmd_vel`; the bridge and sim driver
-subscribe to `cmd_vel` only. There is no teleop, recovery or test shortcut
+subscribe to `cmd_vel` only. In sim, `sim_driver` alone republishes the gated
+`cmd_vel` on `sim/cmd_vel`, the only command input of the `ultron_b2_sim`
+bridge (integration). There is no teleop, recovery or test shortcut
 past the collision monitor or the gate. The gate always enforces: HOLD,
 operator-enable heartbeat, command age, non-finite rejection and velocity
 limits. For `autonomy` it also requires VALID, fresh localization for the
@@ -152,6 +155,17 @@ handheld RC and physical E-stop sit above this software chain and are not
 replaced by it.
 | ladder candidates | `perception/ladder_detections`, `perception/ladder_candidates` | interfaces |
 | mission | `mission/status`, `mission/events` | interfaces |
+
+**Sensor QoS rule (integration, measured on the dev host).** Loopback DDS with the
+default ~208 KiB socket receive buffer (no root to raise it) loses most fragmented
+0.7–1.5 MB samples for BEST_EFFORT readers. Therefore: sim/replay sensor publishers
+(clouds, images, scans) are RELIABLE; consumers of large samples (cloud_filter,
+cloud_to_scan, MOLA, KISS-ICP, viz throttles, ladder perception, capture) subscribe
+RELIABLE with depth 1–2; `best_effort` is only a per-node parameter for best-effort
+live drivers. Small-sample readers that Nav2/slam_toolbox hard-code as best-effort
+(`sensors/scan`, ~7 KB) stay compatible with a RELIABLE publisher. Exactly one node
+publishes `sensors/scan` in every mode: `ultron_b2_preprocess` `cloud_to_scan`
+(the sim bridge's own scan goes to `sim/scan`).
 
 Live drivers keep vendor names; bringup remaps them into the contract
 (e.g. `/scan_cloud`→`sensors/lidar/points`, `/imu/data`→`sensors/imu/data`,
