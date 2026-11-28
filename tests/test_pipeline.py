@@ -479,6 +479,67 @@ class SurveyTest(Workspace):
         self.assertEqual(self.store.events()[-1]["message"], "model crashed")
 
 
+class SiteMapTest(unittest.TestCase):
+    """One object map per site and map: a second patrol re-observes what the first one found."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        self.ladder, self.extinguisher = [rectangle(5.0, 5.0, 1.5, 0.5)], [rectangle(8.0, 2.0, 0.3, 0.3)]
+
+    def patrol(self, run, stamps, sides, map_id="hall-v1", pose_frame="map"):
+        """One run: its own store (events, mission), the shared object map, a fresh tracker."""
+        from ultron.pipeline.__main__ import object_folder
+        import argparse
+        args = argparse.Namespace(map_id=map_id, map=None, sites=str(self.root / "sites"), site="hall",
+                                  data=str(self.root / run))
+        folder = object_folder(args)
+        store = Store(self.root / run)
+        survey = Survey(Rendered(tracks=[1]), ObjectMap(folder), KeyframeStore(folder), store,
+                        CALIBRATION, interval=0, map_id=map_id)
+        for stamp, side in zip(stamps, sides):
+            seen = rendered("a", facing((5.0, 5.0), side, 3.0), self.ladder, float(stamp))
+            seen.pose_frame = pose_frame
+            survey.feed(seen)
+        survey.tidy()
+        return survey, store
+
+    def test_a_second_patrol_on_the_same_map_finds_the_same_object_under_the_same_id(self):
+        first, _ = self.patrol("run-1", range(4), [0, 0, 1, 1])
+        second, store = self.patrol("run-2", range(100, 104), [2, 2, 3, 3])  # other directions, other start
+        self.assertEqual([(o.id, o.sightings) for o in second.objects.all()], [("LAD-001", 8)])
+        # Each patrol is its own mission on the dashboard, so each announces what it saw, once it saw it.
+        found = [e for e in store.events(limit=None) if e["kind"] == "object_found"]
+        self.assertEqual([(e["object"], e["sightings"]) for e in found], [("LAD-001", 7)])
+        self.assertFalse(any(e["kind"] == "localisation_suspect" for e in store.events(limit=None)))
+        self.assertTrue((self.root / "sites" / "hall" / "hall-v1" / "objects.json").is_file())
+
+    def test_without_a_map_id_each_run_keeps_its_own_objects(self):
+        self.patrol("run-1", range(4), [0, 0, 1, 1], map_id=None)
+        second, _ = self.patrol("run-2", range(100, 104), [2, 2, 3, 3], map_id=None)
+        self.assertEqual([(o.id, o.sightings) for o in second.objects.all()], [("LAD-001", 4)])
+
+    def test_a_known_object_this_patrol_does_not_see_is_not_reported(self):
+        self.patrol("run-1", range(4), [0, 0, 1, 1])
+        second, store = self.patrol("run-2", [], [])
+        self.assertEqual([e for e in store.events(limit=None) if e["kind"] == "object_found"], [])
+
+    def test_odometry_poses_on_a_shared_map_are_reported(self):
+        _, store = self.patrol("run-1", range(4), [0, 0, 1, 1], pose_frame="odometry")
+        self.assertEqual([e["kind"] for e in store.events(limit=None)].count("localisation_suspect"), 1)
+
+    def test_the_map_id_comes_from_the_saved_map(self):
+        from ultron.pipeline.__main__ import object_folder
+        import argparse, json
+        saved = self.root / "map"
+        saved.mkdir()
+        (saved / "map_meta.json").write_text(json.dumps({"map_id": "ctrl-hall", "map_version": 3}))
+        args = argparse.Namespace(map_id=None, map=str(saved), sites="sites", site="hall", data="run")
+        self.assertEqual(object_folder(args), Path("sites/hall/ctrl-hall-v3"))
+        self.assertEqual(object_folder(argparse.Namespace(map_id=None, map=None, sites="s", site="h", data="run")), Path("run"))
+
+
 class Opinion:
     """Vision model stand-in: answers by the frame name it is shown, as recorded per keyframe id."""
 

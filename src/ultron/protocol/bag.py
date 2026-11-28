@@ -172,4 +172,5 @@ def frames(path, rate=2.0, pose="lidar"):
                     robot = (0.0, 0.0, yaw)
                 camera = Calibration(_intrinsics(color_info), (message.width, message.height)) if color_info else None
                 yield Frame(Image.fromarray(pixels), name=f"bag-{count:05}", stamp=stamp, pose=robot,
+                            pose_frame="odometry" if robot else None,
                             depth=registered, camera=camera)

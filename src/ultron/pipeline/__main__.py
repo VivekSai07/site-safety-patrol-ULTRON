@@ -6,10 +6,13 @@
     python -m ultron.pipeline inspect --navigator dashboard --camera ros2:/image,pose=/odom
     python -m ultron.pipeline status
 
-Both stages work on the same --data folder; stop and restart either at any time.
+Both stages work on the same --data folder; stop and restart either at any time. With a map id
+(--map-id, or --map with a saved map) the object map lives with the site and map instead, under
+--sites, so the next patrol on the same map re-observes the objects found before.
 """
 import argparse
 import json
+from pathlib import Path
 import sys
 import uuid
 
@@ -50,10 +53,32 @@ def load_calibration(args):
     return Calibration.load(args.calibration)
 
 
+def map_id(args):
+    """The id of the map the robot's poses are in: --map-id, or that of the saved map in --map."""
+    if args.map_id:
+        return args.map_id
+    if args.map:
+        meta = json.loads((Path(args.map) / "map_meta.json").read_text())
+        return f"{meta['map_id']}-v{meta['map_version']}"
+    return None
+
+
+def object_folder(args):
+    """Where the object map and its keyframes live: one folder per site and map, so every patrol
+    on that map adds to the same objects; without a map id, the run's own --data folder.
+
+    Only poses in one map's frame can share objects. Lidar odometry starts a new frame on every
+    run, so give a map id only when the robot localises in a saved map (or the runs are known to
+    start from the same place)."""
+    known = map_id(args)
+    return Path(args.sites) / args.site / known if known else Path(args.data)
+
+
 def build_survey(args, store, vlm):
-    return Survey(build_detector(args, vlm), ObjectMap(args.data), KeyframeStore(args.data), store,
+    folder = object_folder(args)
+    return Survey(build_detector(args, vlm), ObjectMap(folder), KeyframeStore(folder), store,
                   load_calibration(args), args.interval, args.min_sharpness,
-                  verifier=Verifier(vlm) if vlm and not args.no_verify else None)
+                  verifier=Verifier(vlm) if vlm and not args.no_verify else None, map_id=map_id(args))
 
 
 def print_events(store):
@@ -149,7 +174,7 @@ def command_calibrate(args):
 
 
 def command_status(args):
-    for site_object in ObjectMap(args.data).all():
+    for site_object in ObjectMap(object_folder(args)).all():
         result = site_object.result
         print(f"{site_object.id:8} {site_object.kind:18} {site_object.status:11} "
               f"position={site_object.position} sightings={site_object.sightings} "
@@ -162,6 +187,10 @@ def main(argv=None):
     common.add_argument("--data", default="runs/pipeline", help="workspace folder shared by all stages")
     common.add_argument("--dashboard", help="URL of the team dashboard")
     common.add_argument("--site", default="demo-site")
+    common.add_argument("--sites", default="runs/sites", help="object maps kept per site and map (with a map id)")
+    common.add_argument("--map-id", help="id of the map the poses are in; runs with the same id share their objects")
+    common.add_argument("--map", help="saved map folder (ultron.autonomy): its id keys the object map; "
+                                      "--navigator contract navigates in it")
     common.add_argument("--mission", help="mission id; use the same one for survey and inspect")
     common.add_argument("--detector", default="vlm", help="vlm | yolo[:WEIGHTS] | replay:FILE")
     common.add_argument("--calibration", help="camera/lidar calibration JSON, or bag:PATH")
@@ -185,7 +214,6 @@ def main(argv=None):
     moving.add_argument("--navigator", choices=["passive", "operator", "dashboard", "contract"], default="passive",
                         help="how missing views are reached: not at all, a person drives, goals through "
                              "the dashboard bridge, or the ultron.autonomy navigation contract")
-    moving.add_argument("--map", help="saved map folder for --navigator contract")
     moving.add_argument("--clearance", type=float, default=0.45, help="free radius a goal needs, metres")
 
     inspect = commands.add_parser("inspect", parents=[common, moving], help="stage 2: fill each object's form")

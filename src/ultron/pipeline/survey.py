@@ -40,7 +40,7 @@ def distinct(detections):
 
 class Survey:
     def __init__(self, detector, objects, keyframes, store, calibration=None, interval=1.0, min_sharpness=0.0,
-                 verifier=None):
+                 verifier=None, map_id=None):
         self.detector, self.objects, self.keyframes, self.store = detector, objects, keyframes, store
         self.verifier = verifier            # optional second opinion from the vision model, one call per object
         self.calibration = calibration
@@ -48,8 +48,11 @@ class Survey:
         self.min_sharpness = min_sharpness  # frames blurrier than this are skipped
         self._last = None
         self._tracks = {}  # detector track id -> object id, for this run of the detector
+        self.map_id = map_id  # the object map is shared by all runs in this map's frame
+        self._warned = False
         # Objects announced (`object_found`) in this workspace: resuming does not announce them twice.
         self.announced = {e["object"] for e in store.events(limit=None) if e["kind"] == "object_found"}
+        self.seen_now = {}  # object id -> sightings in this run: a patrol reports what it saw itself
 
     def feed(self, frame, force=False):
         """Process one frame. Returns the objects seen in it (empty if skipped or nothing found)."""
@@ -60,6 +63,10 @@ class Survey:
             return []
         self._last = frame.stamp
         self.calibration = self.calibration or frame.camera  # live sources bring their own camera model
+        if self.map_id and getattr(frame, "pose_frame", None) == "odometry" and not self._warned:
+            self._warned = True  # objects from earlier runs line up only if this run started where they did
+            self.store.emit("localisation_suspect", reason="pose from odometry, not localisation in the map",
+                            map_id=self.map_id)
         try:
             detections = distinct(self.detector.detect(frame))
         except Exception as error:  # a failing model must not end the patrol
@@ -81,6 +88,7 @@ class Survey:
             if detection.track is not None:
                 self._tracks[detection.track] = site_object.id
             self.keyframes.offer(frame, site_object, sighting, sharpness)
+            self.seen_now[site_object.id] = self.seen_now.get(site_object.id, 0) + 1
             seen.append(site_object)
         for kind in {o.kind for o in seen}:
             together = [o.id for o in seen if o.kind == kind]
@@ -102,8 +110,9 @@ class Survey:
         fragment, and whether it is one only shows once both are well seen. `settled` (after
         fragments were merged) reports whatever is left."""
         for site_object in self.objects.all():
-            if (site_object.id in self.announced or site_object.status == "REJECTED"
-                    or not (site_object.sightings >= min_sightings or site_object.verified)
+            now = self.seen_now.get(site_object.id, 0)
+            if (site_object.id in self.announced or site_object.status == "REJECTED" or not now
+                    or not (now >= min_sightings or site_object.verified)
                     or not settled and self.objects.beside(site_object)):
                 continue
             self.announced.add(site_object.id)
@@ -112,6 +121,8 @@ class Survey:
 
     def _replace(self, old, new):
         self._tracks = {track: new if i == old else i for track, i in self._tracks.items()}
+        if old in self.seen_now:
+            self.seen_now[new] = self.seen_now.get(new, 0) + self.seen_now.pop(old)
 
     def tidy(self, min_sightings=3):
         """Merge fragments into the objects they belong to, then have the vision model check

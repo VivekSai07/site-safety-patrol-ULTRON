@@ -212,6 +212,7 @@ def relay(port, host="0.0.0.0", log=print):
                 pose = header["pose"] or lidar_pose  # a pose in the SLAM map beats local odometry
                 mailbox.put(Frame(Image.fromarray(color), name=f"live-{count:05}", stamp=header["stamp"],
                                   pose=tuple(pose) if pose else None, depth=registered,
+                                  pose_frame="map" if header["pose"] else ("odometry" if pose else None),
                                   camera=Calibration(header["color_k"], size)))
         except (EOFError, OSError, ValueError) as error:
             log(f"Relay stream ended: {error}")

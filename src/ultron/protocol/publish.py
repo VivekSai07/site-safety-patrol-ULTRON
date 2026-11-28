@@ -29,7 +29,7 @@ if len(ITEM_KEY) != sum(len(g[5]) for g in GROUPS) or any(
 FORWARDED = {"object_found": "OBJECT_FOUND", "object_merged": "OBJECT_MERGED", "object_verified": "OBJECT_VERIFIED",
              "object_relabelled": "OBJECT_RELABELLED", "object_rejected": "OBJECT_REJECTED",
              "object_unclear": "OBJECT_UNCLEAR", "view_requested": "VIEW_REQUESTED", "view_failed": "VIEW_FAILED",
-             "checklist": "CHECKLIST_DONE", "stage": "STAGE"}
+             "checklist": "CHECKLIST_DONE", "stage": "STAGE", "localisation_suspect": "LOCALISATION_SUSPECT"}
 
 ITEM_RESULT = {form.OK: "OK", form.DEFECT: "DEFECT", form.NOT_VISIBLE: "UNKNOWN",
                form.HUMAN_CHECK: "NOT_CHECKED", form.NOT_APPLICABLE: "N_A"}

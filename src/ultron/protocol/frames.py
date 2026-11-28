@@ -19,6 +19,7 @@ class Frame:
     points: object = None   # lidar points, Nx3 array in the lidar frame, if available
     depth: object = None    # depth image in metres aligned to `image`, HxW array, if available
     camera: object = None   # the colour camera's Calibration, when the source knows it
+    pose_frame: str = None  # "map": pose from localisation in a saved map; "odometry": a frame of this run only
 
     @classmethod
     def from_bytes(cls, data, **kwargs):
