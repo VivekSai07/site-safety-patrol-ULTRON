@@ -44,12 +44,15 @@ def build_detector(args, vlm):
 
 
 def load_calibration(args):
-    """--calibration FILE, or `bag:PATH` to take the colour camera from a recording."""
+    """--calibration FILE, or `bag:PATH` / `sim:PATH` to take the colour camera from a recording."""
     if not args.calibration:
         return None
     if args.calibration.startswith("bag:"):
         from ..protocol import bag
         return bag.calibration(args.calibration[4:])
+    if args.calibration.startswith("sim:"):
+        from ..protocol import sim
+        return sim.calibration(args.calibration[4:])
     return Calibration.load(args.calibration)
 
 
@@ -206,7 +209,7 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
 
     survey = commands.add_parser("survey", parents=[common], help="stage 1: build the object map")
-    survey.add_argument("--source", required=True, help="relay[:PORT] | bag:PATH | folder:PATH | cv:TARGET | ros2:/topic[,pose=..][,cloud=..] | unitree")
+    survey.add_argument("--source", required=True, help="relay[:PORT] | bag:PATH | sim:PATH[,rate=..][,error=DEG/DX/DY] | folder:PATH | cv:TARGET | ros2:/topic[,pose=..][,cloud=..] | unitree")
     survey.add_argument("--pace", type=float, default=0.0)
     survey.set_defaults(action=command_survey)
 
