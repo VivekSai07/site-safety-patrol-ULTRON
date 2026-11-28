@@ -390,19 +390,28 @@ class Runner:
 
     def teleop_no_localization(self):
         """teleop_requires_localization defaults true: during a lidar blackout teleop must not move the robot."""
-        self.spin(until=lambda: self.loc is not None and self.loc.state == 'VALID', wall_limit=60)
+        if not self.spin(until=lambda: self.loc is not None and self.loc.state == 'VALID', wall_limit=60):
+            raise RuntimeError('teleop blackout requires initially VALID localization')
         self.control(fault='lidar_blackout', duration_s=4.0)
-        self.spin(until=lambda: self.loc is not None and self.loc.state != 'VALID', wall_limit=5)
+        if not self.spin(until=lambda: self.loc is not None and self.loc.state != 'VALID', wall_limit=5):
+            raise RuntimeError('teleop blackout did not invalidate localization')
         self.spin(0.3)
         t0 = self.now()
         self.teleop = (0.0, 0.4)
-        self.spin(2.0)
-        turned = self.turned_after(t0 + 0.3)
-        inhibit = self.gate_inhibit_after(t0, lambda reason: reason.startswith('LOCALIZATION'))
-        self.teleop = None
+        try:
+            if not self.spin(2.0):
+                raise RuntimeError('teleop blackout observation timed out')
+            t1 = self.now()
+            turned = self.turned_after(t0 + 0.3, t1)
+            inhibit = self.gate_inhibit_after(t0, lambda reason: reason.startswith('LOCALIZATION'))
+            observed = sum(t0 + 0.3 <= sample[0] <= t1 for sample in self.truth) >= 2
+            gate_closed = all(not g['open'] for g in self.gate_log if t0 <= g['t'] <= t1)
+        finally:
+            self.teleop = None
         self.spin(until=lambda: self.loc is not None and self.loc.state == 'VALID', wall_limit=60)
         return {'turned_rad': round(turned, 4), 'gate_reason': inhibit and inhibit['reason'],
-                'checks': {'gate_inhibited': inhibit is not None, 'no_motion': turned < 0.02}}
+                'checks': {'gate_inhibited': inhibit is not None, 'gate_closed': gate_closed,
+                           'truth_observed': observed, 'no_motion': turned < 0.02}}
 
 
 def main(argv=None):
