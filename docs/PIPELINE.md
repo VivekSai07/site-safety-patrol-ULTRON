@@ -95,8 +95,9 @@ nothing an earlier mission inspected (it still inspects stored objects never ins
 |---|---|---|
 | `catalog.py` | Kinds to look for, detector prompts, views and sides each form needs | works; values are first guesses |
 | `types.py` | Records passed between modules | works |
-| `detect.py` | `YoloDetector` (open-vocabulary YOLOE with tracking and masks), `VlmDetector` (vision model returns boxes), `ReplayDetector` | YOLO works on the real recording; VLM detector tested with fakes only |
-| `lift.py` | Detection → map position from lidar, depth image or assumed range; floor plane removed | depth path run on the real recording and the simulated yard; **assumes the camera looks along the robot's +x from its origin** |
+| `detect.py` | `YoloDetector` (open-vocabulary YOLOE with tracking and masks; drops detections `lift.doubt` finds on or through glass; extra classes from `catalog.ALSO`; input size option), `VlmDetector` (vision model returns boxes), `ReplayDetector` | YOLO works on the real recording; VLM detector tested with fakes only |
+| `lift.py` | Detection → map position from lidar, depth image or assumed range; floor plane removed; ladders lying on the floor (`flat_on_floor`, `lying`); `doubt` (no depth in the outline, or seen over a sill) | depth path run on the real recording and the simulated yard; lying and glass tests rendered only; **assumes the camera looks along the robot's +x from its origin** |
+| `discover.py` | Lidar candidates for the camera: upright ladder-sized blobs, and low long blobs (lying ladders) | hall recording (`bag:...,lidar=1`), sim yard, rendered sweeps |
 | `objects.py` | Object map: associate sightings by track, then by floor footprint (radius without one), merge fragments, stable ids, saved every change | works on the real recording |
 | `anchor.py` | Lines a patrol up with the objects stored by earlier ones on the same map; gross-error guard | replay of the real recording with injected pose errors; synthetic |
 | `moved.py` | Looks through a stored object's footprint with the depth image: still there, hidden, or gone; a verdict means the place was in clear view (the survey also counts detections in such views to judge wall-backed objects) | real recording (no false "moved"; planted empty spots and dropped detections found); simulated yard; synthetic |
@@ -279,6 +280,83 @@ What the open yard forced (the hall recording had none of it):
   passes within 12 m, each inside its footprint; B and C as above. The figures above (23 objects,
   7 added by B) are from before the limit.
 
+## Hardening for the demo room (lying ladders, glass)
+
+The demo room is unseen apart from 7 phone photos (about 10 x 8 m, dark carpet, one long wall of
+interior glass above a radiator band that mirrors the ladders, a wooden extension ladder lying on
+the carpet, aluminium A-frames, a stepladder, a step stool). Shots to record:
+[REAL_DATA_SHOTS.md](REAL_DATA_SHOTS.md).
+
+**Ladders lying on the floor** (`lift.flat_on_floor`). Before, a lying ladder was dropped at every
+step: the 8 cm floor band removed most of its pixels, its foreshortened box failed the size check
+(0.5-8 m), and per image column only its near 25 cm survived. Now, for kinds marked `lying` in the
+catalog (ladders), an outline below the horizon with at most 10 % of its measured pixels higher
+than 0.4 m over the floor plane lies flat. Its footprint is where its rays meet a plane 5 cm over
+the floor, scaled to the measured depth (one scale per outline: floor depth is too noisy per pixel
+at range) and restricted to pixels at least 4 cm over the floor when there are enough of them.
+The sighting has no height, so the size check passes it, and `lying=True`; its zband is floor to
+measured top, so `lift.lying(site_object)` tells from `objects.json` alone.
+- Floor about its fitted plane on the hall recording (71 frames): sd 0.9 cm at 1-2 m, 1.4 cm at
+  2-3 m, 2.6 cm at 4-6 m. The rendered tests use depth noise that wide (and the simulator's).
+- Rendered tests: 3-4.5 m ladders 7 cm thick, side-on at 1.5-6 m, end-on at 2.5-6 m, at 45 and 60
+  degrees: found lying, over 90 % of the visible footprint covered. The footprint reaches past the
+  far edge by up to the floor an outline takes in beyond it (up to 0.5 m at 6 m), the safe side
+  for an obstacle. A survey of five such frames makes one ladder object, marked lying.
+- Hall recording at rate 8: the same 5 objects as before at the same places; 0 of 228 sightings
+  lying.
+- Without a floor plane (no depth in the image's lower half: dark carpet, poor light) nothing is
+  called lying, and a lying ladder takes the old path and fails the size check. Untested on carpet.
+- Not done in this branch (files owned elsewhere): `objects.py` does not keep `Sighting.lying` (the
+  zband does); `survey.py` gives the vision model the box height of a keyframe (about 0.1 m for a
+  lying ladder), which may make it reject the object.
+- **At the defaults nothing finds a lying ladder on the robot yet**: the detector runs at 640 (the
+  lying prompt is inert there), lidar candidates are opt-in (`--candidates lidar`), and the relay
+  does not forward the cloud. Recommended for the demo until it is recorded: keep 640 (1280 finds
+  the lying ladder in photos but splits objects on the hall recording); forward the cloud from the
+  relay and run `--candidates lidar` so lying candidates exist; have the navigation stack treat a
+  lying candidate's cells as an obstacle (`Candidate.cells`) even if the camera never confirms it.
+
+**Can the camera see one?** On the 7 demo-room photos (phone, 1.5 m up) YOLOE never boxed the
+lying wooden ladder with "ladder", "wooden ladder" or any other ladder prompt at its usual input
+size 640 (at most 0.13). At 1280, "ladder lying on the floor" boxed it at 0.44, 0.44, 0.70 and
+0.83 in the 4 photos with it in full view (0.12 cut off at the edge), "ladder" still never. So
+`catalog.ALSO` runs that prompt beside the chosen ladder prompt (0.4), and `YoloDetector` takes
+`imgsz` (`ULTRON_DETECTOR_IMGSZ`, default 640). By an estimate (no measured field of view for the phone),
+the B2 at 1280 sees about as many pixels per degree as these photos at 1280 (14 against about 17),
+but from half the height, so the ladder is flatter still.
+On the hall recording at 1280 the prompt boxed a low paving platform as lying at 0.11-0.28 and
+nothing else. But 1280 itself costs on the hall recording: in 3 of 3 surveys at 1280 (twice with
+the extra prompt, once without) one ladder was split into two objects 0.3-0.45 m apart and the
+vision model relabelled the hose cabinet an extinguisher; in 2 of 2 at 640 (with and without the
+extra prompt) the 5 objects came out right. So 640 stays the default until the demo room is
+recorded. The lidar is the other way to find a lying ladder (below, and ONLINE.md).
+
+**Glass** (`lift.doubt`, applied in `YoloDetector`). Behind the operator's fence, which is the main
+defence, a detection is dropped when:
+- its outline has depth in under 15 % of its pixels (clear glass often gives none; the range would
+  then fall back to an assumed 2.5 m, inside the room, where no fence catches it). Real outlines on
+  the hall recording: 0.43 and up, ladders 0.68 and up; a rendered ladder in front of glass that
+  gives no depth: 0.42-0.50. Neither test is applied when the whole image has depth in under half
+  its pixels (sensor off, or a scene of mostly glass and dark carpet);
+- it is seen over a sill: right below its outline (0.3 m at its range) at least half the measured
+  pixels are an upright surface nearer by 0.5 m and 15 % of its range. A window or glass wall
+  starts above a wall or radiator band; from the robot's 0.75 m a reflected ladder or one in the
+  next room shows only its upper part, with the sill right below. Below a real object is floor,
+  its own feet, or the wall it hangs on at its own range. Through an open door the floor runs on,
+  so a door passes.
+
+Measured: on the hall recording the depth camera reads 12-18 m through the interior window where
+the wall around it is 2.5-6 m away; YOLOE boxed nothing on that glass. Every detection at score
+0.1 and up at rate 4: at input 640 none of the 124 real sightings above threshold is doubted, 3
+other boxes are (all below 0.14); at 1280 one of 135 real ones is (the alarm box, with the leaning
+ladder standing nearer below it). On the demo-room photos the mirrored ladders are boxed by
+"ladder" at 0.29-0.67 (3 of 9 over the 0.5 threshold; 0.88 at 1280), by "wooden ladder" at up
+to 0.90 (8 of 10 over 0.5): choosing a material prompt makes reflections worse. These photos have no
+depth, so whether the B2's depth on that glass shows holes, the room behind or the mirror depth,
+and whether the sill test catches the reflections from 0.75 m, is untested: shots 2.1-2.4.
+A reflection of a ladder standing within 0.5 m of the glass is not caught (its mirror image is
+less than the gap behind the sill); the fence, drawn inside the glass, is.
+
 ## Tuning itself: the vision model supervises the detector
 
 A vision-language model (Qwen3-VL 8B through Ollama, any OpenAI-compatible endpoint works) is
@@ -341,6 +419,8 @@ planner, Om's detection evaluation, and non-ladder objects on the dashboard.
 - Two ladders closer than about 0.4 m edge to edge and never seen in one frame become one object.
 - Nav2 goals, the live ROS 2 source and the Unitree source have not been exercised.
 - Viewing directions are map bearings in 45° steps; the pipeline does not know a ladder's front.
+- Lying ladders and glass: rendered tests, phone photos and the hall recording's controls only; no
+  B2 recording of a lying ladder or of a glass wall exists ([REAL_DATA_SHOTS.md](REAL_DATA_SHOTS.md)).
 - An object seen only without range gets an assumed range of 2.5 m and is marked approximate.
 - Without poses, objects are split by a 6 s gap in time, and no view can be requested.
 - The dashboard is optional: without `--dashboard` nothing is posted and nothing from

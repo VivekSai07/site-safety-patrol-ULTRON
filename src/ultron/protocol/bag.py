@@ -12,6 +12,9 @@ The recordings carry no robot pose and no camera-to-lidar transform. Poses there
 from lidar odometry over /scan_cloud (pip package `kiss-icp`), interpolated to each colour
 frame, with the camera assumed to look along the lidar's +x from the lidar's position.
 `pose=imu` instead gives (0, 0, IMU yaw): only right while the robot turns on the spot.
+`lidar=True` (source option `lidar=1`) also gives each frame the latest scan as `frame.cloud`: Nx3
+points in the odometry frame, moved there with that scan's own odometry pose (z up, the floor about
+0.74 m below the first scan's lidar). Not `frame.points`, which would make `lift` range from lidar.
 """
 import math
 from pathlib import Path
@@ -98,36 +101,51 @@ class LidarOdometry:
         points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
         points = points[np.isfinite(points).all(axis=1)]
         self._odometry.register_frame(points, np.zeros(len(points)))
-        pose = self._odometry.last_pose
+        pose = self.matrix
         return float(pose[0, 3]), float(pose[1, 3]), math.atan2(pose[1, 0], pose[0, 0])
 
+    @property
+    def matrix(self):
+        """The full 4x4 pose after the last scan (roll, pitch and height included)."""
+        return np.array(self._odometry.last_pose, dtype=np.float64)
 
-def lidar_trajectory(path):
-    """Lidar odometry over the whole bag: arrays (stamps, x, y, unwrapped yaw) in the first scan's frame."""
+
+def _scan_points(message):
+    cloud = np.frombuffer(message.data, np.uint8).reshape(-1, message.point_step)
+    return np.ascontiguousarray(cloud[:, :12]).view(np.float32).reshape(-1, 3)
+
+
+def lidar_trajectory(path, matrices=None):
+    """Lidar odometry over the whole bag: arrays (stamps, x, y, unwrapped yaw) in the first scan's frame.
+    A dict passed as `matrices` is filled with {bag time in ns: 4x4 pose} per scan."""
     from rosbags.rosbag2 import Reader
     store = _typestore()
     odometry, rows = LidarOdometry(), []
     with Reader(Path(path)) as reader:
         for connection, nanoseconds, raw in reader.messages([c for c in reader.connections if c.topic == SCAN]):
             message = store.deserialize_cdr(raw, connection.msgtype)
-            cloud = np.frombuffer(message.data, np.uint8).reshape(-1, message.point_step)
-            points = np.ascontiguousarray(cloud[:, :12]).view(np.float32).reshape(-1, 3)
-            rows.append((nanoseconds / 1e9, *odometry.update(points)))
+            rows.append((nanoseconds / 1e9, *odometry.update(_scan_points(message))))
+            if matrices is not None:
+                matrices[nanoseconds] = odometry.matrix
     if not rows:
         raise ValueError(f"No {SCAN} in {path}")
     stamps, x, y, yaw = np.array(rows).T
     return stamps, x, y, np.unwrap(yaw)
 
 
-def frames(path, rate=2.0, pose="lidar"):
+def frames(path, rate=2.0, pose="lidar", lidar=False):
     """Colour frames at about `rate` per second, each with registered depth and a pose.
 
     pose: "lidar" (odometry from the scans), "imu" (heading only) or "none".
+    lidar: also attach the latest scan as `frame.cloud` in the odometry frame (needs pose="lidar").
     """
     from rosbags.rosbag2 import Reader
+    from ..pipeline.discover import world_cloud
     store = _typestore()
-    trajectory = lidar_trajectory(path) if pose == "lidar" else None
-    wanted = (COLOR, DEPTH, COLOR_INFO, DEPTH_INFO, DEPTH_TO_COLOR, TF)
+    matrices = {} if lidar and pose == "lidar" else None
+    trajectory = lidar_trajectory(path, matrices) if pose == "lidar" else None
+    wanted = (COLOR, DEPTH, COLOR_INFO, DEPTH_INFO, DEPTH_TO_COLOR, TF) + ((SCAN,) if matrices is not None else ())
+    scan = None  # (bag time in ns, raw message) of the latest scan: deserialised only when a frame takes it
     color_info = depth_info = None
     rotation, translation = np.eye(3), np.zeros(3)
     depth, depth_stamp, yaw, last, count = None, None, None, None, 0
@@ -136,6 +154,9 @@ def frames(path, rate=2.0, pose="lidar"):
             topic, stamp = connection.topic, nanoseconds / 1e9
             if topic == COLOR and last is not None and stamp - last < 1 / rate:
                 continue  # skip before paying for deserialisation
+            if topic == SCAN:
+                scan = (nanoseconds, connection, raw)
+                continue
             if topic in (COLOR_INFO, DEPTH_INFO) and (color_info if topic == COLOR_INFO else depth_info) is not None:
                 continue
             message = store.deserialize_cdr(raw, connection.msgtype)
@@ -171,6 +192,13 @@ def frames(path, rate=2.0, pose="lidar"):
                 elif pose == "imu" and yaw is not None:
                     robot = (0.0, 0.0, yaw)
                 camera = Calibration(_intrinsics(color_info), (message.width, message.height)) if color_info else None
-                yield Frame(Image.fromarray(pixels), name=f"bag-{count:05}", stamp=stamp, pose=robot,
-                            pose_frame="odometry" if robot else None,
-                            depth=registered, camera=camera)
+                frame = Frame(Image.fromarray(pixels), name=f"bag-{count:05}", stamp=stamp, pose=robot,
+                              pose_frame="odometry" if robot else None,
+                              depth=registered, camera=camera)
+                if scan is not None and scan[0] in matrices:
+                    points = _scan_points(store.deserialize_cdr(scan[2], scan[1].msgtype))
+                    points = points[np.isfinite(points).all(axis=1)]
+                    reach = np.linalg.norm(points[:, :2], axis=1)
+                    points = points[(reach >= LIDAR_MIN_RANGE) & (reach <= LIDAR_MAX_RANGE)]  # not the robot's body
+                    frame.cloud = world_cloud(points, matrices[scan[0]])
+                yield frame

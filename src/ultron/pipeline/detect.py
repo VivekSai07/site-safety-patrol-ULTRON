@@ -5,9 +5,11 @@
     ReplayDetector  recorded answers by frame name, for tests and offline runs
 """
 import json
+import os
 from pathlib import Path
 
-from .catalog import DEFAULT_PROMPTS, KINDS
+from .catalog import ALSO, DEFAULT_PROMPTS, KINDS
+from .lift import doubt
 from .types import Detection
 from ..protocol.assess import clean_box
 from ..protocol.vlm import NULLABLE_BOX, _object
@@ -50,11 +52,16 @@ class YoloDetector:
     Feed frames in order and several per second, or the tracker cannot follow objects.
     """
 
-    def __init__(self, weights="yoloe-11l-seg.pt", device=None, track=True, prompts=None):
+    def __init__(self, weights="yoloe-11l-seg.pt", device=None, track=True, prompts=None, imgsz=None, also=None,
+                 guard=True):
         """`prompts` is {kind: {"prompt": text, "min_score": number}}; default from the catalog.
 
         `weights` may also be a model exported by `export` (a TensorRT `.engine` or `.onnx`): its
         prompts are fixed inside it, so it serves only the prompts it was exported with.
+        `imgsz`: input size, default $ULTRON_DETECTOR_IMGSZ or 640; 1280 runs the B2's 1280x720
+        colour image at full resolution, which a lying ladder needs (catalog ALSO). `also`: extra (prompt, kind, min_score) classes run beside the chosen
+        prompts, default catalog ALSO. `guard`: drop detections `lift.doubt` finds on or through
+        glass, when the frame has depth and its camera model; `dropped` counts them by reason.
         """
         self.exported = Path(str(weights)).suffix in EXPORTED
         if self.exported:
@@ -63,31 +70,38 @@ class YoloDetector:
         else:
             from ultralytics import YOLOE
             self.model = YOLOE(weights)
-        self.device, self.track = device, track
+        self.device, self.track, self.guard = device, track, guard
+        self.imgsz = int(imgsz or os.environ.get("ULTRON_DETECTOR_IMGSZ", 640))
+        self.also = ALSO if also is None else tuple(also)
+        self.dropped = {}
         self.use(prompts or DEFAULT_PROMPTS)
 
     def use(self, prompts):
         """Switch the detector to another set of prompts (calibration tries several)."""
-        self.thresholds = {kind: prompts[kind]["min_score"] for kind in prompts}
+        classes = [(prompts[kind]["prompt"], kind, prompts[kind]["min_score"]) for kind in prompts]
+        chosen = {text for text, _, _ in classes}
+        also = getattr(self, "also", ALSO)  # tests build the detector without __init__
+        classes += [(text, kind, score) for text, kind, score in also if kind in prompts and text not in chosen]
         if self.exported:
             # Class i of the exported model is the prompt text it was exported with.
-            by_text = {prompts[kind]["prompt"]: kind for kind in prompts}
+            by_text = {text: (kind, score) for text, kind, score in classes}
             baked = [self.model.names[i] for i in sorted(self.model.names)]
             missing = [text for text in baked if text not in by_text]
             if missing:
                 raise ValueError(f"exported detector was made for other prompts ({missing}): export it again")
-            self.kinds = [by_text[text] for text in baked]
-            self.lowest = min(self.thresholds[kind] for kind in self.kinds)
+            classes = [(text, *by_text[text]) for text in baked]
+        self.kinds = [kind for _, kind, _ in classes]
+        self.thresholds = [score for _, _, score in classes]
+        self.lowest = min(self.thresholds)
+        if self.exported:
             return
-        self.kinds = list(prompts)
-        texts = [prompts[kind]["prompt"] for kind in self.kinds]
+        texts = [text for text, _, _ in classes]
         self.model.set_classes(texts, self.model.get_text_pe(texts))
-        self.lowest = min(self.thresholds.values())
         if getattr(self.model, "predictor", None) is not None:
             self.model.predictor = None  # ultralytics keeps the old classes in a cached predictor
 
     def detect(self, frame):
-        options = dict(conf=self.lowest, device=self.device, verbose=False)
+        options = dict(conf=self.lowest, device=self.device, imgsz=self.imgsz, verbose=False)
         if self.track:
             result = self.model.track(frame.image, persist=True, tracker="botsort.yaml", **options)[0]
         else:
@@ -95,23 +109,29 @@ class YoloDetector:
         width, height = frame.image.size
         tracks = result.boxes.id.tolist() if result.boxes.id is not None else [None] * len(result.boxes)
         outlines = result.masks.xy if result.masks is not None else [None] * len(result.boxes)
+        camera = getattr(frame, "camera", None)
         found = []
         for box, track, outline in zip(result.boxes, tracks, outlines):
-            kind, score = self.kinds[int(box.cls[0])], float(box.conf[0])
+            index, score = int(box.cls[0]), float(box.conf[0])
             x0, y0, x1, y1 = box.xyxy[0].tolist()
             thousandths = clean_box([1000 * x0 / width, 1000 * y0 / height, 1000 * x1 / width, 1000 * y1 / height])
-            if thousandths and score >= self.thresholds[kind]:
+            if thousandths and score >= self.thresholds[index]:
                 points = None
                 if outline is not None and len(outline) >= 3:
                     points = [[round(1000 * x / width), round(1000 * y / height)] for x, y in outline.tolist()]
-                found.append(Detection(kind, thousandths, score, None if track is None else int(track), points))
+                detection = Detection(self.kinds[index], thousandths, score, None if track is None else int(track), points)
+                reason = doubt(frame, detection, camera) if self.guard and camera is not None else None
+                if reason:
+                    self.dropped[reason] = self.dropped.get(reason, 0) + 1
+                    continue
+                found.append(detection)
         return found
 
 
 EXPORTED = (".engine", ".onnx")
 
 
-def export(weights, prompts, format="engine", half=True, imgsz=640):
+def export(weights, prompts, format="engine", half=True, imgsz=640, also=None):
     """Bake the prompts into the model and export it (TensorRT engine by default, FP16).
 
     An engine only runs on the GPU and TensorRT version it was built with: build it on the robot.
@@ -120,6 +140,7 @@ def export(weights, prompts, format="engine", half=True, imgsz=640):
     from ultralytics import YOLOE
     model = YOLOE(weights)
     texts = [prompts[kind]["prompt"] for kind in prompts]
+    texts += [text for text, kind, _ in (ALSO if also is None else also) if kind in prompts and text not in texts]
     model.set_classes(texts, model.get_text_pe(texts))
     return model.export(format=format, half=half, imgsz=imgsz)
 
