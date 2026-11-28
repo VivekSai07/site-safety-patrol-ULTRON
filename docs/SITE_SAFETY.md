@@ -1,10 +1,34 @@
 # Site safety sweep (fire / first aid / escape routes / PPE)
 
-![ULTRON safety sweep](images/ultron-safety-sweep.gif)
+![ULTRON safety sweep, model-backed](images/ultron-safety-sweep-model.gif)
 
 | PPE OK | PPE violation (flagged) |
 |---|---|
 | ![helmet and vest](images/safety-ppe-ok.jpg) | ![no helmet, no vest](images/safety-ppe-violation.jpg) |
+
+## Model-backed mode (no sim-oracles)
+
+With model backends configured, discovery confirmation and all criteria
+verdicts come from pixels, not scene truth:
+
+    HF_HUB_DISABLE_IMPLICIT_TOKEN=1 PYTHONPATH=src MUJOCO_GL=osmesa python3 -m ultron demo \
+      --out runs/model-safety --patrols 1 --safety \
+      --detector yolo --weights weights/yoloe-11s-seg.pt \
+      --inspector qwen --qwen Qwen/Qwen3-VL-2B-Instruct --allow-download
+
+- Station confirmation: YOLOE open-vocab box near the station
+  (`source=ULTRALYTICS_MODEL`) or Qwen3-VL visual confirmation
+  (`source=QWEN_VL_PROPOSAL`). Neither → `SAFETY_CHECK_INCOMPLETE`
+  `reason=NOT_DETECTED_BY_MODEL`.
+- Judgment: `SAFETY_STATION_JUDGED` carries per-criterion `OK/DEFECT/UNKNOWN`
+  states and the model's literal reason (`source=MODEL_PROPOSAL`);
+  `SAFETY_VIOLATION` fires when the model judges `psa.helm`/`psa.warnweste`
+  DEFECT.
+- Measured on this scene (2026-11-28): YOLOE (`yoloe-11s-seg`) detects
+  nothing on primitive renders — kept wired because it is the adapter for
+  real imagery; Qwen3-VL-2B confirmed and judged all 5 stations, flagging
+  the bare-headed mannequin from front and side views.
+- The segmentation oracle runs only with the default flags (CI/no-GPU).
 
 Beyond the ladder protocol, patrol 0 can sweep nesseler-style site-safety
 stations. Checklists are data: `src/ultron/assets/site_safety_v1/` mirrors
