@@ -60,12 +60,12 @@ Without a robot, run the same pipeline on a recorded bag: `--source bag:PATH,rat
 
 | Package | What it is | Owner |
 |---|---|---|
-| `src/ultron/pipeline/` | Survey, object map, keyframes, prompt calibration, object check, view planning, inspection, navigation adapters | Kaan |
+| `src/ultron/pipeline/` | Spatial memory (per-site object map: identity across patrols, moved objects), survey, keyframes, prompt calibration, object check, view planning, inspection, navigation adapters | Kaan |
 | `src/ultron/protocol/` | Frame sources (bag, relay, ROS 2), nesseler's ladder form as data, vision-model client, section-by-section reader, rules, evidence store, dashboard publisher | Kaan |
 | `scripts/ros_relay.py` | Robot-side relay | Kaan |
 | `src/ultron/dashboard/`, `scripts/dashboard_bridge.py` | Live dashboard, PDF export into nesseler's form, alerts, goal bridge to Nav2 | Aravind |
 | `src/ultron/autonomy/`, `config/autonomy/` | Simulated lidar, slam_toolbox mapping and localisation, Nav2 behind a motion gate, navigation contract | Sahil |
-| `src/ultron/` (top level), `src/ultron/assets/` | MuJoCo simulation, patrol and coverage planner, assessment and site-safety prompt packs, teleop, model adapters | Vivek |
+| `src/ultron/` (top level), `src/ultron/assets/` | MuJoCo simulation and its mission store (`memory.py`, retired as spatial memory), patrol and coverage planner, assessment and site-safety prompt packs, teleop, model adapters | Vivek |
 | `src/ultron/detection_world/`, `detection_*.py` | Synthetic detection worlds, box-level evaluation, label-first baseline | Om |
 | `src/site_safety_patrol/`, `scenarios/` | Earlier standard-library fixture demo, kept for reference | |
 

@@ -1,4 +1,12 @@
-"""Persistent map-scoped spatial assets and append-only inspection history."""
+"""SQLite asset rows and append-only inspection history for the MuJoCo mission (`mission.py`).
+
+Retired as ULTRON's spatial memory. Object identity across patrols, moved objects and the
+per-site object map are `ultron.pipeline` (`objects.py`, `survey.py`; docs/PIPELINE.md), owned by
+Kaan. This module is kept, with its API and schema unchanged, because the simulated mission and
+the B2 ROS perception branch (`om/b2-ros-stack`) still read and write it. Its `associate` is the
+old 0.65 m radius rule and `remember_objects` stores simulator truth: do not build new identity
+logic on either.
+"""
 from datetime import datetime, timezone
 import json
 import math

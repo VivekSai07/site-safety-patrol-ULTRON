@@ -1,4 +1,6 @@
-# Sahil: SLAM, mapping, navigation and spatial memory
+# Sahil: SLAM, mapping and navigation
+
+> **Update 28 November 2026:** spatial memory moved to Kaan and lives in `src/ultron/pipeline/` (see [PIPELINE.md](PIPELINE.md)). Section 4 below is kept as written; what it needs from this branch is the pose and a stable map id.
 
 **Owner:** Sahil and his coding agent. **Branch:** `sahil`. **Base:** published `main` at `1643f27800b615a10883b818a1997c48e4cad08a` (27 November 2026).
 
@@ -27,7 +29,7 @@ Agent kickoff prompt:
 | `src/ultron/navigation.py` | Optional `DimosNavigator` goal/poll/cancel adapter. Tests use injected interfaces; real DimOS runtime/B2 integration is unverified. |
 | `src/ultron/planning.py` | Inflated static 2D grid A*. Simulation planner, not SLAM, a live costmap or dynamic-obstacle avoidance. |
 | `src/ultron/supervisor.py` | Deterministic target selection, survey/return decisions and explicit gaps. Preserve its separation from inspection verdicts. |
-| `src/ultron/memory.py` | SQLite assets/missions/inspection history. `associate`, `append`, `query` are useful seams; identity association is positional/type-based and limited. `remember_objects` consumes simulator world truth. |
+| `src/ultron/memory.py` | Retired as spatial memory (identity is `src/ultron/pipeline/`); kept for the MuJoCo mission. SQLite assets/missions/inspection history. `associate`, `append`, `query` are useful seams; identity association is positional/type-based and limited. `remember_objects` consumes simulator world truth. |
 | `src/ultron/dimos_bridge.py` | Optional offline ingestion of synthetic object/history records into DimOS. It is not live semantic mapping. |
 | `src/ultron/observations.py`, `runtime_perception.py` | Experimental camera/depth projection and model tracks. No measured real calibration or robust appearance re-ID. |
 | `src/ultron/viewpoints.py` | Experimental fixed-map-axis candidates; no measured ladder orientation. Full rings only for explicitly open A-frames with missing rear evidence. |
@@ -68,6 +70,8 @@ Use the real existing supervisor action names: `INSPECT`, `SURVEY`, `RETURN_BASE
 Record the base pose in a known map at mission start or require an explicit configured base. Return there when known inspections/search are finished or when gaps require return. If base is unreachable, stop/request operator and preserve the reason. This is navigation to a waypoint, not charging/contact docking. Ladder capture requests must wait for a tested arrival/settle criterion; a successful navigation status alone is not an inspection result.
 
 ### 4. Observed semantic/spatial memory across patrols
+
+*Now Kaan's (`src/ultron/pipeline/`). From SLAM it needs camera poses in the map frame and the same map id on every patrol of a site.*
 
 Deliver a live/replay observation ingestion path with persistent map-scoped ladder/object identities, positions/uncertainty, first/last-seen times and provenance. Query nearby assets and pending inspections. Preserve separate observations, persistent assets, missions and append-only inspection history. Two views of one stationary ladder should associate; ambiguous neighboring ladders must remain ambiguous rather than merge. Handle moved/missing assets and map resets explicitly. Do not erase unresolved prior flags or overwrite previous evidence.
 

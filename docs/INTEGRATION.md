@@ -52,7 +52,7 @@ Replace `Simulation.oracle_detections` with a detector adapter and `mission.py` 
 
 ## DimOS memory path
 
-The implemented SQLite registry is ULTRON's small offline memory. It is not a renamed DimOS implementation and includes no semantic embeddings. An optional adapter writes inspection histories into the real upstream `SqliteStore`:
+The SQLite registry (`memory.py`) is the MuJoCo mission's store; ULTRON's spatial memory is now `src/ultron/pipeline/`. It is not a renamed DimOS implementation and includes no semantic embeddings. An optional adapter writes inspection histories into the real upstream `SqliteStore`:
 
 ```bash
 # In an existing DimOS environment with its supported Python (upstream currently <3.13)
