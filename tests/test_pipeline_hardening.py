@@ -200,7 +200,7 @@ class LyingLadderTest(unittest.TestCase):
         self.assertFalse(lift(frame, detection(boxes), CALIBRATION).lying)
 
 
-def window_wall(boxes, wall=3.0, sill=0.9, top=2.4, beyond=12.0, columns=(120, 520), door=None, seed=0):
+def window_wall(boxes, wall=3.0, sill=0.9, top=2.4, beyond=12.0, columns=(120, 520), door=None, seed=0, holes=False):
     """`scene` with a wall `wall` metres ahead holding a window from `sill` to `top` metres high
     over image `columns` (glass: the depth camera reads the room `beyond` it), or with a door
     opening (floor to `top`) over `door` columns. `boxes` behind the wall show only through it."""
@@ -215,8 +215,8 @@ def window_wall(boxes, wall=3.0, sill=0.9, top=2.4, beyond=12.0, columns=(120, 5
         hole |= (u >= columns[0]) & (u < columns[1]) & (up >= sill) & (up <= top)
     if door:
         hole |= (u >= door[0]) & (u < door[1]) & (up <= top)
-    through = hole & (np.abs(depth - wall) < 0.3 * wall)  # where the wall would be seen, not a front object
-    depth[through] = far[through]
+    through = hole & (scene(front, wall=wall, noise=0) >= scene([], wall=wall, noise=0) - 1e-3)  # the wall shows there
+    depth[through] = 0.0 if holes else far[through]  # holes: glass the depth camera gets nothing from
     return depth
 
 
@@ -256,6 +256,14 @@ class GlassTest(unittest.TestCase):
         for ahead in (1.8, 2.5):
             ladder = place(ladder_parts(1.8, standing=True), ahead, 0.0, 0.0)
             depth = window_wall(ladder)
+            self.assertIsNone(doubt(framed(depth), outlined(outline(ladder)), CALIBRATION), ahead)
+
+    def test_a_ladder_in_front_of_glass_that_gives_no_depth_is_not_doubted(self):
+        """Floor-to-ceiling glass reading as holes behind a face-on ladder: rails and rungs are
+        about a third of its outline."""
+        for ahead in (1.8, 2.5):
+            ladder = place(ladder_parts(1.8, standing=True), ahead, 0.0, 0.0)
+            depth = window_wall(ladder, sill=0.0, holes=True)
             self.assertIsNone(doubt(framed(depth), outlined(outline(ladder)), CALIBRATION), ahead)
 
     def test_a_ladder_seen_through_an_open_door_is_not_doubted(self):
@@ -336,6 +344,9 @@ class LidarLyingTest(unittest.TestCase):
             lying = [c for c in found if c.lying]
             self.assertEqual(len(lying), 1, (x, y, yaw, found))
             self.assertLess(math.dist(lying[0], (x, y)), 0.6, (x, y, yaw))
+            from ultron.pipeline.discover import CELL as GRID
+            under = {(int(i), int(j)) for i, j in (np.array(sorted(ladder_cells(x, y, yaw))) * CELL / GRID).astype(int)}
+            self.assertTrue(under & {tuple(c) for c in lying[0].cells}, (x, y, yaw))  # its cells lie on it
             self.assertFalse([c for c in found if not c.lying and math.dist(c, (x, y)) < 1.5])
 
     def test_an_empty_room_a_low_crate_and_a_standing_ladder_give_no_lying_candidate(self):

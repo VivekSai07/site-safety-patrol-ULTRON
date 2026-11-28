@@ -263,7 +263,10 @@ def lying(site_object):
 # behind the glass, or not at all; then the outline range falls back to an assumed 2.5 m, inside
 # the room, where the fence cannot catch it. Every real sighting of the hall recording passes both
 # tests (226 with depth, at rate 8).
-MIN_VALID = 0.3     # share of the outline with depth (hall: real outlines 0.43 and up, ladders 0.68 and up)
+# Share of the outline with depth: hall outlines 0.43 and up (ladders 0.68 and up); a rendered ladder
+# in front of glass that gives no depth 0.42-0.50 (rails, rungs and floor); a reflection on such glass
+# about none. Far ladders are mostly gaps, hence the margin.
+MIN_VALID = 0.15
 DEPTH_WORKS = 0.5   # share of the whole image with depth for that test to apply: else the sensor failed
 # A window or glass wall starts above a sill (wall, radiator band). Seen from the robot's camera
 # (0.75 m up) through glass that starts higher, a reflected or a far object shows only its upper

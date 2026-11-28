@@ -30,12 +30,14 @@ TILE = 1.0          # metres: the floor is estimated per tile, as odometry tilts
 
 
 class Candidate(tuple):
-    """(x, y) of a candidate; `lying` when it is a low, long blob on the floor."""
+    """(x, y) of a candidate; `lying` when it is a low, long blob on the floor; `cells` the map
+    grid cells (CELL metres, [[i, j], ...]) it covers, for an obstacle layer."""
     lying = False
+    cells = ()
 
-    def __new__(cls, x, y, lying=False):
+    def __new__(cls, x, y, lying=False, cells=()):
         made = super().__new__(cls, (x, y))
-        made.lying = lying
+        made.lying, made.cells = lying, cells
         return made
 
 
@@ -49,8 +51,9 @@ class LidarCandidates:
         self.min_span = min_span      # ... and its points span at least this much height
         self.size = size              # longest side of the blob from above, metres
         # Distance band from the robot. 6 m covers a 10 x 8 m room from its middle; on the hall
-        # recording 10 m gave 4 of 5 objects and 50 unexplained upright candidates, 6 m gave 5 of 5
-        # and 23 (sim yard: ladders found within 8 m of the route 11 of 11 at 10 m, 9 of 11 at 6 m).
+        # recording both free-standing ladders were found at 10 m and at 6 m, with 50 and 23
+        # unexplained upright candidates (sim yard: ladders found within 8 m of the route 11 of 11
+        # at 10 m, 9 of 11 at 6 m).
         self.reach = reach
         self.every = every            # seconds between clouds looked at
         self.min_points = min_points
@@ -108,7 +111,8 @@ class LidarCandidates:
             weights = count[members]
             cx = (np.average(i, weights=weights) + origin[0] + 0.5) * CELL
             cy = (np.average(j, weights=weights) + origin[1] + 0.5) * CELL
-            found.append(Candidate(round(float(cx), 2), round(float(cy), 2)))
+            cells = (np.stack([i, j], axis=1) + origin).tolist()
+            found.append(Candidate(round(float(cx), 2), round(float(cy), 2), cells=cells))
         if self.lying:
             found += self.find_lying(cloud, pose, floor)
         return found
@@ -169,7 +173,8 @@ class LidarCandidates:
                 # The middle of its extent: near rings hit its near end more often than far ones.
                 cx, cy = centres.mean(axis=0) + axes[:, 1] * (along.min() + along.max()) / 2 \
                     + axes[:, 0] * (across.min() + across.max()) / 2
-                found.append(Candidate(round(float(cx), 2), round(float(cy), 2), lying=True))
+                found.append(Candidate(round(float(cx), 2), round(float(cy), 2), lying=True,
+                                       cells=(members + origin).tolist()))
         return found
 
 

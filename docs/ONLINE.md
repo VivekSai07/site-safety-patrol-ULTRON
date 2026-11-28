@@ -84,17 +84,22 @@ the floor densely (hall recording: floor returns from 0.6 m to 8 m and beyond, f
 to +15 degrees), but no recording has a lying ladder in it. `online.py` treats a lying candidate
 like any other (a look goal), and nothing sends it to the navigation stack as an obstacle yet.
 
-**Reach.** 6 m by default (10 m before): it covers a 10 x 8 m room from its middle and keeps the
-per-cloud floor estimate local.
+**Reach.** 6 m by default (10 m before): it covers a 10 x 8 m room from its middle, and on the
+hall recording it halves the unexplained candidates (below) without losing a ladder.
 
 **Hall recording** (`bag:...,lidar=1`: each frame carries the latest scan, moved into the odometry
-frame with that scan's own pose), scored against the 5 objects of the survey, a candidate within
-1.5 m explaining an object:
+frame with that scan's own pose), scored against the 5 objects of the survey:
 
-| Reach | Objects explained | Unexplained upright candidates (seen in 2+ clouds) | Unexplained lying |
+| Reach | Free-standing ladders with a candidate within 0.25 m | Unexplained upright candidates (seen in 2+ clouds) | Unexplained lying |
 |---|---|---|---|
-| 10 m | 4 of 5 (extinguisher missed) | 50 (34 more than 4 m from the route) | 14 |
-| 6 m | 5 of 5 | 23 | 12 |
+| 10 m | 2 of 2 | 50 (34 more than 4 m from the route) | 14 |
+| 6 m | 2 of 2 | 23 | 12 |
+
+The three wall-mounted objects (extinguisher, alarm box, hose cabinet) cannot pass the upright
+test (the extinguisher is 0.5 m tall; the others join the wall's blob). They still have candidates
+within 0.2-0.4 m at 6 m, which are neighbours: a 1 m tall bin beside the extinguisher, something
+upright beside the alarm box and the cabinet. In `online.py` such a neighbour is "explained" by
+the object, which is right for the patrol but is not recall of those kinds.
 
 The hall is open on one side with people, booths and chairs, which make most of the unexplained
 candidates; the lying ones include the edges of a low paving platform, which the camera also
@@ -139,7 +144,7 @@ through the dashboard or contract navigators when exploration is idle.
 These runs used YOLOE and Qwen3-VL 8B through Ollama on the RTX 5090 workstation, replayed with
 `--realtime`.
 
-**Simulated patrol A** (86 s, sim evidence, lidar candidates on):
+**Simulated patrol A** (86 s, sim evidence, lidar candidates on; before reach 6 m and lying candidates):
 - 14 ladders found. All 9 with usable keyframes were read online; the other 5 were only ever seen
   beyond 4.5 m and have no keyframes, the same as offline.
 - The first sheet arrived 19 s into the patrol. Five sheets came in during the walk; the last four
