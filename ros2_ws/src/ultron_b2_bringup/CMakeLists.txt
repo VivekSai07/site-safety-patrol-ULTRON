@@ -27,6 +27,7 @@ if(BUILD_TESTING)
   ament_add_pytest_test(test_launch_structure test/test_launch_structure.py APPEND_ENV ${_env} TIMEOUT 60)
   ament_add_pytest_test(test_tf_authority test/test_tf_authority.py APPEND_ENV ${_env} TIMEOUT 180)
   ament_add_pytest_test(test_sim_launch test/test_sim_launch.py APPEND_ENV ${_env} TIMEOUT 180)
+  ament_add_pytest_test(test_mission_launch test/test_mission_launch.py APPEND_ENV ${_env} TIMEOUT 180)
 endif()
 
 ament_package()

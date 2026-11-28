@@ -1,0 +1,19 @@
+# Perception parameters for sim (all thresholds PROPOSED; simulation values are not hardware settings).
+/**:
+  ros__parameters:
+    # ladder_detector
+    backend: oracle_sim            # ORACLE in sim; yolo/owlv2 need locally supplied weights (owner: Om)
+    oracle_source: projection      # projection (ground-truth boxes) | segmentation (F's oracle topic)
+    oracle_pose_topic: ground_truth/pose
+    max_rate_hz: 5.0
+    score_threshold: 0.25
+    # ladder_localizer
+    tf_timeout_s: 0.1
+    depth_sync_tolerance_s: 0.05
+    max_image_age_s: 1.0
+    depth_scale_16u: 0.001
+    max_range_m: 8.0
+    # ladder_tracker
+    association_radius_m: 0.65
+    ambiguity_ratio: 0.5
+    missing_after_views: 3

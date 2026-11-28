@@ -1,0 +1,23 @@
+# Mission parameters (sim). All thresholds PROPOSED; simulated behaviour is not hardware evidence.
+/**:
+  ros__parameters:
+    zone_file: ''                 # set by the launch (config/hall_zone.yaml)
+    route_file: ''                # optional survey route (fallback / SURVEY_ROUTE / PATROL modes)
+    map_origin_in_world: [1.6, 1.5, 1.5707963]   # for world-frame routes; TO_VERIFY with Agent C
+    default_mode: EXPLORE
+    max_duration_s: 900.0
+    detect_dwell_s: 2.0
+    settle_dwell_s: 0.5
+    views_per_ladder: 2
+    hold_timeout_s: 120.0
+    loc_loss_timeout_s: 30.0
+    operator_enable_timeout_s: 1.0
+    localization_timeout_s: 1.0
+    require_operator_enable: true
+    nav_timeout_s: 90.0
+    capture_timeout_s: 20.0
+    clearance_m: 0.45
+    use_candidate_yaw: false      # tracker yaw is not estimated yet; plan views on a full ring
+    hold_topic: ops/hold
+    hold_publish_hz: 5.0
+    tick_hz: 10.0

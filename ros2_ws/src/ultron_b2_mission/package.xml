@@ -2,13 +2,24 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>ultron_b2_mission</name>
-  <version>0.0.1</version>
-  <description>STUB (owner: Agent E). mission_manager (wraps supervisor.py), frontier_explorer, view_pose_planner, capture_coordinator, memory_bridge, coverage_reporter.</description>
+  <version>0.1.0</version>
+  <description>Agent E. mission_manager (state machine wrapping src/ultron/supervisor.py actions; moves only via NavigateToView), frontier_explorer (zone-bounded), view_pose_planner, capture_coordinator, memory_bridge (src/ultron/memory.py), coverage_reporter.</description>
   <maintainer email="ultron@example.invalid">ULTRON team</maintainer>
   <license>Apache-2.0</license>
 
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>action_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
   <exec_depend>ultron_b2_interfaces</exec_depend>
+  <exec_depend>ultron_b2_perception</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
 
   <export>
     <build_type>ament_python</build_type>
