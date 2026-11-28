@@ -171,6 +171,8 @@ def make_bridge_class(SimBridge):
                         try:
                             self._render_and_publish(stamp)
                         except Exception as exc:  # noqa: BLE001
+                            if not self.node.context.ok():
+                                break   # SIGINT shutdown raced an in-flight render; nothing to report
                             self.node.get_logger().error(f'camera render failed: {exc}')
                         finally:
                             self._cam_busy.clear()

@@ -33,9 +33,10 @@ def _launch(run_mode, domain, *args, wait_s=6.0, expect=None):
 
 
 def _stack_nodes(nodes, namespace):
-    # tf2_ros TransformListeners (cloud_to_scan, slam_toolbox) spawn hidden transform_listener_impl_<id> nodes.
-    return {n[len(namespace) + 1:] for n in nodes
-            if n.startswith(namespace + '/') and not n[len(namespace) + 1:].startswith('transform_listener_impl_')}
+    # tf2_ros TransformListeners spawn hidden transform_listener_impl_<id> nodes; a configured bt_navigator adds
+    # per-navigator <navigator>_rclcpp_node helpers. Neither is a stack node of its own.
+    names = {n[len(namespace) + 1:] for n in nodes if n.startswith(namespace + '/')}
+    return {n for n in names if not n.startswith('transform_listener_impl_') and not n.endswith('_rclcpp_node')}
 
 
 def test_sim_mapping_starts_all_stubs_under_namespace():
