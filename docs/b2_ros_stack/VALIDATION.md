@@ -362,7 +362,40 @@ detections are simulation ground truth (labelled ORACLE), not perception evidenc
 | Learned detector (yolo/owlv2) | — | **UNRUN** — no weights in repo |
 
 ## Agent F — Sim parity, visualization, integration
-_No results yet._
+
+### Part 1: sim wrapper, viz, recording (2026-11-28, branch `om/b2-ros-stack-f`)
+
+Environment: dev container `ultron-b2-dev:humble` (unchanged; it already has mujoco 3.x, Pillow,
+websockets, foxglove_bridge, domain_bridge, rosbag2 mcap and rviz2). Domain 71, loopback, no
+hardware. All results are SIMULATION: kinematic base plus MuJoCo raycast/render. This is not
+walking, real perception or hardware evidence. Artifacts are in `runs/agent_f/` (git-ignored).
+
+| Check | Result |
+|---|---|
+| `colcon test` interfaces, description, sim, viz, bringup | 108 tests, 0 failures |
+| Repo suite `PYTHONPATH=src python3 -m unittest discover -s tests` | 414 run, OK (22 skipped) |
+| `sim.launch.py mode:=mapping viz:=both record:=minimal`: contract rates (`topic_probe`, 20 s) | `/clock` 50.2, `sensors/lidar/points` 10.05, `sensors/scan` 10.0, `sensors/imu/data` 50.0, `state/odom` 50.0, `sim/ground_truth/base_pose` 50.0, cam_head color/depth `image_raw`/`image_rect_raw` 10.05/10.0, both `camera_info` 10.0, `sim/oracle/cam_head/ladder_labels` 10.1 Hz |
+| `tf_authority_check` (10 s, during the run above) | 8 frames, 0 violations. `base_link→sensor` frames come only from robot_state_publisher; sim_bridge static TF is disabled |
+| Camera (MuJoCo EGL, 640×360) | 516 frames, 4 skipped while busy; render mean 52 ms, first-frame max 486 ms. Centre depth matched `mj_ray` within 1 mm |
+| cmd_vel reaction (`test_sim_bridge_graph.py`) | 0.3 m/s Twist published **directly** on `/ultron/sim/cmd_vel` for 3 s: moved 0.84 m, twist vx 0.318, stopped after the 0.5 s timeout. Agent D's motion_gate is not merged, so the gated path is UNTESTED here |
+| Scenario service `sim/scenario` | `ladder_hide` applied (ground truth updated); unknown command rejected |
+| Foxglove whitelist (`foxglove_probe`, WebSocket, subscribed to all) | 15 channels advertised, all whitelisted (`viz/*`, scan, odom, map, diagnostics, status, `/tf`, `/tf_static`). No raw lidar, raw images, ground truth, oracle or cmd_vel. 0 services. 2.53 Mbit/s total |
+| viz_throttle | points 6.99 MB/s → 0.20 MB/s (2 Hz, voxel 0.10 m); image 6.64 MB/s → 0.074 MB/s (4.4 Hz JPEG) |
+| domain_bridge 71 → 42 (`topic_probe` in domain 42) | Only `/ultron/viz/*`, `/tf`, `/tf_static` (plus ROS-internal `/rosout`, `/parameter_events`). 2.59 Mbit/s total vs 172.8 Mbit/s in domain 71 |
+| Record (mcap + zstd) | minimal: 1.2 MiB / 52 s, 7 topics. debug: 0.74 MiB / 23 s, 13 topics. full: 143 MiB / 23 s incl. raw lidar and images. `ros2 bag info` reads all three |
+
+Findings:
+- **Best-effort readers lose large samples on loopback.** Raw clouds (~0.78 MB) and images (~0.69 MB)
+  were never delivered to a `SensorDataQoS` (best-effort) subscriber with the host's default
+  `rmem_max` of 212 KB. RELIABLE readers receive them at full rate. `viz_throttle` now reads RELIABLE
+  by default. **Other agents' sensor subscribers in sim (e.g. B's preprocess) should use RELIABLE
+  depth-1, or the integration should raise the socket buffers.** Not fixed in the shared DDS profile.
+- Stop launches with SIGINT. From a non-interactive script, background jobs ignore SIGINT unless you
+  use `set -m`. A SIGTERM'd recorder leaves no `metadata.yaml`.
+
+UNRUN: zenoh-bridge-ros2dds (not installed; configs generated only), Isaac launcher (stub), live
+domain-0 bridge, laptop-side RViz display check (no display), Orin, and the full-system acceptance
+(part 2).
 
 ## M6 — Full-system simulation acceptance
 _Not assembled. Reviewer decision: pending (human)._

@@ -26,6 +26,10 @@
   <exec_depend>ultron_b2_perception</exec_depend>
   <exec_depend>ultron_b2_mission</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>ultron_b2_sim</exec_depend>
+  <exec_depend>ultron_b2_viz</exec_depend>
+  <exec_depend>rosbag2_storage_mcap</exec_depend>
+  <exec_depend>ros2bag</exec_depend>
   <exec_depend>xacro</exec_depend>
   <exec_depend>rmw_cyclonedds_cpp</exec_depend>
   <exec_depend>ultron_b2_preprocess</exec_depend>

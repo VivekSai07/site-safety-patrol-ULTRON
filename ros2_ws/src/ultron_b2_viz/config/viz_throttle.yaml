@@ -1,0 +1,27 @@
+# viz_throttle parameters (PROPOSED, sim-measured; verify bandwidth on the robot Wi-Fi).
+# Inputs are relative to the stack namespace. Empty input disables a stream.
+/**:
+  ros__parameters:
+    sensor_input_reliability: reliable  # best_effort only if the live driver publishes best-effort
+    points.input: sensors/lidar/points      # switch to sensors/lidar/points_filtered once B publishes it
+    points.output: viz/points
+    points.max_hz: 2.0
+    points.voxel_m: 0.10
+    points.max_points: 30000
+    map_cloud.input: ""                     # set to the 3D map topic from Agent C (e.g. slam/map_cloud)
+    map_cloud.output: viz/map_cloud
+    map_cloud.max_hz: 1.0
+    map_cloud.voxel_m: 0.20
+    map_cloud.max_points: 200000
+    image.input: sensors/cam_head/color/image_raw
+    image.output: viz/cam_head/color/image/compressed
+    image.max_hz: 5.0
+    image.jpeg_quality: 70
+    image.max_width: 640
+    relays:
+      - "map|nav_msgs/msg/OccupancyGrid|map|viz/map|1.0|latched"
+      - "global_costmap|nav_msgs/msg/OccupancyGrid|global_costmap/costmap|viz/global_costmap|1.0|volatile"
+      - "local_costmap|nav_msgs/msg/OccupancyGrid|local_costmap/costmap|viz/local_costmap|2.0|volatile"
+      - "plan|nav_msgs/msg/Path|plan|viz/plan|2.0|volatile"
+    status_topic: viz/throttle_status
+    status_period_s: 5.0

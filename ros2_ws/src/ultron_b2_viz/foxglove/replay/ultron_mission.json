@@ -1,0 +1,119 @@
+{
+  "_ultron": {
+    "generated_by": "ultron_b2_viz.gen_configs",
+    "kind": "mission",
+    "mode": "replay",
+    "note": "Only whitelisted, throttled topics. Ground truth and raw sensors are not served."
+  },
+  "configById": {
+    "3D!main": {
+      "cameraState": {
+        "distance": 18,
+        "far": 5000,
+        "fovy": 45,
+        "near": 0.5,
+        "perspective": true,
+        "phi": 50,
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "thetaOffset": 0
+      },
+      "followMode": "follow-position",
+      "followTf": "base_link",
+      "imageMode": {},
+      "layers": {
+        "grid": {
+          "divisions": 40,
+          "frameId": "map",
+          "layerId": "foxglove.Grid",
+          "size": 40,
+          "visible": true
+        }
+      },
+      "publish": {
+        "type": "point"
+      },
+      "scene": {},
+      "topics": {
+        "/ultron/replay/map": {
+          "visible": false
+        },
+        "/ultron/replay/robot_description": {
+          "visible": true
+        },
+        "/ultron/replay/sensors/scan": {
+          "colorMode": "flat",
+          "flatColor": "#ff4040ff",
+          "visible": true
+        },
+        "/ultron/replay/viz/local_costmap": {
+          "visible": true
+        },
+        "/ultron/replay/viz/map": {
+          "visible": true
+        },
+        "/ultron/replay/viz/map_cloud": {
+          "visible": false
+        },
+        "/ultron/replay/viz/plan": {
+          "visible": true
+        },
+        "/ultron/replay/viz/points": {
+          "colorField": "z",
+          "colorMode": "colormap",
+          "pointSize": 2,
+          "visible": true
+        }
+      },
+      "transforms": {}
+    },
+    "Image!cam": {
+      "cameraState": {},
+      "imageMode": {
+        "imageTopic": "/ultron/replay/viz/cam_head/color/image/compressed"
+      }
+    },
+    "RawMessages!a": {
+      "diffEnabled": false,
+      "expansion": "auto",
+      "topicPath": "/ultron/replay/mission/status"
+    },
+    "RawMessages!b": {
+      "diffEnabled": false,
+      "expansion": "auto",
+      "topicPath": "/ultron/replay/perception/ladder_candidates"
+    },
+    "RawMessages!c": {
+      "diffEnabled": false,
+      "expansion": "auto",
+      "topicPath": "/ultron/replay/mission/events"
+    }
+  },
+  "globalVariables": {},
+  "layout": {
+    "direction": "row",
+    "first": "3D!main",
+    "second": {
+      "direction": "column",
+      "first": "Image!cam",
+      "second": {
+        "direction": "column",
+        "first": "RawMessages!a",
+        "second": {
+          "direction": "column",
+          "first": "RawMessages!b",
+          "second": "RawMessages!c"
+        }
+      },
+      "splitPercentage": 40
+    },
+    "splitPercentage": 65
+  },
+  "playbackConfig": {
+    "speed": 1
+  },
+  "userNodes": {}
+}

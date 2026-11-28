@@ -1,0 +1,20 @@
+# rosbag2 recording profiles (owner: Agent F). Storage: mcap + zstd (mcap_zstd.yaml).
+# `relative` entries are regexes relative to the mode namespace (/ultron/<mode>/); `global` are absolute.
+# Output: runs/bags/<run_mode>_<profile>_<UTC timestamp>/ (runs/ is git-ignored). Never commit bags.
+schema: ultron.record_profiles/v1
+profiles:
+  minimal:
+    description: TF, state, 2D scan, map, mission/safety/control status (small; long runs)
+    global: [/tf, /tf_static, /clock]
+    relative: ['state/.*', 'sensors/scan', 'map', 'map_metadata', 'mission/.*', 'safety/.*',
+               'control/active_source', 'diagnostics', 'robot_description']
+  debug:
+    description: minimal + filtered/viz clouds, compressed images, IMU, command chain, plans, perception, sim truth
+    extends: minimal
+    relative: ['sensors/lidar/points_filtered', 'sensors/imu/data', 'viz/.*', 'nav/cmd_vel_raw',
+               'control/in/.*', 'control/cmd_vel_muxed', 'control/cmd_vel_safe', 'cmd_vel', 'ops/.*',
+               'plan', 'perception/.*', 'sim/ground_truth/.*', 'sim/bridge_status', 'sensors/cam_head/.*/camera_info']
+  full:
+    description: everything in the mode namespace incl. raw lidar and raw images (large; short runs only)
+    global: [/tf, /tf_static, /clock]
+    relative: ['.*']

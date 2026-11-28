@@ -1,0 +1,4 @@
+# rosbag2_storage_mcap writer options: chunked mcap with zstd chunk compression.
+compression: "Zstd"
+compressionLevel: "Fast"
+chunkSize: 4194304

@@ -5,13 +5,16 @@ replay: `ros2 bag play --clock` of the real recording with vendor topics remappe
         namespace); its remap targets are absolute under the mode namespace. Without `bag:=` nothing plays.
 live:   vendor drivers (rslidar_sdk Helios-32, Xsens MTi, RealSense D457 head) with configs in
         config/drivers/. WRITTEN, NEVER RUN against hardware; live needs explicit operator authority.
-sim:    placeholder until Agent F's sim driver wrapper lands.
+sim:    the MuJoCo contract bridge (ultron_b2_sim) publishes /clock, sensors/*, state/odom (only with
+        odom_source:=sim) and sim/ground_truth/* and consumes `sim/cmd_vel` from the sim_driver. It never
+        publishes base_link->sensor TF (robot_state_publisher owns it).
 """
 import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription, LogInfo, OpaqueFunction
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 
 from ultron_b2_bringup.launch_common import PKG, SUB_ARGS
@@ -63,9 +66,17 @@ def _live(_context):
     return [LogInfo(msg='[drivers] live: vendor drivers (configs UNVERIFIED on hardware)'), lidar, imu, camera]
 
 
-def _sim(_context):
-    return [Node(package=PKG, executable='placeholder', name='drivers_placeholder', output='screen',
-                 parameters=[{'component': 'drivers', 'owner': 'F (sim)'}])]
+def _sim(context):
+    cfg = context.launch_configurations
+    source = PythonLaunchDescriptionSource(os.path.join(
+        get_package_share_directory('ultron_b2_sim'), 'launch', 'sim_bridge.launch.py'))
+    args = {'odom_source': cfg.get('odom_source', 'sim'),
+            'calibration_profile': cfg.get('calibration_profile', 'sim')}
+    for key in ('sim_rate', 'sim_people', 'sim_route', 'sim_scenario', 'sim_hidden_ladders', 'sim_scan_topic',
+                'sim_camera'):
+        if cfg.get(key):
+            args[key[len('sim_'):]] = cfg[key]
+    return [IncludeLaunchDescription(source, launch_arguments=list(args.items()))]
 
 
 def _dispatch(context):

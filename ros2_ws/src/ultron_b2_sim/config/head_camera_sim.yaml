@@ -1,0 +1,26 @@
+# Simulated RGB-D head camera (MuJoCo render). SIMULATION ONLY; values are PROPOSED.
+# Mount pose comes from ultron_b2_description/calibration/sim.yaml (cam_head_link); color and
+# depth share one optical centre in simulation (the real D457 has a 59 mm depth->color baseline).
+schema: ultron.sim_head_camera/v1
+rate_hz: 10.0                 # PROPOSED (real head camera records ~30 Hz, BAG_FACTS.md)
+color:
+  # Real color stream 1280x720, fy 642.901 (BAG_FACTS.md) scaled by 0.5 to keep software
+  # rendering affordable. MuJoCo renders square pixels with the principal point at the centre,
+  # so the published CameraInfo uses fx = fy and cx, cy = (w-1)/2, (h-1)/2 (no distortion).
+  width: 640
+  height: 360
+  fy: 321.4505
+  frame_id: cam_head_color_optical_frame
+depth:
+  # Real depth stream 848x480 16UC1, fx=fy 431.055 scaled by 0.5. 16UC1 in millimetres
+  # (RealSense default 1 mm/unit, TO_VERIFY on the device); 0 = no return.
+  width: 424
+  height: 240
+  fy: 215.5275
+  min_m: 0.3
+  max_m: 10.0
+  frame_id: cam_head_depth_optical_frame
+oracle_segmentation:
+  # EVALUATION/ORACLE ONLY: per-pixel ladder index (16UC1, 0 = background) aligned with color.
+  # Feeds Agent E's labelled `oracle_sim` backend; never learned perception.
+  enabled: true
