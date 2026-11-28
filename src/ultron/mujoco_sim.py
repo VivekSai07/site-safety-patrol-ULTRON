@@ -9,10 +9,11 @@ from .scene import make_scene
 
 
 class Simulation:
-    def __init__(self, ladders, output, viewer=False, clear_clutter=False, group_prefix="ultron_mock_site_v1"):
+    def __init__(self, ladders, output, viewer=False, clear_clutter=False, group_prefix="ultron_mock_site_v1", safety_assets=None):
         self.output=Path(output)
         self.ladders=ladders
-        self.xml=make_scene(ladders,clear_clutter)
+        self.safety_assets=safety_assets or []
+        self.xml=make_scene(ladders,clear_clutter,safety_assets=self.safety_assets)
         self.group_prefix=group_prefix
         (self.output/'scene.xml').write_text(self.xml)
         self.model=mujoco.MjModel.from_xml_string(self.xml)
@@ -143,6 +144,25 @@ class Simulation:
             detections.append({'oracle_key':ladder['key'],'position':centroid.tolist(),
                 'type':ladder['type'],'pixels':int(len(u)),
                 'source':'MUJOCO_SEGMENTATION_ORACLE','synthetic':True})
+        return detections
+
+    def oracle_safety_detections(self, frame, depth, segmentation):
+        from .site_safety import PRIMARY_GEOM
+        detections = []
+        ids = segmentation[:, :, 0]
+        for asset in self.safety_assets:
+            name = f"{asset['key']}_{PRIMARY_GEOM[asset['kind']]}"
+            gid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, name)
+            pixels = int(np.count_nonzero(ids == gid)) if gid >= 0 else 0
+            if pixels < 20:
+                continue
+            body = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, asset['key'])
+            person = asset['kind'] == 'person'
+            detections.append({'oracle_key': asset['key'], 'kind': asset['kind'],
+                'position': self.data.xpos[body].tolist(), 'pixels': pixels,
+                'helmet': bool(asset.get('helmet', False)) if person else None,
+                'vest': bool(asset.get('vest', False)) if person else None,
+                'source': 'MUJOCO_SEGMENTATION_ORACLE', 'synthetic': True})
         return detections
 
     def overview(self):
