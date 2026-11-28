@@ -3,7 +3,7 @@ import re
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator, model_validator
 
 from .checklist import ALL_KEYS, ASCENT_TYPES, MATERIALS, ItemResult
 
@@ -70,15 +70,18 @@ class Pose(BaseModel):
 
 class Goal(BaseModel):
     """A navigation goal set on the dashboard map, like RViz's 2D Goal Pose (map frame, yaw in radians)."""
-    x: float
-    y: float
-    yaw: float = 0.0
+    x: FiniteFloat
+    y: FiniteFloat
+    yaw: FiniteFloat = 0.0
     frame_id: str = 'map'
+    map_id: str | None = Field(default=None, min_length=1, max_length=128)
+    map_version: int | None = Field(default=None, ge=1, le=2_147_483_647)
 
 
 class GoalStatus(str, Enum):
     SENT = 'SENT'            # dashboard has it, no bridge has picked it up yet
-    ACCEPTED = 'ACCEPTED'    # the ROS bridge published it to the navigation stack
+    ACCEPTED = 'ACCEPTED'    # the checked navigation adapter dispatched it to Nav2
+    REJECTED = 'REJECTED'
     SUCCEEDED = 'SUCCEEDED'
     FAILED = 'FAILED'
     CANCELED = 'CANCELED'
@@ -88,6 +91,7 @@ class GoalUpdate(BaseModel):
     seq: int
     status: GoalStatus
     detail: str = ''
+    request_id: str | None = None
 
 
 class LadderData(BaseModel):

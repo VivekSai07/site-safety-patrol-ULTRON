@@ -8,6 +8,7 @@ import json
 import math
 import urllib.error
 import urllib.request
+from urllib.parse import urlencode
 
 from PIL import Image
 
@@ -69,23 +70,32 @@ class Dashboard:
     def live(self):
         return self._send('GET', '/api/live')
 
-    def post_map(self, png, resolution, origin_x, origin_y):
-        self._send('POST', f'/api/map?resolution={resolution}&origin_x={origin_x}&origin_y={origin_y}', png, 'image/png')
+    def post_map(self, png, resolution, origin_x, origin_y, map_id=None, map_version=None, source=None):
+        query = dict(resolution=resolution, origin_x=origin_x, origin_y=origin_y)
+        if map_id is not None:
+            query.update(map_id=map_id, map_version=map_version)
+        if source is not None:
+            query['source'] = source
+        self._send('POST', '/api/map?' + urlencode(query), png, 'image/png')
 
     def post_pose(self, mission_id, time_s, x, y, yaw, state=''):
         self._send('POST', f'/api/missions/{mission_id}/pose', {'time': time_s, 'x': x, 'y': y, 'yaw': yaw, 'state': state})
 
-    def goal_status(self, seq, status, detail=''):
+    def goal_status(self, seq, status, detail='', request_id=None):
         """Report progress on goal `seq`. Returns False when a newer goal already replaced it."""
         try:
-            self._send('POST', '/api/goal/status', {'seq': seq, 'status': status, 'detail': detail})
+            self._send('POST', '/api/goal/status', {'seq': seq, 'status': status, 'detail': detail,
+                                                    'request_id': request_id})
             return True
         except urllib.error.HTTPError as error:
             if error.code == 409:
                 return False
             raise
 
-    def events(self):
+    def events(self, on_connect=None):
         """Blocking iterator over the live stream. Ends when the connection drops."""
         with urllib.request.urlopen(self.url + '/api/stream', timeout=60) as response:
+            if on_connect is not None:
+                response.readline()  # dashboard emits the subscription acknowledgement first
+                on_connect()
             yield from iter_sse(response)

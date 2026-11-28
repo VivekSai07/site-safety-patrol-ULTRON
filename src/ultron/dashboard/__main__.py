@@ -30,7 +30,7 @@ def main(argv=None):
     parser.add_argument('--lan', action='store_true',
                         help='listen on all interfaces without authentication; unsafe on shared networks')
     parser.add_argument('--goals', action='store_true',
-                        help='enable unauthenticated goals; a connected ROS bridge may reach hardware')
+                        help='enable the unauthenticated navigation goal endpoint')
     parser.add_argument('--notify', help='notification config JSON (see config/notify.example.json)')
     args = parser.parse_args(argv)
 

@@ -33,7 +33,7 @@ ALL_CASES = ['reach_near', 'reach_far', 'reject_occupied', 'reject_outside', 'un
 
 
 class Runner:
-    def __init__(self, config, map_dir, out):
+    def __init__(self, config, map_dir, out, *, test_operator=True):
         import rclpy
         from rclpy.node import Node
         from rclpy.parameter import Parameter
@@ -53,7 +53,8 @@ class Runner:
         self.operator = True
         self.truth = []   # (t, x, y, yaw) EVALUATION ONLY
         self.node.create_subscription(PoseStamped, config.topics['ground_truth'], self._on_truth, qos)
-        self.node.create_timer(0.2, self._publish_operator)
+        if test_operator:
+            self.node.create_timer(0.2, self._publish_operator)
         self.node.create_timer(0.05, self.nav.tick)
         self.results = []
 
@@ -63,7 +64,6 @@ class Runner:
                            msg.pose.position.y, math.atan2(2 * q.w * q.z, 1 - 2 * q.z * q.z)))
 
     def _publish_operator(self):
-        self.nav.operator_enabled = self.operator
         self.operator_pub.publish(self.Bool(data=self.operator))
 
     def now(self):
@@ -242,6 +242,91 @@ class Runner:
                            'gate_inhibited_in_time': delay is not None and delay <= ACCEPT['gate_after_blackout_s'],
                            'no_motion_while_invalid': moved_while_invalid <= ACCEPT['still_m']}}
 
+    def dashboard(self, url):
+        from ..dashboard.ros_link import Dashboard
+
+        dashboard = Dashboard(url, timeout=2.0)
+        dashboard._send('POST', '/api/missions', {'mission_id': 'NAV-DASHBOARD', 'site_id': 'sim'})
+
+        def map_and_pose_ready():
+            live = dashboard.live()
+            grid = live.get('grid') or {}
+            return (grid.get('map_id') == self.nav.map_id and grid.get('map_version') == self.nav.map_version
+                    and live.get('pose') is not None)
+
+        if not self.spin(until=map_and_pose_ready, wall_limit=20):
+            raise RuntimeError('Dashboard did not receive a corresponding saved map and valid pose')
+
+        terminal = {'SUCCEEDED', 'REJECTED', 'FAILED', 'CANCELED'}
+
+        def send(world, **fields):
+            x, y, yaw = self.to_map(world)
+            return dashboard._send('POST', '/api/goal', dict(x=x, y=y, yaw=yaw) | fields)
+
+        def wait(request, statuses):
+            # Keep pumping ROS between HTTP polls so the test operator heartbeat continues.
+            next_poll = 0.0
+            result = None
+
+            def done():
+                nonlocal next_poll, result
+                if time.monotonic() < next_poll:
+                    return False
+                next_poll = time.monotonic() + 0.2
+                result = dashboard._send('GET', '/api/goal')
+                return result['request_id'] == request['request_id'] and result['status'] in statuses
+
+            if not self.spin(until=done, wall_limit=110.0):
+                raise RuntimeError(f'Dashboard goal {request["seq"]} timed out: {result}')
+            return result
+
+        t0 = self.now()
+        target = (2.5, 5.5, 0.0)
+        self.operator = False
+        self.spin(0.5)
+        disabled = wait(send(target), terminal)
+        self.operator = True
+        self.spin(0.5)
+        mismatched = wait(send(target, map_id=self.nav.map_id, map_version=self.nav.map_version + 1), terminal)
+        occupied = wait(send((4.0, 4.0, 0.0)), terminal)
+        outside = wait(send((14.0, 5.0, 0.0)), terminal)
+        self.control(fault='lidar_blackout', duration_s=3.0)
+        if not self.spin(until=lambda: self.nav.localization and self.nav.localization.state == 'STALE', wall_limit=10):
+            raise RuntimeError('The localization monitor did not report the injected blackout')
+        stale = wait(send(target), terminal)
+        self.wait_for_valid()
+        no_motion = self.moved_after(t0) <= ACCEPT['still_m']
+        result = wait(send(target), terminal)
+        tx, ty, tyaw = self.true_pose()
+        error = math.hypot(tx - target[0], ty - target[1])
+        if result['status'] != 'SUCCEEDED':
+            return {'checks': {'reached': False}, 'goal': result, 'true_error_xy_m': round(error, 3)}
+
+        moving = send((9.6, 4.5, -math.pi / 2))
+        active = wait(moving, terminal | {'ACCEPTED'})
+        replacement = wait(send(target), terminal)
+        self.spin(0.5)
+        bridge_log = (self.out / 'dashboard_bridge.log').read_text()
+        sdk_path = self.out / 'sdk_stand_in.jsonl'
+        sdk_calls = [json.loads(line) for line in sdk_path.read_text().splitlines()] if sdk_path.exists() else []
+        return {'goals': {'disabled': disabled, 'wrong_map': mismatched, 'occupied': occupied,
+                          'outside': outside, 'stale_localization': stale, 'reached': result,
+                          'replacement': replacement},
+                'true_error_xy_m': round(error, 3), 'true_error_yaw_rad': round(abs(tyaw), 3),
+                'sdk_move_count': sum(row['method'] == 'Move' for row in sdk_calls),
+                'checks': {'map_and_pose_published': True,
+                           'disabled': disabled['status'] == 'REJECTED' and 'OPERATOR' in disabled['detail'],
+                           'wrong_map': mismatched['status'] == 'REJECTED' and 'MAP_MISMATCH' in mismatched['detail'],
+                           'occupied': occupied['status'] == 'REJECTED' and 'OCCUPIED' in occupied['detail'],
+                           'outside': outside['status'] == 'REJECTED' and 'OUTSIDE_MAP' in outside['detail'],
+                           'stale_localization': stale['status'] == 'REJECTED' and 'LOCALIZATION' in stale['detail'],
+                           'no_motion_after_rejections': no_motion,
+                           'reached': error <= ACCEPT['arrive_xy_m'] and abs(tyaw) <= ACCEPT['arrive_yaw_rad'],
+                           'replacement': active['status'] == 'ACCEPTED' and replacement['status'] == 'SUCCEEDED'
+                           and f'goal {moving["seq"]}: CANCELED' in bridge_log,
+                           'sdk_move_and_stop': not sdk_path.exists() or (any(
+                               row['method'] == 'Move' for row in sdk_calls) and sdk_calls[-1]['method'] == 'StopMove')}}
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Nav2 bring-up and failure cases on a saved map (simulation)')
@@ -249,11 +334,22 @@ def main(argv=None):
     parser.add_argument('--map', type=Path, required=True)
     parser.add_argument('--cases', default=','.join(ALL_CASES))
     parser.add_argument('--rate', type=float, default=1.0)
+    parser.add_argument('--dashboard-url', help='Local dashboard URL for dashboard goals')
+    parser.add_argument('--serve-dashboard', action='store_true', help='Wait for interactive dashboard goals')
+    parser.add_argument('--sdk-stand-in', action='store_true', help='Log motion gate output as stand-in SDK calls')
     args = parser.parse_args(argv)
-    cases = [c for c in args.cases.split(',') if c]
-    unknown = set(cases) - set(ALL_CASES)
+    cases = [] if args.serve_dashboard else [c for c in args.cases.split(',') if c]
+    available = [*ALL_CASES, 'dashboard']
+    unknown = set(cases) - set(available)
     if unknown:
-        raise SystemExit(f'Unknown cases {sorted(unknown)}; choose from {ALL_CASES}')
+        parser.error(f'Unknown cases {sorted(unknown)}; choose from {available}')
+    if (args.serve_dashboard or 'dashboard' in cases) and not args.dashboard_url:
+        parser.error('Dashboard mode requires --dashboard-url')
+    if args.dashboard_url:
+        try:
+            from ultron_nav_interfaces.action import NavigateDashboard  # noqa: F401
+        except ImportError:
+            parser.error('Build and source ultron_nav_interfaces as described in docs/dashboard_nav_goal.md')
     config = load_sim_slam_config()
     check_isolation(config)
     terminate_cleanly()
@@ -289,26 +385,41 @@ def main(argv=None):
         time.sleep(5.0)
         procs['bridge'] = spawn([py, '-m', 'ultron.autonomy.sim_bridge', '--rate', str(args.rate), '--duration', '3000',
                                  '--out', str(out / 'sim')], out / 'bridge.log')
+        if args.sdk_stand_in:
+            procs['sdk'] = spawn([py, '-m', 'ultron.autonomy.sdk_velocity_node',
+                                  '--stand-in-log', str(out / 'sdk_stand_in.jsonl')], out / 'sdk.log')
+        if args.dashboard_url:
+            procs['dashboard_goal'] = spawn([py, '-m', 'ultron.autonomy.dashboard_goal_node',
+                                             '--map', str(map_dir)], out / 'dashboard_goal.log')
+            script = Path(__file__).resolve().parents[3] / 'scripts' / 'dashboard_bridge.py'
+            procs['dashboard_bridge'] = spawn([py, str(script), '--map', str(map_dir), '--url', args.dashboard_url],
+                                             out / 'dashboard_bridge.log')
         for name, proc in procs.items():
             if proc.poll() is not None:
                 raise RuntimeError(f'{name} exited early; see {out}')
         import rclpy
         rclpy.init()
         try:
-            runner = Runner(config, map_dir, out)
+            runner = Runner(config, map_dir, out, test_operator=not args.serve_dashboard)
             _attach_status(runner)
             print('navigation: waiting for VALID localization and Nav2 ...', flush=True)
             runner.wait_for_valid()
             if not runner.nav.client.wait_for_server(timeout_sec=60):
                 raise RuntimeError('Nav2 NavigateToPose server not available')
             runner.spin(2.0)
+            if args.serve_dashboard:
+                print('Dashboard simulation ready. Operator heartbeat is required for goal dispatch.', flush=True)
+                while all(proc.poll() is None for proc in procs.values()):
+                    runner.spin(1.0, wall_limit=2.0)
+                raise RuntimeError('A simulation process exited; see the run logs')
             plan = {'reach_near': lambda: runner.arrive((2.5, 5.5), 0.0),
                     'reach_far': lambda: runner.arrive((9.6, 4.5), -math.pi / 2),
                     'reject_occupied': lambda: runner.rejected((4.0, 4.0), 'OCCUPIED'),
                     'reject_outside': lambda: runner.rejected((14.0, 5.0), 'OUTSIDE_MAP'),
                     'unreachable': runner.unreachable, 'new_obstacle': runner.new_obstacle,
                     'cancel': runner.cancel, 'operator_inhibit': runner.operator_inhibit,
-                    'localization_loss': runner.localization_loss}
+                    'localization_loss': runner.localization_loss,
+                    'dashboard': lambda: runner.dashboard(args.dashboard_url)}
             for name in cases:
                 runner.case(name, plan[name])
             summary = {'schema': 'ultron.nav_cases/v1', 'map_id': runner.nav.map_id, 'map_version': runner.nav.map_version,
@@ -321,8 +432,8 @@ def main(argv=None):
         finally:
             rclpy.shutdown()
     finally:
-        for name in ('bridge', 'lifecycle', 'bt_navigator', 'behavior_server', 'controller_server', 'planner_server',
-                     'map_server', 'gate', 'monitor', 'slam'):
+        for name in ('dashboard_bridge', 'dashboard_goal', 'sdk', 'bridge', 'lifecycle', 'bt_navigator',
+                     'behavior_server', 'controller_server', 'planner_server', 'map_server', 'gate', 'monitor', 'slam'):
             if name in procs:
                 stop(procs[name])
 

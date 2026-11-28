@@ -222,14 +222,22 @@ function renderMap() {
     robot.append(svg('path', {d: 'M0.18,-0.12 L0.42,0 L0.18,0.12 Z'}, 'fill: var(--live-dot)'));
     map.append(robot);
   }
-  const done = S.goal && ['SUCCEEDED', 'FAILED', 'CANCELED'].includes(S.goal.status);
-  if (S.goal && !done) map.append(arrow(X(S.goal.x), Y(S.goal.y), S.goal.yaw, 0.7, 'stroke: var(--accent); fill: var(--accent)'));
+  const done = S.goal && ['SUCCEEDED', 'REJECTED', 'FAILED', 'CANCELED'].includes(S.goal.status);
+  const liveMapping = S.grid?.source === 'live_slam';
+  if (S.goal && !done && !liveMapping) map.append(arrow(X(S.goal.x), Y(S.goal.y), S.goal.yaw, 0.7, 'stroke: var(--accent); fill: var(--accent)'));
   if (S.drag) map.append(arrow(S.drag.sx, S.drag.sy, S.drag.yaw, 0.7, 'stroke: var(--accent); fill: var(--accent); opacity: .6'));
   map.classList.toggle('picking', S.picking);
-  $('map-info').textContent = `${(b[2] - b[0]).toFixed(1)} × ${(b[3] - b[1]).toFixed(1)} m`;
-  $('goal-btn').hidden = !S.goalsEnabled;
+  const dimensions = `${(b[2] - b[0]).toFixed(1)} × ${(b[3] - b[1]).toFixed(1)} m`;
+  $('map-info').textContent = liveMapping ? `${t('map.live')} · ${dimensions}` : dimensions;
+  $('goal-btn').hidden = !S.goalsEnabled || liveMapping;
+  $('goal-btn').disabled = !S.grid?.map_id;
   $('goal-btn').setAttribute('aria-pressed', String(S.picking));
-  $('goal-info').textContent = S.picking ? t('goal.pick') : S.goal ? `${t(`goal.${S.goal.status}`)} · ${S.goal.x.toFixed(1)} / ${S.goal.y.toFixed(1)} m` : '';
+  $('goal-info').textContent = '';
+  if (!liveMapping && S.picking) $('goal-info').textContent = t('goal.pick');
+  else if (!liveMapping && S.goal) {
+    $('goal-info').textContent = `${t(`goal.${S.goal.status}`)} · ${S.goal.x.toFixed(1)} / ${S.goal.y.toFixed(1)} m`;
+    if (S.goal.detail) $('goal-info').textContent += ` · ${S.goal.detail}`;
+  }
 }
 
 // 2D Goal Pose, as in RViz: press "Set goal", press on the map for the position, drag toward the
@@ -249,7 +257,8 @@ function initGoalPicking() {
     e.preventDefault();
     map.setPointerCapture(e.pointerId);
     const p = svgPoint(e);
-    S.drag = {sx: p.x, sy: p.y, yaw: 0};
+    S.drag = {sx: p.x, sy: p.y, yaw: 0, frame: S.frame,
+      map_id: S.grid?.map_id, map_version: S.grid?.map_version};
     scheduleRender();
   });
   map.addEventListener('pointermove', e => {
@@ -260,8 +269,9 @@ function initGoalPicking() {
   });
   map.addEventListener('pointerup', async () => {
     if (!S.drag) return;
-    const {b, pad} = S.frame, d = S.drag;
-    const goal = {x: d.sx + b[0] - pad, y: b[3] + pad - d.sy, yaw: d.yaw, frame_id: 'map'};
+    const d = S.drag, {b, pad} = d.frame;
+    const goal = {x: d.sx + b[0] - pad, y: b[3] + pad - d.sy, yaw: d.yaw, frame_id: 'map',
+      map_id: d.map_id, map_version: d.map_version};
     S.drag = null; S.picking = false;
     const response = await fetch('/api/goal', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(goal)}).catch(() => null);
     if (response && response.ok) S.goal = await response.json();
@@ -305,7 +315,11 @@ function connect() {
   on('alert', a => { if (mine(a)) { S.alerts.set(a.id, a); scheduleRender(); } });
   on('pose', p => { if (!mine(p)) return; S.pose = p; S.trail.push([p.x, p.y]); S.clock = Math.max(S.clock || 0, p.time); scheduleRender(); });
   on('frame', f => { if (mine(f)) showFrame(f.camera); });
-  on('map', g => { S.grid = g; scheduleRender(); });
+  on('map', g => {
+    S.grid = g;
+    if (g.source === 'live_slam') { S.picking = false; S.drag = null; }
+    scheduleRender();
+  });
   on('goal', g => { if (!S.goal || g.seq >= S.goal.seq) { S.goal = g; scheduleRender(); } });
   source.onerror = () => { $('live-chip').className = 'live-chip idle'; $('live-chip').textContent = '…'; };
   source.onopen = () => load();

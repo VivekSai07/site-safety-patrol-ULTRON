@@ -437,10 +437,32 @@ class NavigationTest(unittest.TestCase):
         self.assertFalse(client.get('/api/live').json()['goals_enabled'])
         self.assertEqual(published, [])
 
+    def test_live_map_does_not_reuse_saved_navigation_identity(self):
+        client, _ = self.make()
+        url = '/api/map?resolution=0.05&origin_x=0&origin_y=0&map_id=hall&map_version=2'
+        headers = {'content-type': 'image/png'}
+        self.assertEqual(client.post(url, content=self.png(), headers=headers).status_code, 204)
+        self.assertEqual(client.get('/api/map').json()['map_id'], 'hall')
+        image = self.png(size=(100, 50))
+        self.assertEqual(client.post(url + '&source=live_slam', content=image, headers=headers).status_code, 204)
+        grid = client.get('/api/map').json()
+        self.assertEqual(grid['source'], 'live_slam')
+        self.assertNotIn('map_id', grid)
+        self.assertNotIn('map_version', grid)
+        self.assertEqual(client.get('/api/map.png?v=1').content, self.png())
+        self.assertEqual(client.get('/api/map.png?v=2').content, image)
+        self.assertEqual(client.get('/api/map.png?v=3').status_code, 404)
+        rejected = client.post('/api/goal', json={'x': 1, 'y': 2, 'map_id': 'hall', 'map_version': 2})
+        self.assertEqual(rejected.status_code, 409)
+        self.assertIn('LIVE_MAP_PREVIEW', rejected.json()['detail'])
+        self.assertIsNone(client.get('/api/goal').json())
+
     def test_goal_round_trip(self):
         client, published = self.make()
         goal = client.post('/api/goal', json={'x': 3.5, 'y': -1.0, 'yaw': 1.57}).json()
-        self.assertEqual(goal, {'seq': 1, 'x': 3.5, 'y': -1.0, 'yaw': 1.57, 'frame_id': 'map', 'status': 'SENT', 'detail': ''})
+        self.assertTrue(goal['request_id'])
+        self.assertEqual(goal, {'seq': 1, 'request_id': goal['request_id'], 'x': 3.5, 'y': -1.0, 'yaw': 1.57,
+                                'frame_id': 'map', 'status': 'SENT', 'detail': ''})
         self.assertEqual(published[-1], ('goal', goal))
         # the bridge reports progress on the current goal; a newer goal replaces it
         self.assertEqual(client.post('/api/goal/status', json={'seq': 1, 'status': 'ACCEPTED'}).json()['status'], 'ACCEPTED')
@@ -448,6 +470,21 @@ class NavigationTest(unittest.TestCase):
         self.assertEqual(client.post('/api/goal/status', json={'seq': 1, 'status': 'SUCCEEDED'}).status_code, 409)
         self.assertEqual(client.post('/api/goal/status', json={'seq': 2, 'status': 'BOGUS'}).status_code, 422)
         self.assertEqual(client.get('/api/goal').json()['seq'], 2)
+
+    def test_nav_goal_keeps_map_identity_and_reports_rejection(self):
+        client, _ = self.make()
+        q = '/api/map?resolution=0.05&origin_x=0&origin_y=0&map_id=hall&map_version=2'
+        self.assertEqual(client.post(q, content=self.png(), headers={'content-type': 'image/png'}).status_code, 204)
+        self.assertEqual(client.get('/api/map').json()['map_version'], 2)
+        implied = client.post('/api/goal', json={'x': 1, 'y': 2}).json()
+        self.assertEqual((implied['map_id'], implied['map_version']), ('hall', 2))
+        explicit = client.post('/api/goal', json={'x': 1, 'y': 2, 'map_id': 'hall', 'map_version': 1}).json()
+        self.assertEqual(explicit['map_version'], 1)
+        status = {'seq': explicit['seq'], 'status': 'REJECTED', 'detail': 'MAP_MISMATCH'}
+        self.assertEqual(client.post('/api/goal/status', json=status | {'request_id': implied['request_id']}).status_code, 409)
+        rejected = client.post('/api/goal/status', json=status | {'request_id': explicit['request_id']}).json()
+        self.assertEqual((rejected['status'], rejected['detail']), ('REJECTED', 'MAP_MISMATCH'))
+        self.assertEqual(client.post('/api/goal', json={'x': 'NaN', 'y': 0}).status_code, 422)
 
 
 if __name__ == '__main__':

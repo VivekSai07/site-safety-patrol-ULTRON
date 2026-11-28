@@ -1,6 +1,7 @@
 // German / English labels. German follows nesseler's form wording where the form has a term.
 const I18N = {
   de: {
+    'map.live': 'Live-Kartierung',
     'nav.live': 'Live', 'nav.ladders': 'Leitern', 'nav.history': 'Verlauf',
     'sim': 'SIMULATION', 'live': 'LIVE', 'no_mission': 'Keine Mission', 'ended': 'Beendet',
     'theme.light': 'Hell', 'theme.dark': 'Dunkel', 'theme.toggle': 'Hell/Dunkel umschalten', 'lang.toggle': 'Sprache',
@@ -9,7 +10,7 @@ const I18N = {
     'ladders': 'Leitern', 'report': 'Bericht', 'map': 'Lageplan',
     'goal.set': 'Ziel setzen', 'goal.pick': 'Klicken und in Blickrichtung ziehen', 'goal.failed': 'Ziel nicht gesendet',
     'goal.SENT': 'Ziel gesendet', 'goal.ACCEPTED': 'Ziel angenommen', 'goal.SUCCEEDED': 'Ziel erreicht',
-    'goal.FAILED': 'Ziel fehlgeschlagen', 'goal.CANCELED': 'Ziel abgebrochen',
+    'goal.REJECTED': 'Ziel abgelehnt', 'goal.FAILED': 'Ziel fehlgeschlagen', 'goal.CANCELED': 'Ziel abgebrochen',
     'cam.front': 'Frontkamera', 'cam.depth': 'Tiefenkamera', 'cam.wait': 'Warte auf Bild',
     'robot': 'Roboter', 'robot.state': 'Zustand', 'robot.pos': 'Position', 'robot.mode': 'Modus', 'robot.takeovers': 'Eingriffe',
     'mode.auto_sim': 'Autonom (Sim)', 'mode.auto': 'Autonom',
@@ -44,6 +45,7 @@ const I18N = {
     'result': 'Ergebnis', 'photo': 'Foto', 'person_only': '„Leiter i. O.“ setzt nur der Sachkundige.',
   },
   en: {
+    'map.live': 'Live mapping',
     'nav.live': 'Live', 'nav.ladders': 'Ladders', 'nav.history': 'History',
     'sim': 'SIMULATION', 'live': 'LIVE', 'no_mission': 'No mission', 'ended': 'Finished',
     'theme.light': 'Light', 'theme.dark': 'Dark', 'theme.toggle': 'Switch light/dark', 'lang.toggle': 'Language',
@@ -52,7 +54,7 @@ const I18N = {
     'ladders': 'Ladders', 'report': 'Report', 'map': 'Site map',
     'goal.set': 'Set goal', 'goal.pick': 'Click and drag toward the heading', 'goal.failed': 'Goal not sent',
     'goal.SENT': 'Goal sent', 'goal.ACCEPTED': 'Goal accepted', 'goal.SUCCEEDED': 'Goal reached',
-    'goal.FAILED': 'Goal failed', 'goal.CANCELED': 'Goal canceled',
+    'goal.REJECTED': 'Goal rejected', 'goal.FAILED': 'Goal failed', 'goal.CANCELED': 'Goal canceled',
     'cam.front': 'Front camera', 'cam.depth': 'Depth camera', 'cam.wait': 'Waiting for frames',
     'robot': 'Robot', 'robot.state': 'State', 'robot.pos': 'Position', 'robot.mode': 'Mode', 'robot.takeovers': 'Takeovers',
     'mode.auto_sim': 'Autonomous (sim)', 'mode.auto': 'Autonomous',

@@ -61,6 +61,15 @@ def accept_pose(state, map_id, map_version, now, *, tolerance_s=1e-3):
         return False, f'MAP_MISMATCH: state {state.map_id} v{state.map_version}, requested {map_id} v{map_version}'
     if state.state != 'VALID':
         return False, f'NOT_VALID: {state.state} ({state.reason})'
+    numbers = (int, float)
+    if (not all(type(v) in numbers and math.isfinite(v) for v in (now, state.stamp, state.age_limit_s))
+            or state.age_limit_s <= 0):
+        return False, 'INVALID_CLOCK_FIELDS'
+    if (not isinstance(state.position, (list, tuple)) or len(state.position) != 3
+            or not isinstance(state.orientation_xyzw, (list, tuple)) or len(state.orientation_xyzw) != 4
+            or not all(type(v) in numbers and math.isfinite(v) for v in (*state.position, *state.orientation_xyzw))
+            or not math.isclose(math.hypot(*state.orientation_xyzw), 1.0, abs_tol=1e-3)):
+        return False, 'INVALID_POSE'
     if state.stamp > now + tolerance_s:
         return False, 'STAMP_IN_FUTURE'
     if now - state.stamp > state.age_limit_s:

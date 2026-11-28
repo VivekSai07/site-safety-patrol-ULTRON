@@ -28,7 +28,8 @@ A form row is only filled when the cited photo resolves enough detail to show it
 | Object check | same recording, Qwen3-VL 8B | ladders, extinguisher and hose cabinet confirmed in every run |
 | Ladder form | same recording | shape rows filled with photo and box (22 % and 31 % of visual rows); the rest reported as "close-up needed" |
 | Whole chain, live | the recording replayed as ROS topics through the relay | mission, live view, both ladders and all events on the dashboard |
-| SLAM, localisation, Nav2 behind a motion gate | simulation only (`ultron.autonomy`) | see [validation record](docs/SAHIL_VALIDATION.md) |
+| SLAM and map reload | recorded B2 LiDAR and simulation | see [validation record](docs/SAHIL_VALIDATION.md) |
+| Dashboard goals through Nav2 and the motion gate | MuJoCo, ROS 2 Humble, stand-in B2 SDK | valid goal reached, unsafe requests rejected, active goal canceled on replacement |
 | Patrol, coverage planner, safety sweep, 360° capture | MuJoCo simulation with ground-truth detections | see below |
 
 Not yet shown: the relay on the robot itself, a pose from running localisation, the robot driving to a requested view, and any close-up (about 0.4 m) of a label or inspection sticker. Until a close-up exists, no sticker date and no fine row (cracks, wear, burrs) has been read for real. Thresholds are fitted to one recording. Details and numbers: [docs/PIPELINE.md](docs/PIPELINE.md).

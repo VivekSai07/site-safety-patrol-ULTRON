@@ -1,4 +1,4 @@
-"""ROS 2 node publishing ULTRON's LocalizationState for a loaded map. SIMULATION ONLY.
+"""Publish ULTRON's LocalizationState for an isolated simulation or recording replay.
 
 Inputs: 2D scan, TF (map->odom from slam_toolbox, odom->base_link), the saved map image and
 its map_meta.json (map ID/version). Ground truth is never read. Output: JSON
@@ -46,6 +46,7 @@ class MonitorNode:
         from std_msgs.msg import String
         from tf2_ros import Buffer, TransformListener
         meta = json.loads((Path(map_dir) / 'map_meta.json').read_text())
+        self.clock_id = meta.get('clock_id', 'ros_sim_time')
         self.config = config
         self.monitor = LocalizationMonitor(config.localization, meta['map_id'], meta['map_version'])
         self.matcher = MapMatcher.from_map_yaml(Path(map_dir) / 'map.yaml', config.localization['match_tolerance_m'])
@@ -85,6 +86,7 @@ class MonitorNode:
 
     def _publish(self, now):
         state = self.monitor.snapshot(now)
+        state.clock_id = self.clock_id
         self.pub.publish(self.String(data=json.dumps(state.to_dict())))
         return state
 
@@ -139,9 +141,10 @@ class MonitorNode:
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Publish LocalizationState for a loaded map (simulation)')
+    parser = argparse.ArgumentParser(description='Publish LocalizationState for a loaded map')
     parser.add_argument('--map', type=Path, required=True, help='Mapping run folder (map.yaml, map_meta.json)')
     parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--recorded-b2', action='store_true', help='Score the isolated B2 recording replay')
     args = parser.parse_args(argv)
     import signal
     import rclpy
@@ -150,6 +153,14 @@ def main(argv=None):
     from .sim_bridge import check_isolation
     config = load_sim_slam_config()
     check_isolation(config)
+    if args.recorded_b2:
+        from dataclasses import replace
+        from .real_bag import ODOM, SCAN
+
+        # The derived scan origin is vertically above the artificial floor-level base.
+        lidar = replace(config.lidar, mount_xyz_m=(0.0, 0.0, 0.0), mount_rpy_rad=(0.0, 0.0, 0.0))
+        topics = dict(config.topics, scan=SCAN, odom=ODOM, localization_state='/ultron/real/localization_state')
+        config = replace(config, lidar=lidar, topics=topics)
     rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
     stopping = []
     for sig in (signal.SIGINT, signal.SIGTERM):

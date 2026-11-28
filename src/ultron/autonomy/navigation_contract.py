@@ -250,14 +250,14 @@ class MotionGate:
             return 'OPERATOR_ENABLE_MISSING'
         if not i.operator_enabled:
             return 'OPERATOR_DISABLED'
-        if now - i.operator_stamp > self.params['operator_enable_max_age_s']:
+        if not 0 <= now - i.operator_stamp <= self.params['operator_enable_max_age_s']:
             return 'OPERATOR_ENABLE_STALE'
         ok, why = accept_pose(i.localization, self.map_id, self.map_version, now)
         if not ok:
             return f'LOCALIZATION: {why}'
         if command is None or command_stamp is None:
             return 'NO_COMMAND'
-        if now - command_stamp > self.params['command_max_age_s']:
+        if not 0 <= now - command_stamp <= self.params['command_max_age_s']:
             return 'COMMAND_STALE'
         if not all(math.isfinite(v) for v in command):
             return 'COMMAND_NONFINITE'

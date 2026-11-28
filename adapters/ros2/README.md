@@ -10,21 +10,12 @@ Suggested first milestone: consume an organizer-approved rosbag offline, adapt d
 
 Separate responsibilities: navigation/operator owns stopping distance and emergency stop; perception emits calibrated observations and unknowns; tracking associates repeated views; inspection maps the official protocol to evidence; reporting presents review actions. For real evidence, retain source image/crop reference, timestamp, frame and model provenance. The synthetic SVG renderer must be replaced, not used as camera evidence.
 
-Any live hardware demo requires verified interfaces and an authorized operator. This directory is not a ROS package and publishes no commands.
+Any live hardware demo requires verified interfaces and an authorized operator.
 
 ## Dashboard bridge
 
-`scripts/dashboard_bridge.py` is the one exception: it sends navigation goals.
-Each dashboard goal becomes a Nav2 `NavigateToPose` action goal; the bridge
-also uploads `/map` and the TF pose `map -> base_frame`. Goals are refused
-unless the dashboard runs with `--goals`. The dashboard has no authentication,
-and the bridge has no independent hardware-isolation guard: it can forward
-goals to any reachable matching action server. Before using these examples, a
-responsible operator must independently verify an isolated simulation with no
-route to hardware. Localhost, a namespace or a ROS domain alone is not proof
-of isolation.
-
-    python3 -m ultron.dashboard --goals
-    python3 scripts/dashboard_bridge.py --ros-args -p base_frame:=base_link   # with ROS sourced
-
-Parameters: `dashboard_url`, `map_topic` (/map), `map_frame` (map), `base_frame` (base_link), `action_name` (navigate_to_pose), `pose_rate_hz` (5), `map_min_period_s` (2). A teammate reported a stand-in action-server check on ROS 2 Jazzy; the exact network isolation was not independently verified here. Real Nav2 and Humble remain untested. See [dashboard goal guidance](../../docs/dashboard_nav_goal.md).
+`ultron_nav_interfaces` defines the map-scoped dashboard action. The bridge
+uploads the saved map and valid localization pose. The action server checks
+goals and sends eligible requests to Nav2. The dashboard goal endpoint is
+disabled by default. The authorized launch here uses the isolated simulator.
+[Build and launch commands](../../docs/dashboard_nav_goal.md)
