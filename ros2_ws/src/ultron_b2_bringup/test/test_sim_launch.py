@@ -6,10 +6,15 @@ from _graph import node_list, ros_env, start, stop
 # Localization (Agent C): sim odometry comes from the simulator, so state_estimation starts no node; mapping
 # starts slam_toolbox. Replay localization without map:= starts MOLA-LO (+ planar relay) plus monitor/map_manager.
 SLAM_COMMON = {'localization_monitor', 'map_manager'}
-EXPECTED_SIM = {'robot_state_publisher', 'tf_authority_check', 'drivers_placeholder', 'cloud_filter',
-                'pointcloud_to_laserscan', 'slam_toolbox', 'nav_placeholder', 'control_placeholder',
-                'mission_placeholder', 'viz_placeholder', 'record_placeholder'} | SLAM_COMMON
-CONTROL = {'nav_placeholder', 'control_placeholder', 'mission_placeholder'}
+NAV = {'controller_server', 'local_costmap/local_costmap', 'planner_server', 'global_costmap/global_costmap',
+       'behavior_server', 'bt_navigator', 'velocity_smoother', 'lifecycle_manager_navigation',
+       'zone_mask_server', 'nav_contract_server'}   # Agent D; Nav2 stays unconfigured (no map->base_link TF here)
+CONTROL_NODES = {'twist_mux', 'active_source_monitor', 'collision_monitor', 'lifecycle_manager_control',
+                 'motion_gate', 'sim_driver'}                                           # Agent D
+EXPECTED_SIM = ({'robot_state_publisher', 'tf_authority_check', 'drivers_placeholder', 'cloud_filter',
+                 'pointcloud_to_laserscan', 'slam_toolbox', 'mission_placeholder', 'viz_placeholder',
+                 'record_placeholder'} | SLAM_COMMON | NAV | CONTROL_NODES)
+CONTROL = NAV | CONTROL_NODES | {'mission_placeholder'}
 # Replay without bag:=... plays nothing, so no driver node exists.
 EXPECTED_REPLAY_LOCALIZATION = ((EXPECTED_SIM - CONTROL - {'slam_toolbox', 'drivers_placeholder'})
                                 | {'mola_lidar_odometry', 'mola_odom_planarizer'})

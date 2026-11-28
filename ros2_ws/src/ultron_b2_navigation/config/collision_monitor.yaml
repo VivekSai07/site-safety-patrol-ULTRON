@@ -1,0 +1,48 @@
+# nav2_collision_monitor (Humble 1.1.20) for the common command chain:
+#   control/cmd_vel_muxed (twist_mux output: teleop OR autonomy) -> collision_monitor -> control/cmd_vel_safe -> motion_gate
+# Applies to every source. Polygons in base_link, PROPOSED from the sim footprint (circle r = 0.55 m);
+# real polygons TO_VERIFY with the measured B2 + payload footprint.
+# Humble limitations (documented in VALIDATION.md, Agent D):
+#   - a "stop" zone hit zeroes ALL motion (also rotating or reversing away); recovery is teleop after clearing;
+#   - a source older than source_timeout is skipped (not fail-closed). Scan freshness is watched upstream.
+/**/collision_monitor:
+  ros__parameters:
+    base_frame_id: base_link
+    odom_frame_id: odom
+    cmd_vel_in_topic: control/cmd_vel_muxed
+    cmd_vel_out_topic: control/cmd_vel_safe
+    transform_tolerance: 0.3
+    source_timeout: 1.0
+    base_shift_correction: true
+    stop_pub_timeout: 1.0
+    polygons: [PolygonStop, FootprintApproach]
+    # PROPOSED last-resort zone: 0.10 m beyond the 0.55 m body radius, ahead of the robot. Kept inside the
+    # approach layer because a Humble stop zone also blocks turning away; at 0.75 m the replanning turn next to
+    # a new obstacle deadlocked until Nav2 failed (runs/b2_stack/d/nav_retry3).
+    PolygonStop:
+      type: polygon
+      points: [0.65, 0.45, 0.65, -0.45, 0.0, -0.45, 0.0, 0.45]
+      action_type: stop
+      max_points: 3
+      visualize: true
+      polygon_pub_topic: safety/polygon_stop
+      enabled: true
+    # PROPOSED. APPROACH (not a slowdown rectangle): scales a command only if simulating it moves the footprint
+    # into scan points within time_before_collision. A Humble slowdown zone also scales in-place rotation and,
+    # with controllers that accel-limit against measured odometry (RPP / rotation shim), throttled the
+    # replanning turn to ~0.05 rad/s next to a new obstacle (runs/b2_stack/d/nav_retry2, Agent D VALIDATION).
+    FootprintApproach:
+      type: circle
+      radius: 0.6                    # sim body circle 0.55 m + 0.05 m; real TO_VERIFY
+      action_type: approach
+      max_points: 3
+      time_before_collision: 1.5
+      simulation_time_step: 0.1
+      visualize: true
+      polygon_pub_topic: safety/polygon_approach
+      enabled: true
+    observation_sources: [scan]
+    scan:
+      type: scan
+      topic: sensors/scan
+      enabled: true

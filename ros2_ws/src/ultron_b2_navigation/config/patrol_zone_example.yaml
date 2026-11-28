@@ -1,0 +1,11 @@
+# Example PatrolZone (ultron.patrol_zone/v1) for the sim hall map. PROPOSED geometry; map frame, metres.
+# Use with zone_mask_server zone_file:=... (map_id/map_version must match the loaded map) or call
+# nav/set_patrol_zone. Keepout polygons become lethal cells; edges get a 50 % speed band (1.0 m).
+schema: ultron.patrol_zone/v1
+zone_id: example-hall
+map_id: REPLACE_WITH_LOADED_MAP_ID
+map_version: 1
+boundary: [[-1.0, -1.0], [13.0, -1.0], [13.0, 10.0], [-1.0, 10.0]]
+keepout:
+  - [[6.0, 6.0], [7.0, 6.0], [7.0, 7.0], [6.0, 7.0]]
+base_pose: [0.0, 0.0, 0.0]

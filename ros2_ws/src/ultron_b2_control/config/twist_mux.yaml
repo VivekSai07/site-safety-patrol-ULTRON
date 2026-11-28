@@ -1,0 +1,22 @@
+# Command source priority table: HOLD lock (255) > teleop (100) > autonomy (10).
+# Shared by twist_mux AND active_source_monitor (key /**) so both use the same table.
+# Output: control/cmd_vel_muxed -> collision_monitor -> control/cmd_vel_safe -> motion_gate -> cmd_vel.
+# Timeouts PROPOSED. A timed-out input is dropped; when nothing is fresh twist_mux stops publishing and
+# motion_gate zeroes cmd_vel (COMMAND_STALE). twist_mux does not publish zero on lock; motion_gate
+# subscribes ops/hold itself and zeroes within one period.
+/**:
+  ros__parameters:
+    topics:
+      teleop:
+        topic: control/in/teleop
+        timeout: 0.5
+        priority: 100
+      autonomy:
+        topic: control/in/autonomy
+        timeout: 0.5
+        priority: 10
+    locks:
+      hold:
+        topic: ops/hold
+        timeout: 0.0
+        priority: 255
