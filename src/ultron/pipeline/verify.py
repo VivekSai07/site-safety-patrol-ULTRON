@@ -18,7 +18,7 @@ SCHEMA = _object({
 })
 
 PROMPT = """This photo is cut out of a robot's camera image on a construction site. What is the main
-object in it? Choose one:
+object in it?{size} Choose one:
 {kinds}
 - none: anything else, or too unclear to tell
 Answer as JSON with kind, confidence from 0 to 1, and a remark of at most ten words on what you see.
@@ -37,15 +37,19 @@ def crop(image, box, context=CONTEXT):
 class Verifier:
     def __init__(self, vlm, min_confidence=0.6):
         self.vlm, self.min_confidence = vlm, min_confidence
-        self.prompt = PROMPT.format(kinds="\n".join(f"- {k.name}: {k.description}" for k in KINDS.values()))
+        self.kinds = "\n".join(f"- {k.name}: {k.description}" for k in KINDS.values())
 
-    def classify(self, image, box, name="crop"):
+    def classify(self, image, box, name="crop", height=None):
         """(kind or "none", remark) for the boxed region; None if the model could not be asked.
 
+        `height` is the object's measured height in metres, if known: a crop has no scale, and
+        a 0.8 m cabinet and a 0.3 m alarm box look alike without it.
         An answer below `min_confidence` counts as "none": an unsure model is not a confirmation.
         """
+        size = f" A range sensor measured it as about {height:.2f} m tall." if height else ""
         try:
-            answer = self.vlm.ask(self.prompt, [Frame(crop(image, box), name=name)], "verify", SCHEMA)
+            answer = self.vlm.ask(PROMPT.format(size=size, kinds=self.kinds), [Frame(crop(image, box), name=name)],
+                                  "verify", SCHEMA)
         except VlmError:
             return None
         kind, confidence = answer.get("kind"), answer.get("confidence")

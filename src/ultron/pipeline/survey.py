@@ -114,10 +114,16 @@ class Survey:
             views = self.keyframes.select(site_object, budget=VERIFY_VIEWS)
             if site_object.verified or not views:
                 continue
-            opinions = []
+            opinions, heights = [], []
             for view in views:
                 with Image.open(self.keyframes.root / view.file) as image:
-                    opinion = self.verifier.classify(image.convert("RGB"), view.box, view.id)
+                    # Boxes cut off by the image edge show only a part: their height says nothing.
+                    whole = EDGE < view.box[1] and view.box[3] < 1000 - EDGE
+                    height = None
+                    if self.calibration and view.distance and whole:
+                        height = (view.box[3] - view.box[1]) / 1000 * image.height / self.calibration.fy * view.distance
+                        heights.append(height)
+                    opinion = self.verifier.classify(image.convert("RGB"), view.box, view.id, height)
                 if opinion is not None:
                     opinions.append(opinion)
             if not opinions:
@@ -127,7 +133,10 @@ class Survey:
             remark = next(text for answer, text in opinions if answer == kind)
             # One glance must not overturn the detector: a different verdict needs a majority of
             # at least two views. Anything less leaves the object as it is, unverified.
-            if kind != site_object.kind and (kinds.count(kind) < 2 or kinds.count(kind) * 2 <= len(kinds)):
+            # Nor may a new kind contradict the measured size: a 0.8 m cabinet is not an alarm box.
+            fits = kind == NONE or not heights or all(
+                KINDS[kind].size[0] <= height <= KINDS[kind].size[1] for height in heights)
+            if kind != site_object.kind and (kinds.count(kind) < 2 or kinds.count(kind) * 2 <= len(kinds) or not fits):
                 self.store.emit("object_unclear", object=site_object.id, opinions=kinds)
                 continue
             if kind == site_object.kind:

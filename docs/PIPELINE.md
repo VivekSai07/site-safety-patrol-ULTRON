@@ -130,7 +130,7 @@ python -m ultron.pipeline inspect --calibration bag:BAG --detector yolo
 | Step | File | What happens | On the hall recording |
 |---|---|---|---|
 | Prompt choice | `calibrate.py` | Every candidate prompt of a kind (listed in `catalog.py`) is run on sample frames; the model judges six of its boxes; the prompt expected to deliver the most real boxes wins | 80 s. Picked "ladder" and "red fire extinguisher", as tuned by hand before; refuted all 14 "first aid" boxes (there is no kit in the recording) |
-| Object check | `verify.py`, `Survey.verify` | Each well-seen object is shown to the model in up to three keyframes; a majority confirms, relabels or rejects it | Ladders, extinguisher and alarm box confirmed. The red wall cabinet is called hose cabinet, extinguisher box or alarm box depending on the frame |
+| Object check | `verify.py`, `Survey.verify` | Each well-seen object is shown to the model in up to three keyframes; a majority confirms, relabels or rejects it | Ladders, extinguisher and hose cabinet confirmed in every run; the alarm box confirmed or left "unclear" (never mislabelled). The model is told each object's measured height, and a relabel that contradicts it is refused: before that it called the 0.8 m hose cabinet an alarm box |
 | Resolution rule | `protocol/assess.py`, `form.py` | A form row counts only if the cited photo resolves enough pixels per metre for that kind of finding; label text and sticker dates need a close-up | See below |
 
 **The form reader fabricates when allowed to.** In the first real inspection Qwen3-VL 8B marked all
@@ -148,7 +148,7 @@ head camera. The recording has no such view, so no row needing it has ever been 
 
 - Form reading has run on real frames only from two to three metres, with one small model. How
   well any model reads the fine rows and the sticker from a real close-up is unknown.
-- What the red wall cabinet in the hall is: neither the model nor the code knows.
+- The hose cabinet still leaves a second, weaker object 0.8 m from the real one (7 sightings).
 - Nav2 goals, the live ROS 2 source and the Unitree source have not been exercised.
 - Viewing directions are map bearings in 45° steps; the pipeline does not know a ladder's front.
 - An object seen only without range gets an assumed range of 2.5 m and is marked approximate.

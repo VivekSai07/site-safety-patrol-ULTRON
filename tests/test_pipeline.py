@@ -297,6 +297,7 @@ class Opinion:
 
     def ask(self, prompt, frames, name, schema, quick=True):
         self.asked.append(frames[0].name)
+        self.prompts = getattr(self, "prompts", []) + [prompt]
         kind = self.answers.get(frames[0].name, self.default)
         if kind == "offline":
             from ultron.protocol.vlm import VlmError
@@ -338,22 +339,32 @@ class VerifyTest(Workspace):
         self.assertTrue(self.objects.get("LAD-001").verified)
         self.assertEqual(len(self.opinion.asked), 3)
 
-    def test_a_look_alike_is_relabelled_under_the_right_kind(self):
+    def test_a_relabel_that_contradicts_the_measured_size_is_refused(self):
+        """On the real robot the model called the 0.8 m hose cabinet an alarm box in two of three views."""
+        self.see_often("fire_hydrant", (5.0, 5.0))
         self.verified_survey({}, default="fire_alarm")
-        self.see_often("fire_extinguisher", (5.0, 5.0))
-        keyframes = len(self.keyframes.for_object("FEX-001"))
+        self.survey.tidy()
+        self.assertEqual([(o.id, o.kind, o.verified) for o in self.objects.all()], [("HYD-001", "fire_hydrant", False)])
+        self.assertEqual(self.store.events()[-1]["kind"], "object_unclear")
+        self.assertIn("about 0.80 m tall", self.opinion.prompts[0])
+
+    def test_a_look_alike_is_relabelled_under_the_right_kind(self):
+        """A 0.8 m red box may be a hose cabinet or an extinguisher box: here the model decides."""
+        self.verified_survey({}, default="fire_extinguisher")
+        self.see_often("fire_hydrant", (5.0, 5.0))
+        keyframes = len(self.keyframes.for_object("HYD-001"))
         self.survey.tidy()
         self.assertEqual([(o.id, o.kind, o.sightings, o.verified) for o in self.objects.all()],
-                         [("ALM-001", "fire_alarm", 3, True)])
-        self.assertEqual(len(self.keyframes.for_object("ALM-001")), keyframes)
+                         [("FEX-001", "fire_extinguisher", 3, True)])
+        self.assertEqual(len(self.keyframes.for_object("FEX-001")), keyframes)
         self.assertEqual(self.store.events()[-1]["kind"], "object_relabelled")
 
     def test_a_relabelled_object_joins_the_known_one_at_that_place(self):
-        self.see_often("fire_alarm", (5.0, 5.0))
-        self.see_often("fire_extinguisher", (5.1, 5.0))
-        self.verified_survey({}, default="fire_alarm")
+        self.see_often("fire_extinguisher", (5.0, 5.0))
+        self.see_often("fire_hydrant", (5.1, 5.0))
+        self.verified_survey({}, default="fire_extinguisher")
         self.survey.tidy()
-        self.assertEqual([(o.id, o.sightings) for o in self.objects.all()], [("ALM-001", 6)])
+        self.assertEqual([(o.id, o.sightings) for o in self.objects.all()], [("FEX-001", 6)])
 
     def test_something_that_is_nothing_is_rejected_and_never_inspected(self):
         self.verified_survey({})
