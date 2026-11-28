@@ -339,49 +339,60 @@ class Survey:
         if self.verifier is None:
             return
         for site_object in self.objects.pending(min_sightings):
-            views = self.keyframes.select(site_object, budget=VERIFY_VIEWS)
+            views = self.verify_views(site_object)
             if site_object.verified or not views:
                 continue
-            opinions, heights = [], []
-            for view in views:
-                with Image.open(self.keyframes.root / view.file) as image:
-                    # Boxes cut off by the image edge show only a part: their height says nothing.
-                    whole = EDGE < view.box[1] and view.box[3] < 1000 - EDGE
-                    height = None
-                    if self.calibration and view.distance and whole:
-                        height = (view.box[3] - view.box[1]) / 1000 * image.height / self.calibration.fy * view.distance
-                        heights.append(height)
-                    opinion = self.verifier.classify(image.convert("RGB"), view.box, view.id, height)
-                if opinion is not None:
-                    opinions.append(opinion)
-            if not opinions:
-                continue  # model unreachable: the object stays unverified and is tried again next time
-            kinds = [kind for kind, _ in opinions]
-            kind = max(set(kinds), key=kinds.count)
-            remark = next(text for answer, text in opinions if answer == kind)
-            # One glance must not overturn the detector: a different verdict needs a majority of
-            # at least two views. Anything less leaves the object as it is, unverified.
-            # Nor may a new kind contradict the measured size: a 0.8 m cabinet is not an alarm box.
-            fits = kind == NONE or not heights or all(
-                KINDS[kind].size[0] <= height <= KINDS[kind].size[1] for height in heights)
-            if kind != site_object.kind and (kinds.count(kind) < 2 or kinds.count(kind) * 2 <= len(kinds) or not fits):
-                self.store.emit("object_unclear", object=site_object.id, opinions=kinds)
-                continue
-            if kind == site_object.kind:
-                self.objects.update(site_object.id, verified=True)
-                self.store.emit("object_verified", object=site_object.id, remark=remark)
-            elif kind == NONE:
-                self.objects.update(site_object.id, status="REJECTED", result={"reason": remark})
-                self.keyframes.drop(site_object.id)
-                self.store.emit("object_rejected", object=site_object.id, was=site_object.kind, remark=remark)
-            else:
-                new_id = self.objects.relabel(site_object.id, kind)
-                self.keyframes.reassign(site_object.id, new_id)
-                self._replace(site_object.id, new_id)
-                if site_object.id in self.announced:  # the dashboard learns the new id from this event
-                    self.announced.add(new_id)
-                self.store.emit("object_relabelled", object=site_object.id, was=site_object.kind,
-                                now=kind, into=new_id, remark=remark)
+            opinions = [self.verifier.classify(*view) for view in views]
+            self.judge(site_object, [o for o in opinions if o is not None], [view[3] for view in views])
+
+    def verify_views(self, site_object):
+        """The keyframes the vision model is shown, loaded into memory (a better frame may replace
+        the file meanwhile): [(image, box, keyframe id, measured height or None)]."""
+        views = []
+        for view in self.keyframes.select(site_object, budget=VERIFY_VIEWS):
+            with Image.open(self.keyframes.root / view.file) as image:
+                # Boxes cut off by the image edge show only a part: their height says nothing.
+                whole = EDGE < view.box[1] and view.box[3] < 1000 - EDGE
+                height = None
+                if self.calibration and view.distance and whole:
+                    height = (view.box[3] - view.box[1]) / 1000 * image.height / self.calibration.fy * view.distance
+                views.append((image.convert("RGB"), view.box, view.id, height))
+        return views
+
+    def judge(self, site_object, opinions, heights):
+        """Apply the vision model's opinions [(kind, remark)] of one object. Returns the object's id
+        afterwards (a new one when relabelled), or None when it was rejected."""
+        heights = [height for height in heights if height is not None]
+        if not opinions:
+            return site_object.id  # model unreachable: the object stays unverified and is tried again next time
+        kinds = [kind for kind, _ in opinions]
+        kind = max(set(kinds), key=kinds.count)
+        remark = next(text for answer, text in opinions if answer == kind)
+        # One glance must not overturn the detector: a different verdict needs a majority of
+        # at least two views. Anything less leaves the object as it is, unverified.
+        # Nor may a new kind contradict the measured size: a 0.8 m cabinet is not an alarm box.
+        fits = kind == NONE or not heights or all(
+            KINDS[kind].size[0] <= height <= KINDS[kind].size[1] for height in heights)
+        if kind != site_object.kind and (kinds.count(kind) < 2 or kinds.count(kind) * 2 <= len(kinds) or not fits):
+            self.store.emit("object_unclear", object=site_object.id, opinions=kinds)
+            return site_object.id
+        if kind == site_object.kind:
+            self.objects.update(site_object.id, verified=True)
+            self.store.emit("object_verified", object=site_object.id, remark=remark)
+            return site_object.id
+        if kind == NONE:
+            self.objects.update(site_object.id, status="REJECTED", result={"reason": remark})
+            self.keyframes.drop(site_object.id)
+            self.store.emit("object_rejected", object=site_object.id, was=site_object.kind, remark=remark)
+            return None
+        new_id = self.objects.relabel(site_object.id, kind)
+        self.keyframes.reassign(site_object.id, new_id)
+        self._replace(site_object.id, new_id)
+        if site_object.id in self.announced:  # the dashboard learns the new id from this event
+            self.announced.add(new_id)
+        self.store.emit("object_relabelled", object=site_object.id, was=site_object.kind,
+                        now=kind, into=new_id, remark=remark)
+        return new_id
 
     def run(self, source):
         try:
