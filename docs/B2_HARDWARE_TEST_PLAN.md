@@ -69,7 +69,10 @@ Before the slot, prepare the checkout for each branch and record its commit,
 host and exact interpreter for each process. Run the offline venv setup and
 test command above.
 
-Verify the pinned B2 SDK in the intended interpreter. Import
+Use `.venv-teamultron/bin/python` for the SDK check. Verify the
+home-directory SDK checkout against the approved revision `814556d` and
+make that checkout and its compatible CycloneDDS dependency importable
+from this interpreter. Import
 `cyclonedds`, `unitree_sdk2py` and the B2 SportClient interface, and check
 that `Move` and `StopMove` match the wrapper contract. Record the import
 paths and revision. Keep this check import-only. The previous session hit
@@ -81,6 +84,15 @@ verify actual message receipt for robot state, the LiDAR cloud, and each
 branch's required odometry or IMU, timestamps and TF. The previous session
 observed raw Unitree low state and sport state at about 500 Hz. Verify the
 raw DDS state and ROS 2 sensor topics separately on the intended hosts.
+For the approved read-only DDS check, use `eno1` and domain `0`, as
+observed in D1. Sample `rt/lowstate` and `rt/sportmodestate` with
+`.venv-teamultron/bin/python`. Confirm the interface and domain still match
+the setup before connecting.
+
+For 2D, verify the LiDAR cloud, projected scan, selected odometry source
+and required TF at slam_toolbox. For 3D, verify the cloud and TF at
+ICP/RTAB-Map and check its pose and 2D occupancy outputs. Limit the check
+to the publishers used by the selected stack.
 
 At the slot, present P1 with the offline results already filled in and list
 only the missing facts needed for the next check. After P1 and D1 approvals,
@@ -147,7 +159,7 @@ dashboard motion disabled during manual control.
 
 | ID | Verification and limit | Evidence and pass condition |
 |---|---|---|
-| K1 | Before D1, check the B2 SDK offline in the ROS Humble venv without initializing DDS or opening a robot transport. | The SDK revision and B2 SportClient interface match the approved starter. Record pending runtime checks. |
+| K1 | Before D1, check the B2 SDK offline in `.venv-teamultron` without initializing DDS or opening a robot transport. | The SDK revision and B2 SportClient interface match the approved starter. Record pending runtime checks. |
 | K2 | After D1, test WASD with output routed only to an isolated recorder. Approve each input case separately. | **W** requests forward motion, **S** reverse, **A** left turn and **D** right turn. Verify that a key press cannot latch motion. For a terminal that only reports key presses, verify a bounded command timeout when key events stop. Test explicit stop, SSH disconnect, process exit and restart inhibition. |
 
 Complete K1, D1 and K2 before the keyboard movement trials, and complete the
