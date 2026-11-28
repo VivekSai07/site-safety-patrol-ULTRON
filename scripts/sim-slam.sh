@@ -28,6 +28,8 @@ case "$action" in
         exec "$venv/bin/python" -m ultron.autonomy.run_mapping "$@" ;;
     localize) # scripts/sim-slam.sh localize OUT --map MAP_RUN [--scenario FILE] [--offset DX DY DYAW_DEG] [--rate R]
         exec "$venv/bin/python" -m ultron.autonomy.run_localization "$@" ;;
+    nav)      # scripts/sim-slam.sh nav OUT --map MAP_RUN [--cases a,b] [--rate R]   (Nav2 N1/N2 cases)
+        exec "$venv/bin/python" -m ultron.autonomy.run_navigation "$@" ;;
     eval)     # re-evaluate a mapping run folder: scripts/sim-slam.sh eval OUT_DIR
         exec "$venv/bin/python" -m ultron.autonomy.eval_slam "$@" ;;
     record)   # scripts/sim-slam.sh record BAG_DIR  (new folder)
@@ -44,6 +46,6 @@ case "$action" in
     exec)     # run any command inside the isolated environment
         exec "$@" ;;
     *)
-        echo 'Usage: scripts/sim-slam.sh {bridge|survey|map|localize|eval|record|rviz|env|exec} [args]' >&2
+        echo 'Usage: scripts/sim-slam.sh {bridge|survey|map|localize|nav|eval|record|rviz|env|exec} [args]' >&2
         exit 2 ;;
 esac

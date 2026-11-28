@@ -136,7 +136,7 @@ SIM_KEYS = {
     'frames': ('map', 'odom', 'base', 'lidar'),
     'self_filter': ('min_xyz_m', 'max_xyz_m'),
     'topics': ('clock', 'points', 'scan', 'odom', 'ground_truth', 'cmd_vel', 'localization_state', 'status',
-               'nav_cmd_raw', 'operator_enable', 'gate_status'),
+               'nav_cmd_raw', 'operator_enable', 'gate_status', 'sim_control'),
     'scan_projection': ('z_min_m', 'z_max_m', 'angle_increment_deg', 'range_min_m', 'range_max_m'),
     'odometry': ('rate_hz', 'linear_scale_error', 'yaw_rate_bias_rad_s', 'linear_noise_std',
                  'angular_noise_std', 'seed'),

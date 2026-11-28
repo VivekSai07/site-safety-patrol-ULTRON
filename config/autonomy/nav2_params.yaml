@@ -1,7 +1,8 @@
 # Nav2 1.1.20 (Humble) parameters for the ULTRON lidar hall. SIMULATION ONLY.
 # Generated from /opt/ros/humble/share/nav2_bringup/params/nav2_params.yaml, keeping only the
 # nodes ULTRON launches. Overrides: use_sim_time; frames map/odom/base_link; odom topic
-# /ultron/sim/odom; robot_radius 0.55 (= simulator footprint); inflation 1.0 m; obstacle layer from
+# /ultron/sim/odom; static map from nav2 map_server on /ultron/sim/nav/map (saved map file);
+# robot_radius 0.55 (= simulator footprint); inflation 1.0 m; obstacle layer from
 # /ultron/sim/scan (no voxel layer); global costmap tracks unknown, planner allow_unknown false;
 # controller = RotationShim + Regulated Pure Pursuit (0.4 m/s, rotate in place); goal checker
 # 0.2 m / 0.25 rad (inside the adapter's 0.25 m / 0.35 rad). Velocity output is remapped at launch
@@ -187,7 +188,7 @@ global_costmap:
       static_layer:
         plugin: nav2_costmap_2d::StaticLayer
         map_subscribe_transient_local: true
-        map_topic: /map
+        map_topic: /ultron/sim/nav/map
       inflation_layer:
         plugin: nav2_costmap_2d::InflationLayer
         cost_scaling_factor: 3.0

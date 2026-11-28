@@ -129,6 +129,8 @@ class SimBridge:
         # Latest command wins: a queue would apply stale velocities late.
         latest = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
         self.node.create_subscription(Twist, topics['cmd_vel'], self._on_cmd, latest)
+        # Simulation test hook (obstacles, lidar faults) for navigation tests; never a robot interface.
+        self.node.create_subscription(String, topics['sim_control'], self._on_control, qos)
         self.tf = TransformBroadcaster(self.node)
         self.static_tf = StaticTransformBroadcaster(self.node)
         self._publish_static()
@@ -187,6 +189,21 @@ class SimBridge:
             'ground_truth': 'EVALUATION_ONLY: ground_truth.csv / topic; never on TF or estimator input',
         }
         (self.out / 'run_meta.json').write_text(json.dumps(meta, indent=2))
+
+    def _on_control(self, msg):
+        try:
+            cmd = json.loads(msg.data)
+            if 'obstacle' in cmd:
+                o = cmd['obstacle']
+                self.sim.place_test_obstacle(int(o['id']), o.get('x'), o.get('y'))
+                self._event('TEST_OBSTACLE', **o)
+            elif cmd.get('fault') == 'lidar_blackout':
+                self.blackout_until = self.t + float(cmd['duration_s'])
+                self._event('FAULT_START', fault='lidar_blackout', duration_s=float(cmd['duration_s']), probability=1.0)
+            else:
+                raise ValueError(f'unknown sim control {cmd}')
+        except (ValueError, KeyError, TypeError) as exc:
+            self.node.get_logger().error(f'Rejected sim control: {exc}')
 
     def _on_cmd(self, msg):
         if self.driver.route_active:

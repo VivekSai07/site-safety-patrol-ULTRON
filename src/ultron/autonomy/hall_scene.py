@@ -207,6 +207,9 @@ def _add_payload(base, mount_xyz, mount_rpy):
 # Walking people (mocap bodies): back-and-forth paths at 1 m/s, >= 0.8 m from the survey route.
 WALKERS = (((6.8, 3.4), (8.6, 3.4)), ((11.3, 1.6), (11.3, 7.4)), ((7.0, 9.3), (9.0, 9.3)))
 WALK_SPEED_M_S = 1.0
+TEST_OBSTACLES = 3
+TEST_OBSTACLE_HALF = 0.3
+PARKED = (-20.0, -20.0, -5.0)
 
 
 def _people_mode(people):
@@ -278,6 +281,10 @@ def build_hall(mount_xyz=(0.342, 0.0, 0.18), mount_rpy=(0.0, 0.0, 0.0), people='
         for i, (a, _) in enumerate(WALKERS):
             body = ET.SubElement(world, 'body', name=f'walker_{i}', mocap='true', pos=_fmt((*a, 0.9)))
             _geom(body, f'walker_{i}_body', 'capsule', '.85 .35 .25 1', size=(0.2, 0.7))
+    # Test obstacles (mocap boxes 0.6 x 0.6 x 1.0 m) parked below the floor until placed by a test.
+    for i in range(TEST_OBSTACLES):
+        body = ET.SubElement(world, 'body', name=f'test_obstacle_{i}', mocap='true', pos=_fmt(PARKED))
+        _geom(body, f'test_obstacle_{i}_box', 'box', '.9 .1 .6 1', size=(TEST_OBSTACLE_HALF, TEST_OBSTACLE_HALF, 0.5))
     if people == 'static':
         for i, (x, y) in enumerate(((7.2, 8.6), (11.0, 4.0))):
             _geom(world, f'person_{i}', 'capsule', '.25 .30 .45 1', pos=(x, y, 0.9), size=(0.2, 0.7))
@@ -346,6 +353,10 @@ class HallSim:
         self.robot_bodies = {b for b in range(self.model.nbody)
                              if b == base or self._descends(b, base)}
         self.robot_geoms = {g for g in range(self.model.ngeom) if self.model.geom_bodyid[g] in self.robot_bodies}
+        self.test_obstacles = {}
+        self.test_mocap = [int(self.model.body_mocapid[mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY,
+                                                                          f'test_obstacle_{i}')])
+                           for i in range(TEST_OBSTACLES)]
         self.walkers = []
         if self.people == 'walking':
             for i, (a, b) in enumerate(WALKERS):
@@ -379,7 +390,27 @@ class HallSim:
         return False
 
     def footprint_free(self, x, y, radius):
-        return footprint_free(self.objects, x, y, radius)
+        if not footprint_free(self.objects, x, y, radius):
+            return False
+        h = TEST_OBSTACLE_HALF
+        for ox, oy in self.test_obstacles.values():   # circle vs axis-aligned square
+            dx, dy = max(abs(x - ox) - h, 0.0), max(abs(y - oy) - h, 0.0)
+            if math.hypot(dx, dy) < radius:
+                return False
+        return True
+
+    def place_test_obstacle(self, index, x, y):
+        """Simulation test hook: put obstacle ``index`` at (x, y), or park it with x=None."""
+        if not 0 <= index < TEST_OBSTACLES:
+            raise ValueError(f'test obstacle index must be 0..{TEST_OBSTACLES - 1}')
+        mocap = self.test_mocap[index]
+        if x is None:
+            self.test_obstacles.pop(index, None)
+            self.data.mocap_pos[mocap] = PARKED
+        else:
+            self.test_obstacles[index] = (float(x), float(y))
+            self.data.mocap_pos[mocap] = (float(x), float(y), 0.5)
+        self.mujoco.mj_forward(self.model, self.data)
 
     def place(self, x, y, yaw):
         """Set the true base pose (simulation ground truth) and recompute kinematics."""

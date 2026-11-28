@@ -176,3 +176,32 @@ Findings fixed during the phase:
 Deferred: long low-feature corridor (degenerate along-track geometry) — not representative of the ~10 × 10 m course; noted as an open risk for corridor-like venues.
 
 Unit tests: `tests/test_autonomy_robustness.py` (7): per-slice pose casting exact, static pose function equals undistorted, threaded determinism, walkers on their segments, people modes, dropout scenario and 20 Hz profile, sampler/latency summary. Full suites: system Python 117 (23 skipped), `.venv-ros` rendered 117 (5 skipped), ROS/SLAM opt-in 23 OK.
+
+## Nav N0–N2 — Nav2 navigation behind the motion gate
+
+**Date:** 2026-11-28 · **Stack:** Nav2 1.1.20 (Humble binaries: map_server, planner_server/NavFn, controller_server/RotationShim + Regulated Pure Pursuit, behavior_server, bt_navigator, lifecycle_manager), `config/autonomy/nav2_params.yaml` (generated from the package defaults; overrides listed in its header), slam_toolbox localization on `runs/phase3/accept_seed7` (`ultron-hall-be73b8cbf8bf` v1), `localization_monitor`, `motion_gate_node` · **Code:** `src/ultron/autonomy/{navigation_contract,nav2_adapter,motion_gate_node,run_navigation}.py`; test hooks: bridge `/ultron/sim/sim_control` (test obstacles, lidar blackout) · **Command:** `scripts/sim-slam.sh nav OUT --map MAP_RUN [--cases …]` · **Plan:** `docs/SAHIL_NAV_PLAN.md`
+
+Command path: Nav2 publishes only `/ultron/sim/nav/cmd_vel_raw`; the motion gate alone publishes `/ultron/sim/cmd_vel` and forwards only while LocalizationState is VALID and fresh for the loaded map, operator enable is true and re-asserted within 1.0 s, and the Nav2 command is younger than 0.3 s; otherwise it publishes zero. Missing inputs inhibit. The adapter cancels the active goal when the gate inhibits for operator/localization/map reasons.
+
+Thresholds (fixed before the runs): arrival ≤ 0.25 m / 0.35 rad true error; stop within 1.2 s (0.3 s command age + 0.8 s braking from 0.4 m/s at 0.5 m/s² + 0.1 s); gate after operator disable ≤ 0.10 s; gate after blackout ≤ 0.80 s; unreachable goal bounded by its 60 s timeout; no motion while localization is not VALID (≤ 0.02 m).
+
+Run `runs/nav/all2` (1.0×, one session, cases in order):
+
+| Case | Verdict | Result |
+|---|---|---|
+| N1 reach near (2.5, 5.5) | PASS | REACHED → CAPTURE_READY after settle; true error 0.187 m / 0.003 rad |
+| N1 reach far (9.6, 4.5) | PASS | REACHED → CAPTURE_READY; true error 0.197 m / 0.004 rad |
+| Occupied target (ladder) | PASS | REJECTED before Nav2: `TARGET_FOOTPRINT_OCCUPIED: 105 occupied cells within 0.55 m`; 0.0 m motion |
+| Target outside map | PASS | REJECTED: `TARGET_OUTSIDE_MAP`; 0.0 m motion |
+| Unreachable (test obstacle placed on the target) | PASS | Nav2 kept retrying recoveries; adapter TIMEOUT at 60.04 s, backend confirmed cancellation; robot still 0.22 s later |
+| New obstacle 1.6 m ahead while moving | PASS | replanned around it, REACHED; 0 collision stops |
+| Cancellation | PASS | CANCELLED; last motion (translation or rotation) 0.68 s after cancel |
+| Operator inhibit | PASS | gate `OPERATOR_DISABLED` 0.02 s after disable; goal CANCELLED; stopped 0.74 s |
+| Localization loss (3 s lidar blackout) | PASS | gate `LOCALIZATION: STALE` 0.42 s after blackout; goal CANCELLED; stopped 1.2 s; 0.0 m motion while not VALID |
+| Contract unit tests (status mapping, pre-checks, late results, timeout, settle, gate defaults, supervisor mapping) | PASS | `tests/test_autonomy_navigation.py` (9) |
+
+First full run (`runs/nav/all1`) recorded 8/9: the unreachable case's "stopped" check sampled a window 0.5–2.0 s after cancellation (inside the 1.2 s braking budget the other cases use) and saw 0.027 m of recovery motion. The check was aligned to the same stop rule as the other cases. Review also found the motion check counted only translation, so a cancel during an in-place turn showed 0.0 s; rotation now counts as motion. Both runs' raw logs are kept locally.
+
+Findings: the stack preflight first matched free text and flagged the agent's own shell; it now matches exact argv tokens and skips its own ancestors. Nav2 warnings during the run were expected for the failure cases (planner failures, RPP collision-ahead, controller patience exceeded).
+
+Limitations: kinematic base; one map and hall; goals chosen by the test; Nav2's own recovery behaviours (spin/back-up) move the robot during failure handling; supervisor-driven mission (N3) not yet run; the gate is software in the same computer, not an independent watchdog or E-stop.

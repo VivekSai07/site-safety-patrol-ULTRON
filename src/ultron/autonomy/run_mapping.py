@@ -42,23 +42,39 @@ def terminate_cleanly():
     signal.signal(signal.SIGTERM, handler)
 
 
-STACK_MARKERS = ('slam_toolbox_node', 'ultron.autonomy.sim_bridge', 'ultron.autonomy.slam_logger',
-                 'ultron.autonomy.localization_monitor', 'ultron.autonomy.latency_probe', 'ultron.autonomy.tf_filter')
+STACK_MODULES = {'ultron.autonomy.sim_bridge', 'ultron.autonomy.slam_logger', 'ultron.autonomy.localization_monitor',
+                 'ultron.autonomy.latency_probe', 'ultron.autonomy.tf_filter', 'ultron.autonomy.motion_gate_node'}
+STACK_EXECUTABLES = ('slam_toolbox/async_slam_toolbox_node', 'slam_toolbox/localization_slam_toolbox_node',
+                     'nav2_controller/controller_server', 'nav2_planner/planner_server', 'nav2_bt_navigator/bt_navigator',
+                     'nav2_behaviors/behavior_server', 'nav2_map_server/map_server')
+
+
+def _ancestors():
+    pids, pid = set(), os.getpid()
+    while pid > 1:
+        pids.add(pid)
+        try:
+            stat = Path(f'/proc/{pid}/stat').read_text()
+            pid = int(stat[stat.rindex(')') + 2:].split()[1])
+        except (OSError, ValueError):
+            break
+    return pids
 
 
 def ensure_no_running_stack():
     """Refuse to start while another simulation stack runs: two slam_toolbox instances in one
-    ROS domain both publish map->odom and silently corrupt each other's results."""
-    found = []
+    ROS domain both publish map->odom and silently corrupt each other's results. Matches exact
+    argv tokens (python -m module / executable path), not free text, and skips our own ancestors."""
+    own, found = _ancestors(), []
     for entry in os.listdir('/proc'):
-        if not entry.isdigit() or int(entry) == os.getpid():
+        if not entry.isdigit() or int(entry) in own:
             continue
         try:
-            cmd = Path(f'/proc/{entry}/cmdline').read_bytes().replace(b'\0', b' ').decode(errors='replace')
+            argv = Path(f'/proc/{entry}/cmdline').read_bytes().decode(errors='replace').split('\0')
         except OSError:
             continue
-        if any(marker in cmd for marker in STACK_MARKERS):
-            found.append(f'{entry}: {cmd[:100]}')
+        if any(a in STACK_MODULES for a in argv) or any(a.endswith(e) for a in argv[:1] for e in STACK_EXECUTABLES):
+            found.append(f'{entry}: {" ".join(argv)[:100]}')
     if found:
         raise SystemExit('Another simulation stack is running; stop it first:\n  ' + '\n  '.join(found))
 

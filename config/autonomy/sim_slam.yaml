@@ -23,6 +23,7 @@ topics:
   nav_cmd_raw: /ultron/sim/nav/cmd_vel_raw
   operator_enable: /ultron/sim/operator_enable
   gate_status: /ultron/sim/motion_gate_status
+  sim_control: /ultron/sim/sim_control
 self_filter:
   # Crop box in base_link removing returns from the robot's own body and legs,
   # as a real driver/filter would. Simulation choice; measure on the robot.
