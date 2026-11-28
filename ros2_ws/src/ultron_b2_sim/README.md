@@ -34,7 +34,7 @@ ros2 service call /ultron/sim/sim/scenario ultron_b2_interfaces/srv/SimScenario 
 ```
 
 Bringup passes `sim_rate`, `sim_people`, `sim_route`, `sim_scenario`, `sim_hidden_ladders`,
-`sim_scan_topic`, `sim_camera` through to this launch when given on the command line.
+`sim_scan_topic`, `sim_camera`, `sim_seed`, `sim_out` (evaluation logs incl. ground_truth.csv) through to this launch when given on the command line.
 
 Camera rendering uses MuJoCo EGL (Mesa llvmpipe in the dev container, `LP_NUM_THREADS=4`) in a
 worker thread; frames are skipped (counted in `sim/bridge_status`) if a render is still running.

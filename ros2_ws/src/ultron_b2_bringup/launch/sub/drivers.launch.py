@@ -75,7 +75,7 @@ def _sim(context):
             # preprocess cloud_to_scan is the single sensors/scan publisher; the bridge's own scan goes to sim/scan.
             'scan_topic': 'sim'}
     for key in ('sim_rate', 'sim_people', 'sim_route', 'sim_scenario', 'sim_hidden_ladders', 'sim_scan_topic',
-                'sim_camera'):
+                'sim_camera', 'sim_seed', 'sim_out'):
         if cfg.get(key):
             args[key[len('sim_'):]] = cfg[key]
     return [IncludeLaunchDescription(source, launch_arguments=list(args.items()))]
