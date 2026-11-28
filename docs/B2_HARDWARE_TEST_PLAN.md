@@ -67,43 +67,20 @@ rerun. Check branch-specific ROS packages separately before running SLAM.
 
 Before the slot, prepare the checkout for each branch and record its commit,
 host and exact interpreter for each process. Run the offline venv setup and
-test command above. On the recording host, source ROS and use the exact
-interpreter that will launch the recorder to check its imports:
+test command above.
 
-```bash
-source /opt/ros/humble/setup.bash
-/usr/bin/python3 -c 'import sys, rclpy, ros2cli, ros2bag; print(sys.executable)'
-.venv-teamultron/bin/python -c 'import sys, rclpy, pydantic, httpx; print(sys.executable)'
-```
+Verify the pinned B2 SDK in the intended interpreter. Import
+`cyclonedds`, `unitree_sdk2py` and the B2 SportClient interface, and check
+that `Move` and `StopMove` match the wrapper contract. Record the import
+paths and revision. Keep this check import-only. The previous session hit
+missing SDK and CycloneDDS imports in different environments.
 
-Use the first command with the recorder's actual Python path if different.
-Check RealSense bindings in the camera publisher's interpreter if it uses
-them. For the pinned SDK environment, verify that the intended interpreter
-imports `cyclonedds`, `unitree_sdk2py` and the B2 interfaces the wrapper uses.
-Record the import paths and SDK revision. Keep this check import-only.
-The previous session found the SDK checkout but hit missing SDK and CycloneDDS
-imports in different environments. The recorder also failed on a missing
-`ros2cli` import.
-
-Prepare a stationary stream inventory before D1. For each required stream,
-record the expected producer host, interface, DDS domain or ROS middleware,
-topic/type, and the recorder's expected topic name. During D1, after separate
-approval, confirm receipt with sample counts on the intended consumer host.
-The previous session observed raw Unitree low state and sport state at about
-500 Hz. ROS graph visibility varied by host and environment. Verify the ROS
-consumer and the raw SDK subscriber separately. Verify the LiDAR driver and
-cloud, IMU or odometry inputs required by the branch, and the corresponding
-timestamps and transforms before proposing mapping.
-
-If an input is missing, record which downstream check it blocks and report
-the last confirmed check. Any switch to passive recording gets its own
-approval with a topic list, duration, destination and expected data rate.
-Start with a short stationary bag and inspect per-topic message counts before
-proposing a longer recording. The previous 130-second RC-driven bag used
-13 GiB for camera and depth data and lacked LiDAR, IMU, dynamic TF, robot
-state and pose. Treat it as camera evidence. Budget space using the smoke
-bag's measured rate. Verify the destination copy with its metadata and bag
-files before proposing deletion of the source.
+For D1, prepare a list of expected publishers, producer hosts, middleware
+and domains, topic types, QoS, and intended consumers. After approval,
+verify actual message receipt for robot state, the LiDAR cloud, and each
+branch's required odometry or IMU, timestamps and TF. The previous session
+observed raw Unitree low state and sport state at about 500 Hz. Verify the
+raw DDS state and ROS 2 sensor topics separately on the intended hosts.
 
 At the slot, present P1 with the offline results already filled in and list
 only the missing facts needed for the next check. After P1 and D1 approvals,
