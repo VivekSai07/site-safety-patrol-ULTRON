@@ -227,3 +227,31 @@ class TestPlaceMemory(unittest.TestCase):
         self.assertTrue(silent.remember_place(img(0, 64), (0.0, 0.0, 0.0), stamp=100.0))
         self.assertIsNone(silent.places[0]["embedding"])
         self.assertTrue((self.root / silent.places[0]["thumbnail"]).is_file())
+
+
+@unittest.skipIf(np is None, "numpy and Pillow required")
+class TestTextQuery(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        from ultron.spatial.memory import SpatialMemory
+        self.memory = SpatialMemory(Path(self._tmp.name), embedder=FakeEmbedder())
+        self.memory.register_sighting("ladder-1", img(0), (1.0, 1.0), "ladder")
+        self.memory.register_sighting("ext-1", img(90), (5.0, 5.0), "extinguisher")
+        self.memory.remember_place(img(10, 64), (2.0, 0.0, 0.0), stamp=100.0)
+
+    def test_best_match_first_with_positions(self):
+        hits = self.memory.query_text("0", limit=3)
+        self.assertEqual([h["type"] for h in hits], ["object", "place", "object"])
+        self.assertEqual(hits[0]["id"], "ladder-1")
+        self.assertEqual(hits[0]["position"], [1.0, 1.0])
+        self.assertEqual(hits[1]["position"], [2.0, 0.0])
+        self.assertEqual(hits[2]["id"], "ext-1")
+
+    def test_limit_respected(self):
+        self.assertEqual(len(self.memory.query_text("0", limit=1)), 1)
+
+    def test_no_embedder_no_hits(self):
+        from ultron.spatial.memory import SpatialMemory
+        silent = SpatialMemory(Path(self._tmp.name), embedder=None)
+        self.assertEqual(silent.query_text("0"), [])

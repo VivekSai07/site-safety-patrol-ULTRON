@@ -235,3 +235,28 @@ class SpatialMemory:
         except Exception as error:
             logger.warning("thumbnail failed: %s", error)
             return None
+
+    # queries ----------------------------------------------------------------------
+    def query_text(self, text, limit=5):
+        """Where was something like `text` seen? Objects and places ranked together."""
+        if self.embedder is None:
+            return []
+        try:
+            query = _unit(self.embedder.embed_text(text))
+        except Exception as error:
+            logger.warning("text embedding failed: %s", error)
+            return []
+        hits = []
+        for object_id, record in self.objects.items():
+            samples = [self._embeddings[key] for key in record["embedding_ids"] if key in self._embeddings]
+            if samples:
+                hits.append({"type": "object", "id": object_id, "kind": record["kind"],
+                             "score": max(float(query @ sample) for sample in samples),
+                             "position": record["position"]})
+        for place in self.places:
+            key = place.get("embedding")
+            if key and key in self._place_embeddings:
+                hits.append({"type": "place", "id": place["thumbnail"],
+                             "score": float(query @ self._place_embeddings[key]),
+                             "position": place["pose"][:2], "thumbnail": place["thumbnail"]})
+        return sorted(hits, key=lambda hit: -hit["score"])[:limit]
