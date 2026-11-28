@@ -400,6 +400,15 @@ class SurveyTest(Workspace):
         self.assertEqual([(o.id, o.sightings) for o in self.objects.all()], [("LAD-001", 3), ("LAD-002", 6)])
         self.assertEqual(survey.tidy(), {})
 
+    def test_stray_cells_do_not_grow_a_footprint_over_many_sightings(self):
+        from ultron.pipeline.objects import footprint
+        body = [[i, j] for i in range(10, 13) for j in range(0, 5)]
+        for stamp in range(200):  # every tenth view adds a stray cell twice, wandering off
+            stray = [[13 + stamp // 20, 0]] if stamp % 10 < 2 else []
+            self.objects.observe(Sighting(Detection("ladder", CENTRE), (1.15, 0.2), 3.0, cells=body + stray), float(stamp))
+        cells = footprint(self.objects.get("LAD-001"))
+        self.assertEqual(sorted(map(tuple, cells.tolist())), sorted(map(tuple, body)))
+
     def test_a_merged_object_brings_its_footprint_and_frees_no_id_for_reuse(self):
         def sighting(x, cells):
             return Sighting(Detection("ladder", CENTRE), (x, 0.0), 3.0, cells=cells)
@@ -526,8 +535,21 @@ class SiteMapTest(unittest.TestCase):
         # Each patrol is its own mission on the dashboard, so each announces what it saw, once it saw it.
         found = [e for e in store.events(limit=None) if e["kind"] == "object_found"]
         self.assertEqual([(e["object"], e["sightings"]) for e in found], [("LAD-001", 7)])
-        self.assertFalse(any(e["kind"] == "localisation_suspect" for e in store.events(limit=None)))
+        self.assertFalse(any(e["kind"].startswith("localisation_") for e in store.events(limit=None)))
         self.assertTrue((self.root / "sites" / "hall" / "hall-v1" / "objects.json").is_file())
+
+    def test_each_patrol_inspects_what_it_saw_again(self):
+        def inspect(survey, store, mission):
+            Inspection(survey.objects, survey.keyframes, FormVlm(), store, survey, Passive(), mission=mission,
+                       by_section=False).run()
+            return [e["object"] for e in store.events(limit=None) if e["kind"] == "inspecting"]
+        first, store = self.patrol("run-1", range(4), [0, 0, 1, 1])
+        self.assertEqual(inspect(first, store, "run-1"), ["LAD-001"])
+        second, store = self.patrol("run-2", range(100, 104), [2, 2, 3, 3])
+        self.assertEqual(inspect(second, store, "run-2"), ["LAD-001"])
+        third, store = self.patrol("run-3", [], [])  # saw nothing: nothing to inspect from old frames
+        self.assertEqual(inspect(third, store, "run-3"), [])
+        self.assertEqual(third.objects.get("LAD-001").result["mission"], "run-2")
 
     def test_without_a_map_id_each_run_keeps_its_own_objects(self):
         self.patrol("run-1", range(4), [0, 0, 1, 1], map_id=None)
@@ -541,7 +563,7 @@ class SiteMapTest(unittest.TestCase):
 
     def test_odometry_poses_on_a_shared_map_are_reported(self):
         _, store = self.patrol("run-1", range(4), [0, 0, 1, 1], pose_frame="odometry")
-        self.assertEqual([e["kind"] for e in store.events(limit=None)].count("localisation_suspect"), 1)
+        self.assertEqual([e["kind"] for e in store.events(limit=None)].count("localisation_unconfirmed"), 1)
 
     def test_the_map_id_comes_from_the_saved_map(self):
         from ultron.pipeline.__main__ import object_folder
@@ -623,11 +645,28 @@ class AnchoringTest(unittest.TestCase):
         self.assertEqual(merged, {})
         self.assertEqual({o.id: o.position for o in survey.objects.all()}, before)
 
-    def test_stored_objects_that_disagree_make_the_patrol_suspect(self):
+    def test_two_stored_objects_that_disagree_make_no_decision(self):
+        """One of them moved, or the robot is off: two cannot tell which. Nothing is changed."""
+        before = self.first_patrol()
+        survey, store, merged = self.patrol("run-2", [self.LEFT, self.LADDER], moved=(8.0, 3.5), new=False)
+        self.assertEqual([e for e in store.events(limit=None) if e["kind"].startswith(("localisation", "object_moved"))], [])
+        self.assertEqual({o.id: o.position for o in survey.objects.all()}, before)
+
+    def test_an_object_moved_and_seen_first_is_told_from_a_robot_that_is_off(self):
+        """The extinguisher stands 1.5 m from its stored place and is the first thing seen; the two
+        other objects agree with each other: it moved, the robot is fine."""
         self.first_patrol()
-        survey, store, _ = self.patrol("run-2", [self.LEFT, self.LADDER, self.NEW], moved=(8.0, 3.5))
-        self.assertEqual(len(self.events(store, "localisation_suspect")), 1)
-        self.assertEqual(len(survey.objects.all()), 3)
+        survey, store, _ = self.patrol("run-2", [self.LEFT, self.LADDER, self.RIGHT, self.LEFT], moved=(8.0, 3.5), new=False)
+        self.assertEqual(self.events(store, "localisation_suspect"), [])
+        self.assertEqual(len(self.events(store, "localisation_anchored")), 1)
+        moved = self.events(store, "object_moved")
+        self.assertEqual([e["object"] for e in moved], ["FEX-001"])
+        self.assertLess(math.dist(moved[0]["seen_at"], (8.0, 3.5)), 0.3)
+        # After the move is known, the extinguisher at its new place is an object of its own.
+        objects = {o.id: o for o in survey.objects.all()}
+        self.assertEqual(objects["FEX-001"].status, "MOVED")
+        self.assertTrue(any(o.status == "FOUND" and o.kind == "fire_extinguisher"
+                            and math.dist(o.position, (8.0, 3.5)) < 0.3 for o in objects.values()))
 
     def test_an_object_taken_away_is_marked_moved_not_left_silently(self):
         self.first_patrol()

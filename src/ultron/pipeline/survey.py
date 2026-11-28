@@ -63,6 +63,7 @@ class Survey:
         stored = objects.all() if map_id else []
         self.anchoring = Anchoring(stored) if stored else None
         self._empty = {}  # stored object id -> robot positions from which its place looked empty
+        self.created = set()  # objects this patrol created: provisional until it is lined up
         # Objects announced (`object_found`) in this workspace: resuming does not announce them twice.
         self.announced = {e["object"] for e in store.events(limit=None) if e["kind"] == "object_found"}
         self.seen_now = {}  # object id -> sightings in this run: a patrol reports what it saw itself
@@ -78,7 +79,7 @@ class Survey:
         self.calibration = self.calibration or frame.camera  # live sources bring their own camera model
         if self.map_id and getattr(frame, "pose_frame", None) == "odometry" and not self._warned:
             self._warned = True  # objects from earlier runs line up only if this run started where they did
-            self.store.emit("localisation_suspect", reason="pose from odometry, not localisation in the map",
+            self.store.emit("localisation_unconfirmed", reason="pose from odometry, not localisation in the map",
                             map_id=self.map_id)
         if self.anchoring and self.anchoring.transform and frame.pose:
             frame = copy.copy(frame)
@@ -108,7 +109,9 @@ class Survey:
                 create = self.anchoring.state == Anchoring.ANCHORED or landmark is None
             # Until then, the stored objects are not moved by positions that may be off.
             frozen = self.anchoring.stored if self.anchoring and self.anchoring.state != Anchoring.ANCHORED else ()
-            site_object = self.objects.observe(sighting, frame.stamp, exclude={o.id for o in seen},
+            # Two boxes in one frame are two objects; an object seen moved elsewhere is not here.
+            exclude = {o.id for o in seen} | set(self.anchoring.displaced if self.anchoring else ())
+            site_object = self.objects.observe(sighting, frame.stamp, exclude=exclude,
                                                known=self._tracks.get(detection.track), create=create, frozen=frozen)
             if self.anchoring and measured:
                 landmark = site_object.id if site_object and site_object.id in self.anchoring.stored else (
@@ -117,6 +120,8 @@ class Survey:
                     self._landmark(landmark, sighting)
             if site_object is None:
                 continue  # between two known objects and no way to tell which, or waiting to line up
+            if self.anchoring and site_object.sightings == 1 and site_object.id not in self.anchoring.stored:
+                self.created.add(site_object.id)
             if site_object.status == "MOVED":  # it is back (or was never gone)
                 site_object = self.objects.update(site_object.id, status="FOUND")
                 self._empty.pop(site_object.id, None)
@@ -178,8 +183,21 @@ class Survey:
             dx, dy = offset(sighting.cells, area)
             position = (self.anchoring.stored[object_id][1][0] + dx, self.anchoring.stored[object_id][1][1] + dy)
         changed = self.anchoring.add(object_id, self.anchoring.to_run(position))
+        for moved, seen_at in list(self.anchoring.displaced.items()):
+            if self.objects.get(moved).status != "MOVED":  # seen elsewhere: not a duplicate, a move
+                self.objects.update(moved, status="MOVED")
+                self.store.emit("object_moved", object=moved, object_kind=self.objects.get(moved).kind,
+                                position=self.objects.get(moved).position, seen_at=[round(v, 2) for v in seen_at])
         if changed == Anchoring.SUSPECT:
             self.store.emit("localisation_suspect", map_id=self.map_id, **self.anchoring.details)
+            # Created from positions that were off: nothing of this patrol is kept (none was announced).
+            discarded = sorted(i for i in self.created if self.objects.get(i))
+            for created in discarded:
+                self.objects.remove(created)
+                self.keyframes.drop(created)
+                self._tracks = {t: i for t, i in self._tracks.items() if i != created}
+            if discarded:
+                self.store.emit("objects_discarded", objects=discarded, reason="localisation suspect")
         elif changed == Anchoring.ANCHORED:
             self.store.emit("localisation_anchored", map_id=self.map_id, **self.anchoring.details)
 
@@ -189,7 +207,11 @@ class Survey:
         While the survey runs, an object standing beside another of its kind waits: it may be a
         fragment, and whether it is one only shows once both are well seen. `settled` (after
         fragments were merged) reports whatever is left."""
+        lined_up = not self.anchoring or self.anchoring.state == Anchoring.ANCHORED or (
+            settled and self.anchoring.state == Anchoring.UNANCHORED)
         for site_object in self.objects.all():
+            if site_object.id in self.created and not lined_up:
+                continue  # placed from a pose not yet checked against the stored objects
             now = self.seen_now.get(site_object.id, 0)
             if (site_object.id in self.announced or site_object.status == "REJECTED" or not now
                     or not (now >= min_sightings or site_object.verified)

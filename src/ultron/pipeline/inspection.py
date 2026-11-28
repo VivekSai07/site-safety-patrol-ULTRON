@@ -33,7 +33,11 @@ class Inspection:
     def run(self):
         if self.survey:
             self.survey.tidy(self.min_sightings)
-        for site_object in self.objects.pending(self.min_sightings):
+        # On a map shared by patrols, an object inspected in an earlier mission is inspected again
+        # once this mission has seen it itself (announced it).
+        again = {o.id for o in self.objects.all() if o.result.get("mission") != self.mission} & (
+            self.survey.announced if self.survey and self.mission else set())
+        for site_object in self.objects.pending(self.min_sightings, again):
             self.inspect(site_object)
 
     def collect_views(self, site_object):
@@ -59,7 +63,8 @@ class Inspection:
         still_missing = self.collect_views(site_object)
         chosen = self.keyframes.select(site_object)
         if not chosen:
-            return self.objects.update(site_object.id, status="UNREACHABLE", result={"reason": "no usable keyframe"})
+            return self.objects.update(site_object.id, status="UNREACHABLE",
+                                       result={"reason": "no usable keyframe", "mission": self.mission})
         frames = [Frame.from_file(self.keyframes.root / k.file, name=k.id, stamp=k.stamp,
                                   pose=tuple(k.pose) if k.pose else None) for k in chosen]
         self.store.emit("inspecting", frames=[f.name for f in frames], object=site_object.id)
@@ -75,6 +80,7 @@ class Inspection:
             self.store.emit("error", stage="inspection", object=site_object.id, message=str(error))
             return site_object
         result["missing_views"] = still_missing
+        result["mission"] = self.mission
         return self.objects.update(site_object.id, status="INSPECTED", result=result)
 
     def _ladder(self, site_object, frames, details):

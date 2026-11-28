@@ -70,7 +70,13 @@ With a map id (`--map-id ID`, or `--map DIR` of a saved `ultron.autonomy` map, k
 `objects.json` and the keyframes live in `--sites/<site>/<map id>/` (default `runs/sites`) and are
 shared by every patrol on that map; events and ladder sheets stay in `--data`. Give a map id only
 when poses are in that map's frame (localisation): lidar odometry starts a new frame each run, and a
-survey on a shared map warns (`localisation_suspect`) when its frames say their pose is odometry.
+survey on a shared map warns (`localisation_unconfirmed`) when its frames say their pose is odometry.
+Each patrol inspects again the objects it saw itself, even if an earlier mission inspected them; an
+object it did not see is not re-inspected from old keyframes. Lining up with the stored objects
+(`anchor.py`): one landmark decides nothing (the robot may be off, or the object moved); two that
+disagree wait for a third; of three or more, one lying over 1 m from where the agreeing others put it
+was moved (`object_moved` with `seen_at`). Objects created before the patrol is lined up are
+announced only once it is, and discarded if it turns out suspect.
 
 ## Modules
 
@@ -103,7 +109,8 @@ form and rules, the ladder store and the dashboard publisher.
 - **Camera**: `camera() -> Frame` with `pose` and `points` or `depth` filled.
 - **Events** (`events.jsonl`, also live to subscribers): `object_found` (once seen 3 times in this
   patrol and not a likely fragment), `object_merged`, `object_moved`, `object_back`,
-  `localisation_anchored`, `localisation_suspect`, `look`, `view_requested`, `view_failed`,
+  `localisation_anchored`, `localisation_suspect` (gross error: the patrol changes nothing more),
+  `localisation_unconfirmed` (shared map, but poses from odometry), `objects_discarded`, `look`, `view_requested`, `view_failed`,
   `inspecting`, `protocol` (ladder done), `checklist` (other object done), `error`. The dashboard
   hears about an object only after `object_found`; fragments never reach it.
 
@@ -156,7 +163,8 @@ What it took, in the order the recording forced it:
   0.7 m between a side and a front view and split it. Each sighting now projects the depth pixels in
   its mask onto a 10 cm floor grid (gated to the kind's extent around the measured range, and per
   image column to the nearest surface, so the wall seen between rungs is dropped); objects keep the
-  cells seen twice and a sighting joins the footprint it touches within 0.4 m. Measured on the
+  cells seen twice (and in 5 % of its sightings, so stray cells do not pile up over many patrols)
+  and a sighting joins the footprint it touches within 0.4 m. Measured on the
   recording: the two passes of one wall box lie up to 0.32 m apart, the two ladders 1.6 m apart edge
   to edge. The survey ends with the five objects at 4, 6, 8, 12 and 16 frames per second (radius
   matching ended with six at four of those rates); remaining part boxes are merged before anyone

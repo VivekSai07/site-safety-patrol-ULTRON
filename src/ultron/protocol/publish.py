@@ -30,7 +30,7 @@ FORWARDED = {"object_found": "OBJECT_FOUND", "object_merged": "OBJECT_MERGED", "
              "object_relabelled": "OBJECT_RELABELLED", "object_rejected": "OBJECT_REJECTED",
              "object_unclear": "OBJECT_UNCLEAR", "view_requested": "VIEW_REQUESTED", "view_failed": "VIEW_FAILED",
              "checklist": "CHECKLIST_DONE", "stage": "STAGE", "localisation_suspect": "LOCALISATION_SUSPECT",
-             "localisation_anchored": "LOCALISATION_ANCHORED", "object_moved": "OBJECT_MOVED", "object_back": "OBJECT_BACK"}
+             "localisation_unconfirmed": "LOCALISATION_UNCONFIRMED", "localisation_anchored": "LOCALISATION_ANCHORED", "object_moved": "OBJECT_MOVED", "object_back": "OBJECT_BACK"}
 # Events about objects known from earlier patrols, forwarded whether or not this one announced them.
 ABOUT_STORED = {"object_moved", "object_back"}
 

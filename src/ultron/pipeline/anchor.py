@@ -7,7 +7,9 @@ and applied to every later pose, so drift between runs does not create duplicate
 
 A large shift, or landmarks that no single shift and rotation can line up, means the robot is
 not where it thinks it is (localisation lost, a wrong map, a different start under odometry):
-the patrol then creates and merges nothing until it ends.
+the patrol then creates and merges nothing until it ends. One landmark cannot tell a robot that
+is off from an object that was moved, and neither can two that disagree: then it waits. Of three
+or more, one that disagrees with all the others that agree was moved.
 """
 import math
 
@@ -21,6 +23,8 @@ REACH = 2.0       # metres: an unmatched sighting this near a single stored obje
 MIN_SIGHTINGS = 3  # of one landmark in this run before it counts
 # Landmarks a few metres apart, each known to a few decimetres, say little about rotation: it is
 # estimated only from three or more, and kept only where it explains the landmarks clearly better.
+DISPLACED = 1.0       # metres off where the others put it, about twice what landmarks disagree by anyway
+CLEARLY = 0.5         # a moved landmark leaves the others lining up at most this share as badly as any other
 ROTATION_GAIN = 0.7   # the rotated fit's residual must be below this share of the shift-only one
 
 
@@ -64,6 +68,7 @@ class Anchoring:
         self.measured = {}  # stored id -> [sum x, sum y, sightings], in this run's own frame
         self.transform = None
         self.state, self.details = self.UNANCHORED, {}
+        self.displaced = {}  # stored id -> where this run saw it (map frame): it was moved
 
     def near(self, kind, position):
         """The single stored object of `kind` within REACH of `position`, or None (none or several)."""
@@ -94,26 +99,45 @@ class Anchoring:
         total = sum(w for _, _, w in pairs)
         return math.sqrt(sum(w * math.dist(apply(transform, p), q) ** 2 for p, q, w in pairs) / total)
 
-    def _estimate(self):
-        pairs = [((sx / n, sy / n), self.stored[i][1], self.stored[i][2])
-                 for i, (sx, sy, n) in self.measured.items() if n >= MIN_SIGHTINGS]
-        if not pairs:
-            return None
+    def _solve(self, pairs):
+        """(transform, shift, residual) lining `pairs` up."""
         transform = fit(pairs, rotate=False)
         if len(pairs) >= 3:
             rotated = fit(pairs, rotate=True)
             if self._rms(rotated, pairs) < ROTATION_GAIN * self._rms(transform, pairs):
                 transform = rotated
-        shift = max(math.dist(apply(transform, p), p) for p, _, _ in pairs)
-        residual = max(math.dist(apply(transform, p), q) for p, q, _ in pairs)
-        details = {"landmarks": len(pairs), "shift": round(shift, 2), "residual": round(residual, 2),
+        return (transform, max(math.dist(apply(transform, p), p) for p, _, _ in pairs),
+                max(math.dist(apply(transform, p), q) for p, q, _ in pairs))
+
+    def _estimate(self):
+        landmarks = {i: ((sx / n, sy / n), self.stored[i][1], self.stored[i][2])
+                     for i, (sx, sy, n) in self.measured.items() if n >= MIN_SIGHTINGS}
+        if len(landmarks) < 2:
+            return None  # one landmark: the robot may be off, or the object moved
+        transform, shift, residual = self._solve(list(landmarks.values()))
+        if (residual > DISAGREE or shift > GROSS) and len(landmarks) >= 3:
+            # One landmark that, left out, lets the others line up well, and clearly better than
+            # leaving out any other: it was moved.
+            fits = {i: self._solve([p for j, p in landmarks.items() if j != i]) for i in landmarks}
+            ranked = sorted(fits, key=lambda i: fits[i][2])
+            best, runner_up = fits[ranked[0]], fits[ranked[1]]
+            misfit = math.dist(apply(best[0], landmarks[ranked[0]][0]), landmarks[ranked[0]][1])
+            if (best[2] <= DISAGREE and best[1] <= GROSS and best[2] <= CLEARLY * runner_up[2]
+                    and misfit > DISPLACED):
+                moved = ranked[0]
+                self.displaced[moved] = apply(fits[moved][0], landmarks[moved][0])
+                del self.stored[moved], self.measured[moved]
+                return self._estimate()
+        details = {"landmarks": len(landmarks), "shift": round(shift, 2), "residual": round(residual, 2),
                    "rotation_deg": round(math.degrees(transform[0]), 1)}
         state = self.state
+        if residual > DISAGREE and len(landmarks) == 2:
+            return None  # two that disagree: wait for a third to say which one moved
         if residual > DISAGREE:
             state, details["reason"] = self.SUSPECT, "stored objects disagree about where the robot is"
         elif shift > GROSS:
             state, details["reason"] = self.SUSPECT, f"objects seen {shift:.1f} m from where they were stored"
-        elif len(pairs) > 1:
+        else:
             state, self.transform = self.ANCHORED, transform
         self.details = details
         if state != self.state:

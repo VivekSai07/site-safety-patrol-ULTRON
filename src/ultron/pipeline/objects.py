@@ -22,7 +22,11 @@ SAME_SIGHTING_GAP = 6.0  # seconds: without positions, detections this close in 
 # Footprints. On the hall recording the footprints of one wall box seen on the robot's two passes
 # lie up to 0.32 m apart (pose and extrinsics error), while the two ladders, 3 m apart, are 1.6 m
 # apart edge to edge: a margin of 0.4 m joins the first and keeps the second apart.
-REPEATED = 2        # sightings a cell needs before it belongs to an object's footprint
+REPEATED = 2        # sightings a cell needs before it belongs to an object's footprint ...
+# ... and this share of all the object's sightings: otherwise rare stray cells pile up over many
+# patrols (on the recording the A-frame grew from 1.2 x 2.1 m to 2.2 x 3.8 m over six replays; with
+# the share it stays 1.2-1.3 x 2.0-2.1 m)
+REPEATED_SHARE = 0.05
 MARGIN = 4          # cells around a footprint that still count as touching it
 MIN_SHARE = 0.2     # of a sighting's cells that must touch a footprint for the sighting to be that object
 ON_TOP = 0.8        # of a fragment's cells inside a neighbour's footprint: a part of it, even if seen apart
@@ -35,7 +39,7 @@ def _cell(key):
 
 def footprint(site_object):
     """The floor cells an object was seen covering more than once (all while it has one sighting)."""
-    need = REPEATED if site_object.sightings >= REPEATED else 1
+    need = max(REPEATED, REPEATED_SHARE * site_object.sightings) if site_object.sightings >= REPEATED else 1
     return np.array([_cell(k) for k, n in site_object.cells.items() if n >= need], dtype=int).reshape(-1, 2)
 
 
@@ -90,12 +94,14 @@ class ObjectMap:
     def get(self, object_id):
         return self._objects.get(object_id)
 
-    def pending(self, min_sightings=3):
-        """Objects found but not yet inspected, in the order they were found.
+    def pending(self, min_sightings=3, again=()):
+        """Objects found but not yet inspected, in the order they were found, and those in `again`
+        that an earlier patrol inspected (or could not reach).
 
         A single sighting is not trusted: detectors produce one-off false hits.
         """
-        return [o for o in self._objects.values() if o.status == "FOUND" and o.sightings >= min_sightings]
+        return [o for o in self._objects.values() if o.sightings >= min_sightings and (
+            o.status == "FOUND" or o.status in ("INSPECTED", "UNREACHABLE") and o.id in again)]
 
     def _new_id(self, kind):
         number = sum(o.kind == kind for o in self._objects.values()) + 1
@@ -268,6 +274,13 @@ class ObjectMap:
                 found.apart = [i for i in found.apart if i != object_id]
             self._save()
             return target.id
+
+    def remove(self, object_id):
+        with self._lock:
+            self._objects.pop(object_id, None)
+            for found in self._objects.values():
+                found.apart = [i for i in found.apart if i != object_id]
+            self._save()
 
     def update(self, object_id, **changes):
         with self._lock:
