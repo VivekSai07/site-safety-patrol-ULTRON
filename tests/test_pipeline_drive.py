@@ -212,6 +212,19 @@ class DriveTest(Workspace):
         self.assertEqual(dashboard.posted, [])
         online.finish()
 
+    def test_offline_inspection_waits_while_the_explorer_drives_and_burns_no_view(self):
+        self.see("ladder", A, 0, 3.0)
+        dashboard = FakeDashboard(exploring=True)
+        navigator = DashboardNavigator(dashboard.call, timeout=5, poll=0, sleep=lambda s: None)
+        inspection = Inspection(self.objects, self.keyframes, FormVlm(), self.store, self.survey, navigator,
+                                camera=lambda: frame("x", facing(A, 0, 3.0), 9.0, depth=3.0),
+                                min_sightings=1, mission="PATROL-1", by_section=False)
+        inspection.sleep = lambda seconds: None
+        inspection.run()
+        self.assertNotIn("view_failed", self.kinds())
+        self.assertIn("navigation_held", self.kinds())
+        self.assertEqual(self.objects.get("LAD-001").status, "INSPECTED")
+
     def test_known_footprints_go_to_the_navigation_stack(self):
         dashboard = FakeDashboard()
         online = self.online(dashboard, obstacles=lambda cells: dashboard.call("PUT", "/api/obstacles", {"cells": cells}))

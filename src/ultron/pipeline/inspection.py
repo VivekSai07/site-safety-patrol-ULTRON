@@ -4,11 +4,12 @@ Ladders go through the nesseler Kontrollblatt reader (`ultron.protocol`) and on 
 Other kinds get their checklist rows answered and saved next to the object.
 """
 import json
+import time
 
 from . import checklists
 from .catalog import KINDS
 from .coverage import missing_views
-from .navigate import Passive
+from .navigate import BUSY, PREEMPTED, UNAVAILABLE, Passive
 from ..protocol import sections
 from ..protocol.assess import assess
 from ..protocol.frames import Frame
@@ -29,6 +30,8 @@ class Inspection:
         self.min_sightings = min_sightings      # objects seen less often are not inspected
         self.mission = mission
         self.by_section = by_section            # read the ladder form section by section (seven focused calls)
+        self.max_hold = 30.0                    # seconds per object to wait while someone else drives
+        self.sleep = time.sleep
 
     def run(self):
         if self.survey:
@@ -42,7 +45,7 @@ class Inspection:
 
     def collect_views(self, site_object):
         """Ask the navigator for missing views until none is missing, none is reachable or the budget is spent."""
-        tried, taken = set(), 0
+        tried, taken, held = set(), 0, 0.0
         while getattr(self.navigator, "moves", True) and taken < self.max_extra_views and len(tried) < self.max_attempts:
             requests = missing_views(site_object, self.keyframes.for_object(site_object.id), self.is_free, tried)
             if not requests:
@@ -52,6 +55,17 @@ class Inspection:
             self.store.emit("view_requested", object=site_object.id, view=request.view, side=request.side,
                             goal=[request.x, request.y, request.yaw], reason=request.reason)
             if not self.navigator.go_to(request):
+                outcome = getattr(self.navigator, "outcome", None)
+                if outcome == UNAVAILABLE:
+                    self.store.emit("navigation_held", reason=outcome, detail=getattr(self.navigator, "detail", ""))
+                    break  # no navigation: the views stay missing, the form is read from what there is
+                if outcome in (BUSY, PREEMPTED) and held < self.max_hold:
+                    # The explorer or the operator drives: wait and ask again, the place is not at fault.
+                    tried.discard((request.view, request.side))
+                    self.store.emit("navigation_held", reason=outcome, detail=getattr(self.navigator, "detail", ""))
+                    self.sleep(5.0)
+                    held += 5.0
+                    continue
                 self.store.emit("view_failed", object=site_object.id, view=request.view, side=request.side)
                 continue
             if self.camera and self.survey:
