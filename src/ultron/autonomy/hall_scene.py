@@ -295,7 +295,7 @@ def build_hall(mount_xyz=(0.342, 0.0, 0.18), mount_rpy=(0.0, 0.0, 0.0), people='
         layher_aframe(world, 'ladder_02', (8.0, 6.3), math.radians(30)),
         combination_aframe(world, 'ladder_03', (6.2, 1.9), math.radians(90)),
         leaning_ladder(world, 'ladder_04', (6.0, 9.15), 0.0),
-        leaning_ladder(world, 'ladder_05', (0.85, 5.0), math.radians(-90)),
+        leaning_ladder(world, 'ladder_05', (0.85, 5.0), math.radians(90)),  # leans on the west wall
         trestle(world, 'ladder_06', (2.6, 7.4), math.radians(15)),
         trestle(world, 'ladder_07', (10.6, 6.2), math.radians(90)),
     ]

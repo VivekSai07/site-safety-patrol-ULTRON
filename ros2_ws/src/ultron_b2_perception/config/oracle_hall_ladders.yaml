@@ -10,6 +10,6 @@ ladders:
   - {name: ladder_02, type: LAYHER_A_FRAME_STEPLADDER, position: [8.0, 6.3], yaw: 0.5235988}
   - {name: ladder_03, type: COMBINATION_LADDER_A_FRAME, position: [6.2, 1.9], yaw: 1.5707963}
   - {name: ladder_04, type: LEANING_COMBINATION_LADDER, position: [6.0, 9.15], yaw: 0.0}
-  - {name: ladder_05, type: LEANING_COMBINATION_LADDER, position: [0.85, 5.0], yaw: -1.5707963}
+  - {name: ladder_05, type: LEANING_COMBINATION_LADDER, position: [0.85, 5.0], yaw: 1.5707963}
   - {name: ladder_06, type: TRESTLE, position: [2.6, 7.4], yaw: 0.2617994}
   - {name: ladder_07, type: TRESTLE, position: [10.6, 6.2], yaw: 1.5707963}
