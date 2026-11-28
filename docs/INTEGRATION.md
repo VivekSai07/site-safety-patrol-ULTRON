@@ -1,5 +1,47 @@
 # B2, DimOS and visualization integration
 
+## Current next baseline: label-first, operator-positioned simulation
+
+The prioritized next workflow is a simulated operator selecting/positioning
+one ladder, capturing overview and readable label evidence, and producing a
+minimal evidence-linked example draft for human completion. Capture, draft-contract
+and local adaptive-drafting code exists; a rendered synthetic HTTP probe
+produced a draft using manual fixture transcription and a locally retained
+source-specific catalog, separately from the existing demo. Browser controls and focus were checked separately in
+specified simulated setups; real OCR remains unverified. See
+[validation](VALIDATION.md). The local source-specific catalog is excluded
+from distribution pending rights review; the public synthetic example is not
+the official form or a complete mapping. The source form and five other
+forms require separate rights and completeness review. See
+[LABEL_FIRST_BASELINE.md](LABEL_FIRST_BASELINE.md).
+No source images are transmitted by this documentation change.
+
+Autonomous acquisition is a later milestone. The existing MuJoCo kinematic
+demo, the organizer DDS probes, and the derived evidence-capture mode are
+separate workflows; startup or message flow in one does not prove
+walking, inspection, or the others. A headless DDS smoke test observed finite
+LowState messages; a separate isolated viewer/stand probe observed a standing
+simulated B2 and finite command/state samples. Browser GUI/host access,
+walking and hardware remain untested. See the
+[organizer B2 guide](ORGANIZER_B2_SIM.md). No hardware connection or command
+is authorized.
+
+## Dashboard and assessment boundaries
+
+The separate dashboard, PDF path and versioned assessment packs are present;
+see [DASHBOARD.md](DASHBOARD.md) and [API_PROMPTS.md](API_PROMPTS.md).
+`ultron.assessment` constructs a hash-bound request and validates a proposal
+without calling a model. The local OpenAI adapter is a distinct, optional
+live path and requires explicit image/text-sharing approval; locally selected
+catalogs are fixture-only. Neither proves
+integration with the teleop draft.
+
+Dashboard goals default off. Its optional ROS bridge can forward a Nav2 action
+goal, but does not independently verify isolation from real hardware. Do not
+start it where a real action server is reachable. Localhost, ROS domain and
+namespace settings alone are not proof of isolation; this reconciliation
+authorizes no hardware connection.
+
 ## B2 is not a Go2 transport substitution
 
 Use the event starter and verified high-level B2 interface. DimOS's documented Go2 connection/blueprint is not evidence that Go2 WebRTC will control this B2. Unitree's low-level MuJoCo bridge and B2 description are useful for model/interface study; they do not supply the autonomous walking service used by the real robot. This repo sends no hardware commands.
@@ -29,4 +71,9 @@ Rerun export reads portable telemetry and metric depth, transforms MuJoCo camera
 
 `scripts/rviz.sh RUN` uses system `/usr/bin/python3`, sources Humble, sets localhost-only ROS domain 71, and replays the same frames. It visualizes dynamic B2 primitives (not a robot_state_publisher URDF), scene markers, track labels, path, RGB and base TF. The depth recording/camera extrinsics are preserved for Rerun; the current ROS replay does not publish depth or CameraInfo. It is an offline visualization node, not a sensor/nav bridge. Do not reuse its simulation frames as real robot frame names.
 
-This execution session permits headless MuJoCo EGL rendering but denies working display and ROS DDS sockets. Syntax/import checks do not establish a successful RViz session. On a normal Ubuntu/Humble desktop, run the command and verify topics and camera display before the event demo.
+The historical host-side RViz validation had headless MuJoCo EGL rendering but
+no working display or host ROS DDS sockets. Syntax/import checks did not
+establish a successful RViz session. The later organizer headless test used
+isolated container loopback and does not validate RViz or host DDS. On a
+normal Ubuntu/Humble desktop, run the command and verify topics and camera
+display before an event demo.

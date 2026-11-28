@@ -11,13 +11,17 @@ from .inspection import REQUIRED, fuse, verdict
 from .memory import Registry
 from .mujoco_sim import Simulation
 from .planning import Grid
-from .scene import scenarios
+from .scene import scenarios, safety_assets as default_safety_assets
 
 
-def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, viewer=False, motion='smooth', view_policy='bounded', detector='oracle', weights=None, inspector='oracle', qwen=None, allow_download=False, device='cpu', detector_family='yoloe'):
+def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, viewer=False, motion='smooth', view_policy='bounded', detector='oracle', weights=None, inspector='oracle', qwen=None, allow_download=False, device='cpu', detector_family='yoloe', safety=False, nav='scripted'):
+    output=Path(output)
+    # Evidence runs are immutable; refuse reuse BEFORE loading any model weights.
+    if output.exists():
+        raise SystemExit(f"Output directory '{output}' already exists; evidence runs are immutable. "
+                         "Pick a new --out or remove the old run first.")
     from .runtime_perception import RuntimePerception
     perception=RuntimePerception(detector=detector,weights=weights,inspector=inspector,qwen=qwen,allow_download=allow_download,device=device,family=detector_family)
-    output=Path(output)
     output.mkdir(parents=True,exist_ok=False)
     (output/'frames').mkdir()
     run_id=uuid.uuid4().hex
@@ -36,7 +40,9 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                 ladders[0]['defect']='bottom_feet'
                 if variant=='missing':
                     ladders=ladders[:-1]
-            sim=Simulation(ladders,output,viewer,clear_clutter=variant=='open-orbit')
+            sim=Simulation(ladders,output,viewer,clear_clutter=variant=='open-orbit',
+                           safety_assets=default_safety_assets() if safety else [])
+            safety_list=sim.safety_assets
             sim.frames=len(all_frames)
             sim.t=clock
             obstacles=[] if variant=='open-orbit' else [(4.2,2.45,5.0,3.55),(10.4,2.6,11.4,4.2)]
@@ -55,6 +61,13 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
             skipped=0
             reached=0
             route=[(1.5,1.5),(3.,3.2),(6.,3.2),(9.,3.2),(8.,2.),(1.5,1.5)]
+            planner=None
+            if nav=='auto':
+                from .patrol_planner import CoveragePlanner
+                # 2.2 m observation radius approximates reliable visual discovery
+                # range; smaller discs mean more goals and more DISCOVER bursts.
+                planner=CoveragePlanner(grid,sense_range=2.2)
+                planner.observe(sim.pose[:2])
             interventions=1 if variant=='intervention' and patrol==0 else 0
             mode='DEGRADED_TELEOP_ASSISTED' if interventions else 'AUTONOMOUS_SIMULATION'
 
@@ -67,6 +80,8 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
 
             def capture(state):
                 frame,rgb,depth,seg=sim.capture()
+                if planner is not None:
+                    planner.observe(sim.pose[:2])
                 frame.update(mission_id=mid,state=state)
                 all_frames.append(frame)
                 with (output/'telemetry.jsonl').open('a') as handle:
@@ -102,11 +117,21 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                                 capture(state)
                 return True
 
-            emit('MISSION_START',mission_mode=mode,operator_interventions=interventions)
+            emit('MISSION_START',mission_mode=mode,operator_interventions=interventions,
+                 zone_bounds=list(grid.bounds),keepouts=grid.obstacles,base=list(sim.pose[:2]))
             if interventions:
                 emit('OPERATOR_INTERVENTION',reason='INJECTED_TEST',motion_halted=True)
             try:
-                for waypoint in route:
+                def waypoints():
+                    if planner is None:
+                        yield from route
+                        return
+                    from .patrol_planner import make_nav_goal
+                    while (goal:=planner.next_goal(sim.pose[:2])) is not None:
+                        record=make_nav_goal(mid,goal[0],goal[1],math.pi/2,'coverage')
+                        emit('PATROL_GOAL_SELECTED',goal=record,coverage_pct=round(100*planner.coverage(),1))
+                        yield goal
+                for waypoint in waypoints():
                     emit('PATROL_WAYPOINT',goal=list(waypoint))
                     if not move(waypoint,'PATROL'):
                         skipped+=1
@@ -230,6 +255,65 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                         emit('INSPECTION_COMMITTED',asset_id=asset,status=payload['status'],retry_count=retry_count,reason=payload['reason'],
                              evidence=[view['rgb'] for view in views],checks=checks)
                         emit('ROUTE_RESUME',asset_id=asset)
+                if safety_list and patrol == 0:
+                    from .site_safety import sweep_manifest
+                    sweep_views = []
+                    for sa in safety_list:
+                        ax, ay, _ = sa['position']
+                        candidates = [(ax + dx, ay + dy) for dx, dy in
+                                      ((0, -1.8), (0, -2.4), (1.8, 0), (-1.8, 0), (0, 1.8), (0, 2.4), (-2.4, 0), (2.4, 0))]
+                        goal = next((g for g in candidates if grid.free(g)), None)
+                        emit('SAFETY_TARGET', asset_id=sa['key'], asset_kind=sa['kind'],
+                             goal=list(goal) if goal else None)
+                        if goal is None or not move(goal, 'SAFETY_APPROACH', yaw=math.atan2(ay - goal[1], ax - goal[0])):
+                            emit('SAFETY_CHECK_INCOMPLETE', asset_id=sa['key'], reason='APPROACH_BLOCKED')
+                            continue
+                        confirmed = None
+                        last_frame = None
+                        for _ in range(2):
+                            sim.t += .2
+                            frame, rgb, depth, seg = capture('SAFETY_INSPECT')
+                            last_frame = frame
+                            if perception.model_safety_mode:
+                                det = perception.safety_confirm(rgb, depth, frame, sa['kind'], sa['position'])
+                                if det:
+                                    confirmed = det
+                            else:
+                                for det in sim.oracle_safety_detections(frame, depth, seg):
+                                    if det['oracle_key'] == sa['key']:
+                                        confirmed = det
+                        judged = None
+                        if perception.safety_judge is not None:
+                            judged = perception.safety_judge_station([output / last_frame['rgb']], sa['kind'])
+                            if confirmed is None and judged['station_visible']:
+                                confirmed = {'oracle_key': sa['key'], 'kind': sa['kind'],
+                                             'source': 'QWEN_VL_PROPOSAL', 'reason': judged['reason']}
+                        if not confirmed:
+                            emit('SAFETY_CHECK_INCOMPLETE', asset_id=sa['key'],
+                                 reason='NOT_DETECTED_BY_MODEL' if perception.model_safety_mode else 'NOT_VISIBLE')
+                            continue
+                        emit('SAFETY_ASSET_CONFIRMED', asset_id=sa['key'], asset_kind=sa['kind'], observation=confirmed)
+                        sweep_views.append({'image_id': f"safety-{sa['key']}-{last_frame['index']:05}",
+                                            'path': last_frame['rgb'], 'path_abs': str(output / last_frame['rgb'])})
+                        emit('SAFETY_EVIDENCE_CAPTURED', asset_id=sa['key'], asset_kind=sa['kind'], rgb=last_frame['rgb'])
+                        if judged is not None:
+                            emit('SAFETY_STATION_JUDGED', asset_id=sa['key'], asset_kind=sa['kind'],
+                                 states=judged['states'], reason=judged['reason'], source='MODEL_PROPOSAL')
+                            for criterion, violation in (('psa.helm', 'PPE_HELMET_MISSING'), ('psa.warnweste', 'PPE_VEST_MISSING')):
+                                if judged['states'].get(criterion) == 'DEFECT':
+                                    emit('SAFETY_VIOLATION', asset_id=sa['key'], violation=violation,
+                                         evidence=last_frame['rgb'], source='MODEL_PROPOSAL',
+                                         note='Qwen3-VL pixel proposal; human review pending')
+                        elif sa['kind'] == 'person' and confirmed.get('source') == 'MUJOCO_SEGMENTATION_ORACLE':
+                            for flag, violation in (('helmet', 'PPE_HELMET_MISSING'), ('vest', 'PPE_VEST_MISSING')):
+                                if not confirmed[flag]:
+                                    emit('SAFETY_VIOLATION', asset_id=sa['key'], violation=violation,
+                                         evidence=last_frame['rgb'], source='SIMULATION_ORACLE',
+                                         note='Scene ground truth, not visual inference')
+                    if sweep_views:
+                        payload = sweep_manifest(mid, sweep_views, date.today().isoformat(), [*sim.pose[:2], 0.])
+                        (output / 'safety_sweep.json').write_text(json.dumps(payload, indent=2))
+                        emit('SAFETY_SWEEP_SAVED', views=len(sweep_views))
                 missing=db.missing(mid)
                 from .supervisor import decide
                 decision=decide([a for a in db.assets() if a['map_version']=='ultron_mock_site_v1'],
@@ -243,11 +327,12 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                          status='KNOWN_ASSETS_HANDLED_COVERAGE_UNVERIFIED' if returned_to_base else 'AWAIT_OPERATOR')
                 mission_status='COVERAGE_INCOMPLETE' if detector!='oracle' or missing or skipped or len(inspected)<len(ladders) else 'MISSION_COMPLETE'
                 summary={'mission_id':mid,'status':mission_status,'mission_mode':mode,
-                    'planned_waypoints':len(route),'reached_waypoints':reached,'skipped_waypoints':skipped,
+                    'planned_waypoints':len(route) if planner is None else planner.goals_issued,'reached_waypoints':reached,'skipped_waypoints':skipped,
                     'zone_bounds':list(grid.bounds),'keepout_rectangles':grid.obstacles,
                     'robot_inflation_radius_m':grid.radius,'grid_resolution_m':grid.resolution,
-                    'waypoint_coverage_pct':100*reached/len(route),'unscanned_area_pct':None,
-                    'coverage_note':'Waypoint completion is NOT measured area coverage',
+                    'waypoint_coverage_pct':100*reached/len(route) if planner is None else (100*reached/max(planner.goals_issued,1)),'unscanned_area_pct':None,
+                    'observed_coverage_pct':round(100*planner.coverage(),1) if planner else None,
+                    'coverage_note':'Planner grid-cell observation estimate, not certified area coverage' if planner else 'Waypoint completion is NOT measured area coverage',
                     'expected_ground_truth':len(ladders),'found':len(inspected),
                     'ladder_recall_simulation':len(inspected)/len(ladders) if detector=='oracle' else None,'missing_expected':missing,
                     'operator_interventions':interventions,'duration_sim_s':round(sim.t-clock,2),

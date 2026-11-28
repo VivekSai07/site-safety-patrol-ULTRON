@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""ROS 2 bridge between Nav2 and the ULTRON dashboard. Simulation only (AGENTS.md v0.3).
+"""ROS 2 bridge between Nav2 and the ULTRON dashboard.
+
+Use only after independently verifying simulation isolation. This bridge has
+no hardware-isolation guard and may send goals to any reachable action server.
+The dashboard has no user authentication, including on localhost.
 
   ROS -> dashboard: /map (OccupancyGrid) as a PNG; the robot pose from TF map -> base frame.
   dashboard -> ROS: each goal set on the map becomes a nav2 NavigateToPose action goal; progress
@@ -9,8 +13,7 @@ A new dashboard goal cancels the running one, like RViz's 2D Goal Pose. Goals th
 bridge started are ignored, so a restart never replays an old goal. The dashboard only accepts goals
 when started with --goals.
 
-  python3 -m ultron.dashboard --goals &
-  python3 scripts/dashboard_bridge.py --ros-args -p base_frame:=base_link   (ROS sourced; finds src/ itself)
+See docs/dashboard_nav_goal.md for the simulation-only procedure and limits.
 """
 import queue
 import sys

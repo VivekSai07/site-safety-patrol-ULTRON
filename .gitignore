@@ -15,13 +15,24 @@ datasets/
 *.pth
 *.safetensors
 *.onnx
+# Downloaded MobileCLIP TorchScript checkpoint; retain locally, never commit.
+/mobileclip_blt.ts
 *.rrd
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
 .env
 .env.*
+# Local reference-derived artifacts and teammate source pending rights review.
+docs/NESSLER_IMAGE_REVIEW.md
+src/ultron/assets/schemas/nesseler_ladder_checklist_v1.json
+src/ultron/detection_world/hall_scene.py
+src/ultron/detection_world/hall_scene.py.local
 # nesseler form and other downloaded reference data stay local
 data/
 # Text encoder that YOLOE downloads into the working directory on first use.
 mobileclip*.ts
+# Expanded prompt manifests are reproducible; keep the requested ZIP artifact.
+/deliverables/ULTRON_inspection_prompt_pack_v1/
+# Knowledge-graph data directory (generated)
+.ua/

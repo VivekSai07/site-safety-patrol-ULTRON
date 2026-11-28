@@ -1,0 +1,34 @@
+services:
+  robot:
+    image: ${ULTRON_KIT_IMAGE:?Set ULTRON_KIT_IMAGE}
+    user: "0:0"
+    working_dir: /opt/kit
+    read_only: true
+    network_mode: none
+    ipc: none
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - type: bind
+        source: ../scripts/organizer_b2_viewer.sh
+        target: /opt/ultron/viewer.sh
+        read_only: true
+      - type: bind
+        source: ${ULTRON_XKB_DIR:?Set ULTRON_XKB_DIR}
+        target: /var/lib/xkb
+    command: [bash, /opt/ultron/viewer.sh]
+  ros:
+    image: ${ULTRON_KIT_IMAGE:?Set ULTRON_KIT_IMAGE}
+    user: "0:0"
+    working_dir: /opt/kit
+    read_only: true
+    network_mode: service:robot
+    ipc: none
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on: [robot]
+    environment:
+      ROS_DOMAIN_ID: "71"
+      CYCLONEDDS_URI: file:///opt/kit/cyclonedds-lo.xml
+      PYTHONDONTWRITEBYTECODE: "1"
+    command: sleep infinity

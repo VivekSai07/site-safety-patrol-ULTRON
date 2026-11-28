@@ -1,4 +1,29 @@
-# ULTRON dataset plan: simulation now, real captures this evening
+# ULTRON dataset and label-first evidence plan
+
+## Current priority: label-first simulated capture
+
+The prioritized next baseline is an operator-positioned, simulation-only
+capture of a selected ladder overview and readable manufacturer/inspection
+label, followed by an evidence-linked draft mapped to the Nesseller
+checklist as a later goal. The public draft schema is a minimal synthetic
+example, not a Nesseller mapping. A rendered synthetic capture-to-draft probe
+used HTTP requests, manual fixture transcription and a locally retained
+source-specific catalog; browser controls were checked separately in
+simulation, while real label/OCR performance remains untested. The legacy
+simulator does not implement this workflow. The local catalog is excluded
+from distribution pending rights review and is not the official form or a
+completeness claim.
+See the [validation record](VALIDATION.md) and the
+[form and capture baseline](LABEL_FIRST_BASELINE.md).
+
+Keep complete original images and metadata; crops are linked derivatives, not
+independent views. Select additional views only to resolve missing, obscured
+or unreadable visual fields; there is no measured minimum image count.
+Fourteen unannotated source photos are not fourteen independent physical
+ladders and do not establish camera or model performance. Tactile,
+functional, structural, authorization and sign-off fields remain human
+responsibilities. Real capture remains a future, explicitly authorized
+component activity; this documentation does not authorize hardware access.
 
 ## Available now
 

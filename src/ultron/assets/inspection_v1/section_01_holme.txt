@@ -1,0 +1,18 @@
+Section 1: Holme / rails
+
+holme.verformung — Verformung [mode=visual]
+Look for bowed, kinked or twisted rails; compare continuous rail edges.
+
+holme.beschaedigung — Beschädigung (z.B. Risse) [mode=visual]
+Inspect visible rail surfaces for cracks, splits and impact damage; dirt alone is not a crack.
+
+holme.kanten — Scharfe Kanten, Splitter, Grat [mode=person]
+Visible burrs or splinters may be reported as damage; absence of sharpness requires a person.
+
+holme.abnutzung — Abnutzung [mode=visual]
+Distinguish worn material from cosmetic scuffs and lighting; hidden thickness is unknown.
+
+holme.schutz — Schutzbehandlung (bei Holz) [mode=person]
+Wood treatment adequacy cannot be established from colour/shine. Visible peeling is an observation only.
+
+Only verified applicability may yield N_A. Unseen components are UNKNOWN, not intact.

@@ -1,0 +1,18 @@
+Section 2: Sprossen/Stufen/Plattform / rungs, steps, platform
+
+sprossen.verformung — Verformung [mode=visual]
+Look for sagged, bent or twisted rungs/steps/platform, retaining an overview for context.
+
+sprossen.beschaedigung — Beschädigung [mode=visual]
+Look for missing/cracked/broken treads or platform pieces; do not infer occluded parts are present.
+
+sprossen.kanten — Scharfe Kanten, Splitter, Grat [mode=person]
+Report visible broken edges/splinters, but do not claim tactile smoothness.
+
+sprossen.verbindung — Verbindung zum Holm [mode=visual]
+Inspect visible rung-to-rail interfaces for separation or missing fasteners; no inference about tightness.
+
+sprossen.abnutzung — Abnutzung (Trittfläche, Plattformauflage) [mode=visual]
+Inspect tread texture/material loss; reflectance or dust alone is not wear.
+
+Only verified applicability may yield N_A. Unseen components are UNKNOWN, not intact.

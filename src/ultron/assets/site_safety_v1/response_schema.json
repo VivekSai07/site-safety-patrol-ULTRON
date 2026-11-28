@@ -1,0 +1,396 @@
+{
+ "type": "object",
+ "properties": {
+  "bundle_id": {
+   "type": "string"
+  },
+  "asset_id": {
+   "type": "string"
+  },
+  "criteria": {
+   "type": "object",
+   "properties": {
+    "ext.vorhanden": {
+     "type": "object",
+     "properties": {
+      "state": {
+       "type": "string",
+       "enum": [
+        "OK",
+        "DEFECT",
+        "UNKNOWN",
+        "NOT_CHECKED",
+        "N_A"
+       ]
+      },
+      "reason": {
+       "type": "string"
+      },
+      "confidence": {
+       "type": "number",
+       "minimum": 0,
+       "maximum": 1
+      },
+      "evidence_ids": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "required": [
+      "state",
+      "reason",
+      "confidence",
+      "evidence_ids"
+     ],
+     "additionalProperties": false
+    },
+    "ext.zugaenglich": {
+     "type": "object",
+     "properties": {
+      "state": {
+       "type": "string",
+       "enum": [
+        "OK",
+        "DEFECT",
+        "UNKNOWN",
+        "NOT_CHECKED",
+        "N_A"
+       ]
+      },
+      "reason": {
+       "type": "string"
+      },
+      "confidence": {
+       "type": "number",
+       "minimum": 0,
+       "maximum": 1
+      },
+      "evidence_ids": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "required": [
+      "state",
+      "reason",
+      "confidence",
+      "evidence_ids"
+     ],
+     "additionalProperties": false
+    },
+    "ext.pruefplakette": {
+     "type": "object",
+     "properties": {
+      "state": {
+       "type": "string",
+       "enum": [
+        "OK",
+        "DEFECT",
+        "UNKNOWN",
+        "NOT_CHECKED",
+        "N_A"
+       ]
+      },
+      "reason": {
+       "type": "string"
+      },
+      "confidence": {
+       "type": "number",
+       "minimum": 0,
+       "maximum": 1
+      },
+      "evidence_ids": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "required": [
+      "state",
+      "reason",
+      "confidence",
+      "evidence_ids"
+     ],
+     "additionalProperties": false
+    },
+    "firstaid.aushang": {
+     "type": "object",
+     "properties": {
+      "state": {
+       "type": "string",
+       "enum": [
+        "OK",
+        "DEFECT",
+        "UNKNOWN",
+        "NOT_CHECKED",
+        "N_A"
+       ]
+      },
+      "reason": {
+       "type": "string"
+      },
+      "confidence": {
+       "type": "number",
+       "minimum": 0,
+       "maximum": 1
+      },
+      "evidence_ids": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "required": [
+      "state",
+      "reason",
+      "confidence",
+      "evidence_ids"
+     ],
+     "additionalProperties": false
+    },
+    "firstaid.kasten": {
+     "type": "object",
+     "properties": {
+      "state": {
+       "type": "string",
+       "enum": [
+        "OK",
+        "DEFECT",
+        "UNKNOWN",
+        "NOT_CHECKED",
+        "N_A"
+       ]
+      },
+      "reason": {
+       "type": "string"
+      },
+      "confidence": {
+       "type": "number",
+       "minimum": 0,
+       "maximum": 1
+      },
+      "evidence_ids": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "required": [
+      "state",
+      "reason",
+      "confidence",
+      "evidence_ids"
+     ],
+     "additionalProperties": false
+    },
+    "flucht.kennzeichnung": {
+     "type": "object",
+     "properties": {
+      "state": {
+       "type": "string",
+       "enum": [
+        "OK",
+        "DEFECT",
+        "UNKNOWN",
+        "NOT_CHECKED",
+        "N_A"
+       ]
+      },
+      "reason": {
+       "type": "string"
+      },
+      "confidence": {
+       "type": "number",
+       "minimum": 0,
+       "maximum": 1
+      },
+      "evidence_ids": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "required": [
+      "state",
+      "reason",
+      "confidence",
+      "evidence_ids"
+     ],
+     "additionalProperties": false
+    },
+    "flucht.frei": {
+     "type": "object",
+     "properties": {
+      "state": {
+       "type": "string",
+       "enum": [
+        "OK",
+        "DEFECT",
+        "UNKNOWN",
+        "NOT_CHECKED",
+        "N_A"
+       ]
+      },
+      "reason": {
+       "type": "string"
+      },
+      "confidence": {
+       "type": "number",
+       "minimum": 0,
+       "maximum": 1
+      },
+      "evidence_ids": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "required": [
+      "state",
+      "reason",
+      "confidence",
+      "evidence_ids"
+     ],
+     "additionalProperties": false
+    },
+    "psa.helm": {
+     "type": "object",
+     "properties": {
+      "state": {
+       "type": "string",
+       "enum": [
+        "OK",
+        "DEFECT",
+        "UNKNOWN",
+        "NOT_CHECKED",
+        "N_A"
+       ]
+      },
+      "reason": {
+       "type": "string"
+      },
+      "confidence": {
+       "type": "number",
+       "minimum": 0,
+       "maximum": 1
+      },
+      "evidence_ids": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "required": [
+      "state",
+      "reason",
+      "confidence",
+      "evidence_ids"
+     ],
+     "additionalProperties": false
+    },
+    "psa.warnweste": {
+     "type": "object",
+     "properties": {
+      "state": {
+       "type": "string",
+       "enum": [
+        "OK",
+        "DEFECT",
+        "UNKNOWN",
+        "NOT_CHECKED",
+        "N_A"
+       ]
+      },
+      "reason": {
+       "type": "string"
+      },
+      "confidence": {
+       "type": "number",
+       "minimum": 0,
+       "maximum": 1
+      },
+      "evidence_ids": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     },
+     "required": [
+      "state",
+      "reason",
+      "confidence",
+      "evidence_ids"
+     ],
+     "additionalProperties": false
+    }
+   },
+   "required": [
+    "ext.vorhanden",
+    "ext.zugaenglich",
+    "ext.pruefplakette",
+    "firstaid.aushang",
+    "firstaid.kasten",
+    "flucht.kennzeichnung",
+    "flucht.frei",
+    "psa.helm",
+    "psa.warnweste"
+   ],
+   "additionalProperties": false
+  },
+  "label": {
+   "type": "object",
+   "properties": {
+    "raw_text": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "due_date_iso": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "due_date_explicit": {
+     "type": "boolean"
+    },
+    "evidence_ids": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "raw_text",
+    "due_date_iso",
+    "due_date_explicit",
+    "evidence_ids"
+   ],
+   "additionalProperties": false
+  },
+  "summary": {
+   "type": "string"
+  }
+ },
+ "required": [
+  "bundle_id",
+  "asset_id",
+  "criteria",
+  "label",
+  "summary"
+ ],
+ "additionalProperties": false
+}

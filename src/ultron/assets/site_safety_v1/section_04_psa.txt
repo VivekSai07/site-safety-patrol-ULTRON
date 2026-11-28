@@ -1,0 +1,9 @@
+Section 4: PSA / personal protective equipment
+
+psa.helm — Helmpflicht eingehalten [mode=visual]
+Every visible person must wear a safety helmet. Any bare-headed person is DEFECT with that image as evidence. No visible persons: UNKNOWN unless the caller verified N_A.
+
+psa.warnweste — Warnweste getragen [mode=visual]
+Every visible person must wear a high-visibility vest. Any person without one is DEFECT.
+
+Report each violating person once per criterion with the clearest evidence image.

@@ -1,0 +1,9 @@
+Section 2: Erste Hilfe / first aid
+
+firstaid.aushang — Aushang Erste Hilfe [mode=visual]
+Confirm a posted first-aid notice or marking near the station.
+
+firstaid.kasten — Verbandkasten vorhanden/gekennzeichnet [mode=visual]
+Confirm a first-aid box with green-cross marking. Contents and expiry are not visible from outside; that stays UNKNOWN.
+
+Only verified applicability may yield N_A. Unseen stations are UNKNOWN, not compliant.

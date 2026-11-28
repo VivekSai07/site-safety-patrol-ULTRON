@@ -1,0 +1,28 @@
+services:
+  robot:
+    image: ${ULTRON_KIT_IMAGE:?Set ULTRON_KIT_IMAGE}
+    read_only: true
+    network_mode: none
+    ipc: none
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      ROBOT: b2
+      DOMAIN: "71"
+      IFACE: lo
+      VIEWER: "0"
+      STAND: "0"
+    command: run-sim
+  ros:
+    image: ${ULTRON_KIT_IMAGE:?Set ULTRON_KIT_IMAGE}
+    read_only: true
+    network_mode: service:robot
+    ipc: none
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on: [robot]
+    environment:
+      ROS_DOMAIN_ID: "71"
+      CYCLONEDDS_URI: file:///opt/kit/cyclonedds-lo.xml
+      PYTHONDONTWRITEBYTECODE: "1"
+    command: sleep infinity

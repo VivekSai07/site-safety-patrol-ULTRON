@@ -37,13 +37,27 @@ bash scripts/organizer-sim.sh shell
 bash scripts/organizer-sim.sh stop
 ```
 
-Compose configuration was checked locally. Container build/start and live DDS subscription were not tested because this execution environment denies Docker socket access. No physical connection was made. First kit acceptance: a standing B2 with observable lowstate and matching ROS messages. Walking requires an independently integrated controller and separate validation.
+The original assessment checked Compose configuration only. A later isolated
+run built the image and observed a standing B2, noVNC protocol traffic and
+finite DDS/ROS samples; host-browser access to that stock viewer was not
+verified. See [the verified probe and limitations](ORGANIZER_B2_SIM.md). No
+physical connection was made. Walking requires an independently integrated
+controller and separate validation. The upstream wrapper above uses host
+namespaces; in a shared environment prefer the isolated team-side probes in
+the linked guide.
 
 ## Nesseler protocol and photos
 
-The PDF is a BGI 694 sample form. Page 1 identifies inventory, location, type/material, rung count, length, manufacturer/type, purchase/withdrawal dates and responsible inspector. Pages 2–3 contain seven sections: rails; rungs/steps/platform; spreaders; fittings; feet/rollers; accessories; markings. The result offers usable / repair / withdraw, remarks, next inspection month/year and inspection date. Repeated “3. Prüfung” is a source-form column typo; ULTRON retains ordered history.
+The PDF is a BGI 694 sample form. Page 1 concerns equipment and inspection context; pages 2–3 cover condition checks and human outcomes. A column heading repeats, but its cause is unverified. Keep inspection history ordered and compare any proposed mapping with the authorized source; the public synthetic example is neither the official form nor evidence of complete coverage.
 
-`export-nesseler` preserves all sections/criteria, attaches inspection-level evidence and retains screening flags. Each individual criterion stays `PLEASE_CHECK` pending evidence-backed human completion. Coarse component PASS does not establish every criterion. Map IDs need confirmation against physical inventory. Responsible inspector, date, next inspection and formal result stay pending. Historical sticker dates are not automatically current deadlines. Existing simulation reports/history remain available without a database migration.
+The legacy `export-nesseler` path already present in main emits source-derived
+criterion labels whose reuse rights remain unverified. Do not share its output
+externally without separate approval and rights review. It attaches
+inspection-level evidence and retains screening flags; each criterion remains
+`PLEASE_CHECK` for human completion. Coarse component PASS does not establish
+every criterion. Map IDs, dates and outcomes require qualified verification.
+The public generic draft example is separate and does not claim complete
+source-form coverage.
 
 ```bash
 PYTHONPATH=src python3 -m ultron export-nesseler runs/ultron-demo --out runs/ultron-demo/nesseler.json

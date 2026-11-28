@@ -1,0 +1,12 @@
+Section 5: Leiter-/Trittfüße/Rollen / feet and rollers
+
+fuesse.vollstaendigkeit — Vollständigkeit/Befestigung [mode=visual]
+Inspect every required foot/roller seen, including rear feet; obscured feet remain unknown.
+
+fuesse.abnutzung — Abnutzung/Beschädigung [mode=visual]
+Inspect visible foot-cap tears, tread wear and roller damage; keep ground-contact context.
+
+fuesse.funktion — Funktionsfähigkeit [mode=person]
+Grip, brake function and loaded stability require physical checks; apparent floor contact is insufficient.
+
+Only verified applicability may yield N_A. Unseen components are UNKNOWN, not intact.

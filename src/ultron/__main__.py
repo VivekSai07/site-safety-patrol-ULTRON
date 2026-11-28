@@ -3,6 +3,7 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import sys
 import uuid
 
 
@@ -25,6 +26,8 @@ def main():
     demo.add_argument('--device',default='cpu')
     demo.add_argument('--detector-family',choices=['yoloe','world','custom'],default='yoloe')
     demo.add_argument('--motion',choices=['smooth','legacy'],default='smooth')
+    demo.add_argument('--safety',action='store_true',help='Also check fire/first-aid/escape/PPE props during patrol 0')
+    demo.add_argument('--nav',choices=['scripted','auto'],default='scripted',help='auto: coverage-planner goal selection instead of the scripted route')
     demo.add_argument('--rerun',action='store_true',help='Export/open Rerun after simulation')
     query=sub.add_parser('query')
     query.add_argument('database',type=Path)
@@ -73,6 +76,16 @@ def main():
     nesseler=sub.add_parser('export-nesseler',help='Export organizer checklist hand-off with pending human checks')
     nesseler.add_argument('run',type=Path)
     nesseler.add_argument('--out',type=Path,required=True)
+    adaptive=sub.add_parser('adaptive-draft',help='Build a local evidence-linked Nesseler draft')
+    adaptive.add_argument('manifest',type=Path,help='Local JSON manifest with views and manual/fixture observations')
+    adaptive.add_argument('--sessions-root',type=Path,default=Path('runs/label-first-sessions'))
+    adaptive.add_argument('--ladder-id',required=True)
+    adaptive.add_argument('--operator-id')
+    adaptive.add_argument('--session-id')
+    sub.add_parser('teleop',help='Run the local simulated B2 teleoperation UI')
+    if len(sys.argv) > 1 and sys.argv[1] == 'teleop':
+        from .teleop import main as teleop_main
+        return teleop_main(sys.argv[2:])
     args=parser.parse_args()
     try:
         if args.command=='demo':
@@ -80,7 +93,7 @@ def main():
                 os.environ.setdefault('MUJOCO_GL','egl')
             from .mission import run_demo
             output=args.out or Path('runs')/(datetime.now().strftime('%Y%m%d-%H%M%S-')+uuid.uuid4().hex[:6])
-            result=run_demo(output,args.database,args.patrols,args.variant,not args.no_recovery,args.viewer,args.motion,args.view_policy,args.detector,args.weights,args.inspector,args.qwen,args.allow_download,args.device,args.detector_family)
+            result=run_demo(output,args.database,args.patrols,args.variant,not args.no_recovery,args.viewer,args.motion,args.view_policy,args.detector,args.weights,args.inspector,args.qwen,args.allow_download,args.device,args.detector_family,safety=args.safety,nav=args.nav)
             print(json.dumps({'output':str(output),'missions':[{k:m[k] for k in ['mission_id','status','found','missing_expected']} for m in result['missions']]},indent=2))
             if args.rerun:
                 from .rerun_view import export_rerun
@@ -121,6 +134,16 @@ def main():
             result=analyze(args.images,args.out,weights=args.weights,family=args.family,qwen=args.qwen,
                            ladder_type=args.ladder_type,allow_download=args.allow_download,device=args.device)
             print(json.dumps({'status':result['status'],'report':str(args.out/'report.html')},indent=2))
+        elif args.command=='adaptive-draft':
+            from .adaptive_draft import build_adaptive_draft_from_file
+            result=build_adaptive_draft_from_file(
+                args.manifest,
+                sessions_root=args.sessions_root,
+                ladder_id=args.ladder_id,
+                operator_id=args.operator_id,
+                session_id=args.session_id,
+            )
+            print(json.dumps(result,indent=2))
         else:
             from .dimos_bridge import ingest
             ingest(args.run,args.database)
