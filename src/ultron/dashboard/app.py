@@ -12,10 +12,10 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
-from . import checklist, protocol_pdf
+from . import checklist, protocol_pdf, site_checklists
 from .bus import Bus, sse_stream
 from .models import (EXPLORATION_ACTIVE, Event, ExplorationAction, ExplorationRequest, ExplorationState,
-                     ExplorationUpdate, Goal, GoalUpdate, Inspection, MissionEnd, MissionStart, Pose, safe_id)
+                     ExplorationUpdate, Goal, GoalUpdate, Inspection, MissionEnd, MissionStart, Pose, SiteCheck, safe_id)
 from .notify import Notifier, load_config
 from .store import Duplicate, Store, now
 
@@ -105,6 +105,10 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
     @app.get('/history', include_in_schema=False)
     async def history_page():
         return FileResponse(STATIC / 'history.html', headers=NO_CACHE)
+
+    @app.get('/patrol', include_in_schema=False)
+    async def patrol_page():
+        return FileResponse(STATIC / 'patrol.html', headers=NO_CACHE)
 
     @app.get('/ladder', include_in_schema=False)
     async def ladder_page():
@@ -346,6 +350,90 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
         await asyncio.to_thread(notifier.on_inspection, record)
         return {'ok': True}
 
+    # Site checks: nesseler's other checklists. Taken in and kept for the history pages only;
+    # the live page stays about ladders.
+    @app.get('/api/site-checklists')
+    async def site_checklist_catalogue():
+        return site_checklists.describe()
+
+    @app.post('/api/missions/{mission_id}/site-checks', status_code=201)
+    async def add_site_check(mission_id: str, body: SiteCheck):
+        require_mission(mission_id)
+        store.put_site_check(mission_id, body)
+        return {'mission_id': mission_id, 'object_id': body.object_id}
+
+    @app.get('/api/missions/{mission_id}/site-checks')
+    async def get_site_checks(mission_id: str):
+        require_mission(mission_id)
+        return store.site_checks(mission_id)
+
+    @app.get('/api/missions/{mission_id}/site-summary')
+    async def get_site_summary(mission_id: str):
+        require_mission(mission_id)
+        return {'mission_id': mission_id,
+                **site_checklists.patrol_summary(store.site_checks(mission_id), store.inspections(mission_id))}
+
+    def csv_response(rows, filename):
+        out = io.StringIO()
+        csv.writer(out).writerows(rows)
+        return Response(out.getvalue(), media_type='text/csv',
+                        headers={'Content-Disposition': f'attachment; filename="{filename}"'})
+
+    def patrol_summary(mission_id):
+        return site_checklists.patrol_summary(store.site_checks(mission_id), store.inspections(mission_id))
+
+    @app.get('/api/missions/{mission_id}/site-checks.csv')
+    async def site_checks_csv(mission_id: str):
+        mission = require_mission(mission_id)
+        rows = [['site', 'mission', 'checklist', 'row', 'section', 'text', 'answer', 'objects', 'remark', 'photo']]
+        for c in patrol_summary(mission_id)['checklists']:
+            for r in c['rows']:
+                photo = f"/media/{mission_id}/{r['photo']}.jpg" if r['photo'] else ''
+                rows.append([mission['site_id'], mission_id, c['title'], r['id'], r['section'], r['text'], r['answer'],
+                             ' '.join(r['objects']), r['remark'], photo])
+        return csv_response(rows, f'checklists_{mission_id}.csv')
+
+    @app.get('/api/missions/{mission_id}/objects.csv')
+    async def objects_csv(mission_id: str):
+        """Every kind the checklists ask about, found or not: one line per object, one line for a kind not found."""
+        mission = require_mission(mission_id)
+        checks = {c['object_id']: c for c in store.site_checks(mission_id)}
+        rows = [['site', 'mission', 'kind', 'label', 'detector', 'found', 'object', 'x_m', 'y_m', 'confirmed', 'remarks']]
+        for p in patrol_summary(mission_id)['presence']:
+            base = [mission['site_id'], mission_id, p['kind'], p['label'], 'ja' if p['detector'] else 'nein']
+            if not p['found']:
+                rows.append([*base, 'nein' if p['detector'] else 'kein Detektor', '', '', '', '', ''])
+            for object_id in p['objects']:
+                c = checks[object_id]
+                x, y = c['position'] or ('', '')
+                rows.append([*base, 'ja', object_id, x, y, 'ja' if c['verified'] else 'nein', c['remarks']])
+        return csv_response(rows, f'objects_{mission_id}.csv')
+
+    @app.get('/api/sites/{site_id}/site-checks')
+    async def site_checks_by_patrol(site_id: str):
+        """Per patrol of the site: each checklist's headline and how many objects of each kind it found."""
+        patrols = []
+        for m in store.missions(site_id):
+            summary = patrol_summary(m['id'])
+            patrols.append({'mission_id': m['id'], 'started': m['started'],
+                            'headlines': {c['key']: c['headline'] for c in summary['checklists']},
+                            'found': {p['kind']: p['found'] for p in summary['presence']},
+                            'objects': sum(p['found'] for p in summary['presence'])})
+        kinds = [{'kind': k, 'label': site_checklists.KIND_LABELS[k], 'detector': k not in site_checklists.NO_DETECTOR}
+                 for k in site_checklists.kinds()]
+        return {'patrols': patrols, 'kinds': kinds}
+
+    @app.get('/api/sites/{site_id}/objects.csv')
+    async def site_objects_csv(site_id: str):
+        """Objects found per kind across the site's patrols, oldest patrol first."""
+        missions = list(reversed(store.missions(site_id)))
+        found = {m['id']: {p['kind']: p['found'] for p in patrol_summary(m['id'])['presence']} for m in missions}
+        rows = [['kind', 'label', 'detector', *[m['id'] for m in missions]]]
+        for k in site_checklists.kinds():
+            rows.append([k, site_checklists.KIND_LABELS[k], 'ja' if k not in site_checklists.NO_DETECTOR else 'nein',
+                         *[found[m['id']][k] for m in missions]])
+        return csv_response(rows, f'objects_{site_id}.csv')
+
     @app.get('/api/checklist')
     async def checklist_structure():
         return checklist.describe()
@@ -409,7 +497,8 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
     async def export_json(mission_id: str):
         mission = require_mission(mission_id)
         return {'mission': mission, 'inspections': store.inspections(mission_id), 'alerts': store.alerts(mission_id),
-                'checklist': checklist.describe(),
+                'checklist': checklist.describe(), 'site_checks': store.site_checks(mission_id),
+                'site_summary': patrol_summary(mission_id),
                 'disclaimer': 'Automated visual pre-screening only. Never a safe-to-use certificate.'}
 
     @app.get('/api/missions/{mission_id}/export.csv')

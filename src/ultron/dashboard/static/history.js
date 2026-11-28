@@ -1,6 +1,6 @@
 // Site history: ladders across patrols and the list of patrols.
 const $ = id => document.getElementById(id);
-const H = {site: new URLSearchParams(location.search).get('site'), missions: [], ladders: {}};
+const H = {site: new URLSearchParams(location.search).get('site'), missions: [], ladders: {}, checks: {}, kinds: []};
 
 async function boot() {
   const sites = await getJSON('/api/sites');
@@ -15,6 +15,9 @@ async function boot() {
     return {...full, alerts: alerts.filter(a => a.severity !== 'info')};
   }));
   H.ladders = await getJSON(`/api/sites/${encodeURIComponent(H.site)}/ladders`);
+  const checks = await getJSON(`/api/sites/${encodeURIComponent(H.site)}/site-checks`);
+  H.checks = Object.fromEntries(checks.patrols.map(p => [p.mission_id, p]));
+  H.kinds = checks.kinds;
   render();
 }
 
@@ -46,11 +49,29 @@ function render() {
         el('td', {}, el('a', {href: `/api/sites/${encodeURIComponent(H.site)}/ladders/${id}/report.pdf`, target: '_blank'}, t('report'))));
     })));
 
+  renderObjects(order);
+
   // One card per patrol, newest first (the API's order), with the ladders it inspected underneath.
   // The newest card starts open; which cards are open survives a re-render (language or theme switch).
   if (!H.open) H.open = new Set(H.missions.slice(0, 1).map(m => m.id));
   fill($('patrols'), H.missions.length ? H.missions.map(m => patrolCard(m, H.open.has(m.id))) : el('p', {class: 'sub'}, t('h.empty')));
 }
+
+// Objects of each kind the checklists ask about, per patrol, oldest first: how often each was found.
+function renderObjects(order) {
+  $('objects-dl').href = `/api/sites/${encodeURIComponent(H.site || '')}/objects.csv`;
+  $('objects-dl').hidden = !H.site;
+  fill($('objects-matrix'),
+    el('thead', {}, el('tr', {}, el('th', {}, t('h.kind')), order.map(id => el('th', {}, el('a', {class: 'mono', href: patrolUrl(id)}, id))))),
+    el('tbody', {}, H.kinds.map(k => el('tr', {},
+      el('td', {}, t(`kind.${k.kind}`), k.detector ? null : el('span', {class: 'sub'}, ` · ${t('ans.kein_detektor')}`)),
+      order.map(id => {
+        const n = ((H.checks[id] || {}).found || {})[k.kind] || 0;
+        return el('td', {}, n ? answerPill('ja', String(n)) : el('span', {class: 'sub'}, k.detector ? '–' : '·'));
+      })))));
+}
+
+const patrolUrl = id => `/patrol?${new URLSearchParams({id})}`;
 
 const SEVERITY = {FLAGGED: 0, MANUAL_REVIEW: 1, INSPECTING: 2, AUTOMATED_PASS: 3};
 
@@ -66,12 +87,13 @@ function patrolCard(m, open) {
   const started = new Date(m.started).toLocaleString(LANG === 'de' ? 'de-DE' : 'en-GB', {dateStyle: 'short', timeStyle: 'short'});
   const ladders = m.inspections.slice().sort((a, b) =>
     (SEVERITY[a.status] ?? 9) - (SEVERITY[b.status] ?? 9) || a.asset_id.localeCompare(b.asset_id));
+  const checks = H.checks[m.id] || {headlines: {}, objects: 0};
   const counts = [[t('h.ladders'), m.inspections.length, ''], [t('h.flagged'), flagged, flagged ? 'color:var(--flag-fg);font-weight:700' : ''],
-    [t('h.alerts'), m.alerts.length, '']];
+    [t('h.objects'), checks.objects, ''], [t('h.alerts'), m.alerts.length, '']];
   return el('details', {class: `card patrol${flagged ? ' has-flag' : ''}`, open: open || null,
     ontoggle: e => { if (e.target.open) H.open.add(m.id); else H.open.delete(m.id); }},
     el('summary', {},
-      el('span', {class: 'mono', style: 'font-weight:700'}, m.id),
+      el('a', {class: 'mono', style: 'font-weight:700', href: patrolUrl(m.id), onclick: e => e.stopPropagation()}, m.id),
       el('span', {class: 'sub'}, started),
       m.status === 'RUNNING' ? el('span', {class: 'pill s-INSPECTING'}, t('h.running')) : null,
       el('span', {class: 'counts'}, counts.map(([label, n, style]) => el('span', {style}, `${n} ${label}`)))),
@@ -84,7 +106,14 @@ function patrolCard(m, open) {
         el('td', {}, reasonText(r)),
         el('td', {}, changeAt(r.asset_id, m.id)),
         el('td', {}, el('a', {href: reportUrl(H.site, r), target: '_blank'}, t('report')))))))) : el('p', {class: 'sub'}, t('h.none')),
-    el('div', {class: 'sub'}, `${t('h.data')}: `, el('a', {href: `/api/missions/${m.id}/export.csv`}, 'CSV'), ' · ',
+    el('div', {class: 'patrol-links'}, el('span', {class: 'sub'}, `${t('h.checks')}:`),
+      Object.entries(checks.headlines).map(([key, headline]) => answerPill(headline, `${t(`cl.${key}`)} · ${t(`ans.${headline}`)}`))),
+    el('div', {class: 'patrol-links'},
+      el('a', {class: 'btn primary', href: patrolUrl(m.id), style: 'text-decoration:none'}, t('h.open_patrol')),
+      el('span', {class: 'sub'}, `${t('h.data')}: `),
+      el('a', {href: `/api/missions/${m.id}/export.csv`}, `${t('p.dl_ladders')} CSV`),
+      el('a', {href: `/api/missions/${m.id}/site-checks.csv`}, `${t('p.dl_checklists')} CSV`),
+      el('a', {href: `/api/missions/${m.id}/objects.csv`}, `${t('p.dl_objects')} CSV`),
       el('a', {href: `/api/missions/${m.id}/export.json`, target: '_blank'}, 'JSON')));
 }
 

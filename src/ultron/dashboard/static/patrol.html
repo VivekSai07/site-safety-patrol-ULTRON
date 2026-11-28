@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Patrol Record</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-row">
+    <div style="display:flex;gap:12px;align-items:baseline;flex-wrap:wrap">
+      <span class="brand">ULTRON</span>
+      <span class="sub" style="color:var(--head-muted)" id="site">–</span>
+      <span class="badge-sim" id="sim-badge" data-i18n="sim" hidden>SIMULATION</span>
+    </div>
+    <div class="meta">
+      <div class="switch" role="group" data-i18n-aria="lang.toggle">
+        <button type="button" data-lang="de">DE</button><button type="button" data-lang="en">EN</button>
+      </div>
+      <button type="button" class="theme-btn" id="theme" data-i18n-aria="theme.toggle">
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
+        <span data-theme-label></span>
+      </button>
+    </div>
+  </div>
+  <nav class="tabs" aria-label="Pages">
+    <a href="/" data-i18n="nav.live">Live</a>
+    <a href="/ladder" data-i18n="nav.ladders">Leitern</a>
+    <a href="/history" aria-current="page" data-i18n="nav.history" id="nav-history">Verlauf</a>
+  </nav>
+</header>
+
+<main>
+  <div><a id="back" href="/history" data-i18n="p.back">← Verlauf</a></div>
+  <div class="patrol-head">
+    <h1 class="mono" id="title">–</h1>
+    <span class="sub" id="when"></span>
+    <span id="state"></span>
+  </div>
+  <section class="tiles" id="tiles"></section>
+
+  <div class="patrol-grid">
+    <section class="card">
+      <div class="card-head"><h2 data-i18n="p.map">Route und Fundorte</h2><span class="sub mono" id="map-info"></span></div>
+      <svg class="map" id="map" role="img" aria-label="Map"></svg>
+      <div class="sub" id="map-legend"></div>
+    </section>
+    <div class="col">
+      <section class="card">
+        <h2 data-i18n="p.downloads">Downloads</h2>
+        <div class="downloads" id="downloads"></div>
+      </section>
+      <section class="card">
+        <h2 data-i18n="p.ladders">Leitern</h2>
+        <div id="ladders"></div>
+      </section>
+    </div>
+  </div>
+
+  <section class="card">
+    <h2 data-i18n="p.objects">Gefundene Objekte</h2>
+    <div class="object-grid" id="objects"></div>
+  </section>
+
+  <section style="display:flex;flex-direction:column;gap:10px" aria-labelledby="checklists-title">
+    <h2 id="checklists-title" data-i18n="p.checklists">Checklisten</h2>
+    <p class="sub" style="margin:0" data-i18n="p.legend"></p>
+    <div id="checklists" style="display:flex;flex-direction:column;gap:10px"></div>
+  </section>
+  <footer class="note" data-i18n="p.footer"></footer>
+</main>
+<script src="/static/i18n.js"></script>
+<script src="/static/common.js"></script>
+<script src="/static/patrol.js"></script>
+</body>
+</html>

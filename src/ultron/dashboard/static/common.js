@@ -17,6 +17,9 @@ function el(tag, attrs, ...children) {
 const SIM_ASCENT = {LEANING_SINGLE: 'Anlegeleiter', A_FRAME_STEPLADDER: 'Stehleiter'};
 const GROUP_KEYS = ['holme', 'sprossen', 'spreiz', 'beschlag', 'fuesse', 'zubehoer', 'kennzeichnung'];
 
+// Site checklist answers (nesseler's other checklists): the robot's ja/nein/offen, and why there is none.
+const ANSWER_CLASS = {ja: 'r-OK', nein: 'r-DEFECT', offen: 'r-UNKNOWN', nicht_gefunden: 'r-N_A', kein_detektor: 'r-N_A', person: 'r-NOT_CHECKED'};
+function answerPill(answer, label) { return el('span', {class: `pill ${ANSWER_CLASS[answer] || 'r-N_A'}`}, label || t(`ans.${answer}`)); }
 function statusPill(status) { return el('span', {class: `pill s-${status}`}, t(`status.${status}`)); }
 function resultPill(result) { return el('span', {class: `pill r-${result || 'N_A'}`}, result ? t(`result.${result}`) : '–'); }
 function mmss(seconds) {

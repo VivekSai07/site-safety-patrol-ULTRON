@@ -132,6 +132,61 @@ class ExplorationUpdate(BaseModel):
         return state
 
 
+class SiteCheckAnswer(str, Enum):
+    """The form's own columns as the pipeline answers them (ultron.pipeline.checklists)."""
+    YES = 'ja'
+    NO = 'nein'
+    OPEN = 'offen'     # the photos could not settle it
+
+
+class SiteCheckRow(BaseModel):
+    answer: SiteCheckAnswer
+    remark: str = Field('', max_length=1000)
+    confidence: float | None = Field(None, ge=0, le=1, allow_inf_nan=False)
+    photo: str | None = None   # an id uploaded to /api/missions/{id}/photos/{photo_id}
+
+    @field_validator('photo')
+    @classmethod
+    def photo_is_safe(cls, value):
+        return None if value is None else safe_id(value)
+
+
+class SiteCheck(BaseModel):
+    """One non-ladder object a patrol found, with its checklist rows (nesseler's other checklists).
+
+    Only kinds the checklists name are taken, and a row only from an object of a kind that row is about.
+    """
+    object_id: str
+    kind: str
+    position: list[float] | None = Field(None, min_length=2, max_length=2)
+    verified: bool = False          # the vision model confirmed the object is this kind
+    rows: dict[str, SiteCheckRow] = {}
+    remarks: str = Field('', max_length=2000)
+    photos: list[str] = []
+
+    @field_validator('object_id')
+    @classmethod
+    def object_id_is_safe(cls, value):
+        return safe_id(value)
+
+    @field_validator('photos')
+    @classmethod
+    def photos_are_safe(cls, value):
+        return [safe_id(p) for p in value]
+
+    @model_validator(mode='after')
+    def rows_fit_the_kind(self):
+        from .site_checklists import ROWS, kinds
+        if self.kind not in kinds():
+            raise ValueError(f'unknown kind {self.kind!r}; known: {", ".join(kinds())}')
+        for row_id in self.rows:
+            if row_id not in ROWS:
+                raise ValueError(f'unknown checklist row {row_id!r}')
+            if self.kind not in ROWS[row_id].kinds:
+                raise ValueError(f'row {row_id} is not answered by a {self.kind}')
+        return self
+
+
 class LadderData(BaseModel):
     """Page 1 of the nesseler form. Unread fields stay None and print as blank."""
     inventory_no: str | None = None
