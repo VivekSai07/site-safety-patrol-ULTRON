@@ -415,7 +415,7 @@ def main(argv=None):
             if not self.nav.server_is_ready():
                 self.core.on_nav_result(gid, 'FAILED', 'NAV_SERVER_UNAVAILABLE: nav/navigate_to_view')
                 return
-            goal = NavigateToView.Goal(schema_version='ultron.navigate_to_view/v1', goal_id=gid,
+            goal = NavigateToView.Goal(schema_version=NavigateToView.Goal.SCHEMA_VERSION, goal_id=gid,
                                        mission_id=d['mission_id'], map_id=d['map_id'],
                                        map_version=int(d['map_version']),
                                        target=pose_stamped(self.map_frame, self.get_clock().now().to_msg(),

@@ -77,11 +77,19 @@ class MockWorld(Node):
         self.create_subscription(Bool, 'ops/hold', lambda m: self.holds.append((time.monotonic(), m.data)), 10)
         self.create_subscription(MissionStatus, 'mission/status', lambda m: self.states.append(m.state), 10)
         self.nav = ActionServer(self, NavigateToView, 'nav/navigate_to_view', execute_callback=self._nav_exec,
-                                goal_callback=lambda g: GoalResponse.ACCEPT,
+                                goal_callback=self._nav_goal,
                                 cancel_callback=lambda g: CancelResponse.ACCEPT, callback_group=cb)
         self.run_client = ActionClient(self, RunMission, 'mission/run', callback_group=cb)
         self.create_timer(0.1, self._publish, callback_group=cb)
         self._publish_static()
+
+    def _nav_goal(self, goal):
+        from ultron_b2_contracts import ContractError, msg_to_navigation_goal
+        try:
+            msg_to_navigation_goal(goal)
+        except ContractError:
+            return GoalResponse.REJECT
+        return GoalResponse.ACCEPT
 
     def _publish_static(self):
         OccupancyGrid = self.msgs['OccupancyGrid']
