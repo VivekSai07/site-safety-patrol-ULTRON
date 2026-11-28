@@ -44,7 +44,53 @@ Known limitations / notes:
   disables one.
 
 ## Agent B — Ingestion, replay, preprocessing
-_No results yet._
+
+Revision: branch `om/b2-ros-stack-b` (base `fb9f092`). Container `ultron-b2-dev:humble` via
+`ros2_ws/scripts/dev.sh` (bridge network, `ROS_LOCALHOST_ONLY=1`, Cyclone localhost profile,
+`--memory 6g --cpus 6`), WSL2 kernel 6.6, host `net.core.rmem_max` 212,992 B. Real bag
+`/home/azut25r/workspace/bags/rosbag2_2026_11_28-00_48_42/` mounted **read-only** with
+`ULTRON_BAG_DIR`; never copied or committed. Artifacts (local, ignored): `ros2_ws/runs/agent_b/`
+(`replay6.*` = run reported below, `voxel_eval.json`). Replay script: `runs/agent_b/replay_probe.sh`
+(launch + `stream_probe` 25 s + `tf2_echo`), i.e.
+
+```bash
+BAG=/home/azut25r/workspace/bags/rosbag2_2026_11_28-00_48_42
+ULTRON_MODE=replay ULTRON_BAG_DIR=$BAG ULTRON_DEV_ARGS="--memory 6g --cpus 6" ros2_ws/scripts/dev.sh bash -lc \
+  "source install/setup.bash && (scripts/ultron_launch.sh replay mode:=mapping bag:=$BAG &) && sleep 6 && \
+   ros2 run ultron_b2_tools stream_probe --namespace /ultron/replay --duration 25 --topics sensors/lidar/points \
+   sensors/lidar/points_filtered sensors/scan sensors/imu/data sensors/cam_head/color/image_raw \
+   sensors/cam_head/depth/image_rect_raw sensors/cam_head/color/camera_info /clock \
+   --proc cloud_filter pointcloud_to_laserscan 'ros2 bag play' --json runs/agent_b/<name>.json"
+```
+
+| Check | Result | Command / evidence |
+|---|---|---|
+| Build (`ultron_b2_{interfaces,description,preprocess,bringup,tools}`) | PASS | `colcon build --symlink-install --parallel-workers 4 --packages-up-to ultron_b2_bringup ultron_b2_tools` |
+| colcon tests (preprocess 19 incl. node pub/sub, bringup replay table 5 + sim/replay launch 4 + tf authority 5, description 9+1, lint) | PASS — 80 tests, 0 failures | `colcon test --packages-select ultron_b2_preprocess ultron_b2_bringup ultron_b2_description ultron_b2_tools && colcon test-result --all` |
+| Replay graph | PASS — `/rosbag2_player` (root ns) + `cloud_filter`, `pointcloud_to_laserscan`, `robot_state_publisher`, `tf_authority_check`, stubs (state_estimation, slam, viz, record); **no nav/control/mission**, no `cmd_vel` or `/api/*` topic | `ros2 node list`, `ros2 topic list` (`replay6.{nodes,topics}.txt`) |
+| `sensors/lidar/points` | PASS — 10.04 Hz recv / 10.00 Hz stamp (bag 10.00), median 38,962 pts, ~1.0 MB, `lidar_link` | `replay6.json` |
+| `sensors/lidar/points_filtered` | PASS — 10.0 Hz, median 8,154 pts (6,612–9,607), ~196 kB, `lidar_link`; voxel 0.10 m | `replay6.json` |
+| `sensors/scan` | PASS — 10.0 Hz, `base_footprint`, 1,800 beams ±π, median 755 finite beams, median range 5.4 m (4.8–6.9), max ≤ 12 m | `replay6.json` |
+| `sensors/imu/data` | PASS — 99.9 Hz recv / 99.8 Hz stamp (bag 99.81), `imu_link` | `replay6.json` |
+| Camera topics | PASS — color image 29.5 Hz, depth 29.6 Hz, color camera_info 30.0 Hz (bag 29.99/29.82); frames `head_{color,depth}_optical_frame` | `replay6.json` |
+| `/clock` | PASS — 99.7 Hz (`--clock 100`), nodes `use_sim_time:=true` | `replay6.json` |
+| CPU / memory (dev PC, 1 core = 100 %) | `cloud_filter` 10.3 % (57–60 MB RSS; 3.9–5.0 ms/frame mean, ≤ 11 ms max from its stats log), `pointcloud_to_laserscan` 1.9 %, `ros2 bag play` 12–18 % (~400 MB RSS) | `replay6.json`, `replay5.launch.log` |
+| TF authority | PASS — no `TF_AUTHORITY_VIOLATION`, launch stayed up; `tf2_echo base_footprint lidar_link` = (0.342, 0, 0.750); `base_link → head_color_optical_frame` resolves through `cam_head_link → head_link` (RSP) + bag `/tf_static` | `replay6.{launch.log,tf_echo.txt}` |
+| Self box on the real bag (offline, all 364 scans, filter_core) | PASS — box removes median 71 pts/scan (0.18 %); near-body residue (range < 0.8 m, above floor) after filtering median 1, max 13 pts/scan at voxel 0.10 (< 0.04 %, < 1 % criterion) | `.venv/bin/python <session>/voxel_eval.py` → `runs/agent_b/voxel_eval.json` |
+| Voxel choice (offline) | voxel 0: 35.9k pts; 0.05 m: 14.0k; **0.10 m: 8.1k (chosen, PROPOSED)**; filter core 4.5–5 ms/scan | `voxel_eval.json` |
+| QoS finding | FAIL→fixed — with best-effort readers, ~all ~1 MB clouds and images from the reliable bag writer were lost (1 of 250 clouds delivered; IMU/camera_info fine). Lost UDP fragments are not retransmitted to best-effort readers and the host `rmem_max` (208 KiB, not settable per container, no root) overflows. Larger Cyclone fragments (`MaxMessageSize` 65500 B) did **not** help. Fix: `cloud_filter` subscribes reliable (`input_reliability` param), `stream_probe` matches the publisher's reliability → full rates above with the unchanged DDS profile | runs `replay1`–`replay6`, `runs/agent_b/qos_probe.py` |
+| Repo suite (system python) | 414 tests: same 2 **pre-existing** errors as base (`test_model_safety…fails_fast_before_model_load`, `test_patrol_dashboard_integration…` — missing `reportlab`/model deps); bag tests skipped (no `rosbags`) | `PYTHONPATH=src python3 -m unittest discover -s tests` |
+| Bag tools after move to `ultron_b2_tools` (shim at `ros2_ws/tools/bag_inspect.py`) | PASS (3) | `PYTHONPATH=src /home/azut25r/workspace/bags/.venv/bin/python -m unittest tests.test_bag_tools` |
+| Foxglove/RViz screenshot of `sensors/scan` | UNRUN — no display here; numeric scan check above instead | — |
+| Live drivers (`rslidar_helios32.yaml`, `xsens_mti.yaml`, `realsense_d457_head.yaml`, live branch of `drivers.launch.py`) | UNRUN — written only; driver packages not installed; no hardware connection; parameter names TO_VERIFY against the pinned driver versions | — |
+| Deskew on real data | UNRUN — implemented and unit-tested (synthetic), off by default (downstream LO deskews from `time`) | — |
+| Orin timing | UNRUN — no Orin | — |
+
+Known caveats: lidar/IMU/head-camera to body extrinsics are TO_VERIFY (`lidar_link` z 0.10 m above
+`base_link` from the 0.75 m floor estimate); the IMU 31 ms stamp lead is not compensated by default;
+the replay scan band (0.45–1.00 m above `base_footprint`) assumes that floor estimate. Any consumer of
+raw clouds/images in replay (Foxglove bridge, SLAM, perception) must subscribe **reliable** on this
+host. These are replay results from one 36.6 s recording, not hardware validation.
 
 ## Agent B (bag) — recovery and characterization of the real B2 recording
 
@@ -68,7 +114,7 @@ committed or uploaded. Reports: `/home/azut25r/workspace/bags/inspect/…` and
 | Unit tests (synthetic bag, complete + truncated zip) | PASS (3 tests) | `PYTHONPATH=src /home/azut25r/workspace/bags/.venv/bin/python -m unittest tests.test_bag_tools -v` |
 | Fast suite (system python, rosbags absent → bag tests skipped) | 411+3 tests: 2 errors, both **pre-existing on base** (`test_model_safety…fails_fast_before_model_load`, `test_patrol_dashboard_integration…`) | `PYTHONPATH=src python3 -m unittest discover -s tests` |
 | `/scan_cloud` re-decode from `/rslidar_packets` | UNRUN — not viable for this bag (58 % of MSOP packets recorded) | — |
-| Replay launch, driver configs, cloud filter, calibration yaml (rest of AGENT_B.md) | UNRUN — second half of Agent B | — |
+| Replay launch, driver configs, cloud filter, calibration yaml (rest of AGENT_B.md) | see "Agent B — Ingestion, replay, preprocessing" above | — |
 
 Hand-back: works — `recover_bag_zip.py`, `bag_inspect.py` (standalone, no ROS).
 Blocked/open — lidar/IMU/head-camera to body extrinsics (measure on robot,
