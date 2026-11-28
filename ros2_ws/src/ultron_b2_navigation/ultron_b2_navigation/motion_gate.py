@@ -46,7 +46,7 @@ class MotionGateNode(Node):
         self.create_subscription(OperatorEnable, 'ops/operator_enable', self._on_operator, reliable)
         self.create_subscription(LocalizationStateMsg, 'state/localization', self._on_loc, reliable)
         self.create_subscription(String, 'control/active_source', self._on_source, reliable)
-        self.create_subscription(MapInfo, 'state/map_info', self._on_map_info, latched)
+        self.create_subscription(MapInfo, 'map/info', self._on_map_info, latched)
         self.cmd_in = Twist()
         self.last_reason = None
         self.create_timer(1.0 / float(self.get_parameter('rate_hz').value), self._tick)
@@ -87,7 +87,7 @@ class MotionGateNode(Node):
 
     def _on_map_info(self, msg):
         if self.adopt_map_info and (msg.map_id, msg.map_version) != (self.gate.map_id, self.gate.map_version):
-            self.get_logger().info(f'adopting loaded map {msg.map_id} v{msg.map_version} from state/map_info')
+            self.get_logger().info(f'adopting loaded map {msg.map_id} v{msg.map_version} from map/info')
             self.gate.map_id, self.gate.map_version = msg.map_id, int(msg.map_version)
 
     def _tick(self):

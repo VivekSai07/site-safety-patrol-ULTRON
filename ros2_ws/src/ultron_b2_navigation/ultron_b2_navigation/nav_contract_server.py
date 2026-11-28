@@ -130,7 +130,7 @@ class NavContractServer(Node):
         self.create_subscription(Odometry, 'state/odom', self._on_odom, 10, callback_group=cb)
         self.create_subscription(OccupancyGrid, 'nav/keepout_mask', lambda m: setattr(self, 'keepout', m),
                                  latched, callback_group=cb)
-        self.create_subscription(MapInfo, 'state/map_info', self._on_map_info, latched, callback_group=cb)
+        self.create_subscription(MapInfo, 'map/info', self._on_map_info, latched, callback_group=cb)
         if self.footprint is None and self.get_parameter('use_map_topic_for_checks').value:
             self.create_subscription(OccupancyGrid, 'map', self._on_map, latched, callback_group=cb)
         self.nav2 = ActionClient(self, NavigateToPose, 'navigate_to_pose', callback_group=cb)
