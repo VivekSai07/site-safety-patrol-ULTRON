@@ -110,5 +110,34 @@ class ScenePropTests(unittest.TestCase):
         validate_proposal(review_proposal(m, 'MANUAL REVIEW: offline'), m)
 
 
+import importlib.util
+import os
+
+
+@unittest.skipUnless(os.environ.get('ULTRON_RENDER_TESTS') == '1' and importlib.util.find_spec('mujoco'),
+                     'rendered sim tests disabled')
+class SafetyOracleTests(unittest.TestCase):
+    def test_simulation_accepts_safety_assets_and_oracle_reports_them(self):
+        os.environ.setdefault('MUJOCO_GL', 'egl')
+        from ultron.mujoco_sim import Simulation
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp); (out / 'frames').mkdir()
+            sim = Simulation(scenarios(), out, safety_assets=safety_assets())
+            try:
+                ext = next(a for a in safety_assets() if a['kind'] == 'extinguisher')
+                x, y, _ = ext['position']
+                sim.place([x, y - 1.6, 1.5707963])  # face +y toward the prop
+                frame, rgb, depth, seg = sim.capture(save=False)
+                dets = sim.oracle_safety_detections(frame, depth, seg)
+                keys = {d['oracle_key'] for d in dets}
+                self.assertIn('ext_01', keys)
+                det = next(d for d in dets if d['oracle_key'] == 'ext_01')
+                self.assertEqual(det['kind'], 'extinguisher')
+                self.assertEqual(det['source'], 'MUJOCO_SEGMENTATION_ORACLE')
+                self.assertIsNone(det['helmet'])
+            finally:
+                sim.close()
+
+
 if __name__ == '__main__':
     unittest.main()
