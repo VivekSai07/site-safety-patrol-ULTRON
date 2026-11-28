@@ -228,8 +228,20 @@ function renderMap() {
   map.classList.toggle('picking', S.picking);
   $('map-info').textContent = `${(b[2] - b[0]).toFixed(1)} × ${(b[3] - b[1]).toFixed(1)} m`;
   $('goal-btn').hidden = !S.goalsEnabled;
+  $('explore-btn').hidden = !S.goalsEnabled;  // live mode only, like Set goal
   $('goal-btn').setAttribute('aria-pressed', String(S.picking));
-  $('goal-info').textContent = S.picking ? t('goal.pick') : S.goal ? `${t(`goal.${S.goal.status}`)} · ${S.goal.x.toFixed(1)} / ${S.goal.y.toFixed(1)} m` : '';
+  $('goal-info').textContent = S.exploreNote ? t('explore.pending')
+    : S.picking ? t('goal.pick') : S.goal ? `${t(`goal.${S.goal.status}`)} · ${S.goal.x.toFixed(1)} / ${S.goal.y.toFixed(1)} m` : '';
+}
+
+// Start exploration: placeholder until the ROS bridge drives m-explore-ros2 (docs/DASHBOARD_TEAM_TODO.md).
+// It sends nothing; /api/exploration exists server side but stays unused so Set goal is never blocked.
+function initExplore() {
+  $('explore-btn').addEventListener('click', () => {
+    S.exploreNote = true; scheduleRender();
+    clearTimeout(S.exploreTimer);
+    S.exploreTimer = setTimeout(() => { S.exploreNote = false; scheduleRender(); }, 4000);
+  });
 }
 
 // 2D Goal Pose, as in RViz: press "Set goal", press on the map for the position, drag toward the
@@ -314,6 +326,7 @@ function connect() {
 (async () => {
   initChrome(render);
   initGoalPicking();
+  initExplore();
   S.checklist = await getJSON('/api/checklist');
   await load();
   connect();

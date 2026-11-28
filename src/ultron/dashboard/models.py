@@ -90,6 +90,48 @@ class GoalUpdate(BaseModel):
     detail: str = ''
 
 
+class ExplorationState(str, Enum):
+    """Mapping the site with the team's frontier explorer (m-explore-ros2), started from the dashboard.
+
+    The operator asks (STARTING, FINISHING); only the ROS bridge confirms (EXPLORING, MAPPED, FAILED),
+    so the page never shows the robot exploring before the robot side says it is.
+    """
+    IDLE = 'IDLE'            # not explored since the dashboard started
+    STARTING = 'STARTING'    # operator pressed Start; no bridge has confirmed yet
+    EXPLORING = 'EXPLORING'  # bridge: the explorer is running and drives the robot
+    FINISHING = 'FINISHING'  # operator pressed Finish mapping; no bridge has confirmed yet
+    MAPPED = 'MAPPED'        # explorer stopped (operator finished, or no frontiers left); the map is usable
+    FAILED = 'FAILED'        # bridge could not start or stop the explorer; detail says why
+
+
+EXPLORATION_ACTIVE = {ExplorationState.STARTING, ExplorationState.EXPLORING, ExplorationState.FINISHING}
+BRIDGE_REPORTS = {ExplorationState.EXPLORING, ExplorationState.MAPPED, ExplorationState.FAILED}
+
+
+class ExplorationAction(str, Enum):
+    START = 'start'
+    FINISH = 'finish'
+
+
+class ExplorationRequest(BaseModel):
+    action: ExplorationAction
+
+
+class ExplorationUpdate(BaseModel):
+    """From the bridge, about the operator's latest request (`seq`)."""
+    seq: int
+    state: ExplorationState
+    detail: str = ''
+    by: str = ''             # who ended it: 'operator' or 'explorer' (no frontiers left)
+
+    @field_validator('state')
+    @classmethod
+    def reported_by_bridge(cls, state):
+        if state not in BRIDGE_REPORTS:
+            raise ValueError(f'the bridge reports {sorted(s.value for s in BRIDGE_REPORTS)}; {state.value} is the operator\'s')
+        return state
+
+
 class LadderData(BaseModel):
     """Page 1 of the nesseler form. Unread fields stay None and print as blank."""
     inventory_no: str | None = None
