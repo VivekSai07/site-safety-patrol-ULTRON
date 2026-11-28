@@ -246,24 +246,46 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                             emit('SAFETY_CHECK_INCOMPLETE', asset_id=sa['key'], reason='APPROACH_BLOCKED')
                             continue
                         confirmed = None
+                        last_frame = None
                         for _ in range(2):
                             sim.t += .2
                             frame, rgb, depth, seg = capture('SAFETY_INSPECT')
-                            for det in sim.oracle_safety_detections(frame, depth, seg):
-                                if det['oracle_key'] == sa['key']:
+                            last_frame = frame
+                            if perception.model_safety_mode:
+                                det = perception.safety_confirm(rgb, depth, frame, sa['kind'], sa['position'])
+                                if det:
                                     confirmed = det
+                            else:
+                                for det in sim.oracle_safety_detections(frame, depth, seg):
+                                    if det['oracle_key'] == sa['key']:
+                                        confirmed = det
+                        judged = None
+                        if perception.safety_judge is not None:
+                            judged = perception.safety_judge_station([output / last_frame['rgb']], sa['kind'])
+                            if confirmed is None and judged['station_visible']:
+                                confirmed = {'oracle_key': sa['key'], 'kind': sa['kind'],
+                                             'source': 'QWEN_VL_PROPOSAL', 'reason': judged['reason']}
                         if not confirmed:
-                            emit('SAFETY_CHECK_INCOMPLETE', asset_id=sa['key'], reason='NOT_VISIBLE')
+                            emit('SAFETY_CHECK_INCOMPLETE', asset_id=sa['key'],
+                                 reason='NOT_DETECTED_BY_MODEL' if perception.model_safety_mode else 'NOT_VISIBLE')
                             continue
                         emit('SAFETY_ASSET_CONFIRMED', asset_id=sa['key'], asset_kind=sa['kind'], observation=confirmed)
-                        sweep_views.append({'image_id': f"safety-{sa['key']}-{frame['index']:05}",
-                                            'path': frame['rgb'], 'path_abs': str(output / frame['rgb'])})
-                        emit('SAFETY_EVIDENCE_CAPTURED', asset_id=sa['key'], asset_kind=sa['kind'], rgb=frame['rgb'])
-                        if sa['kind'] == 'person':
+                        sweep_views.append({'image_id': f"safety-{sa['key']}-{last_frame['index']:05}",
+                                            'path': last_frame['rgb'], 'path_abs': str(output / last_frame['rgb'])})
+                        emit('SAFETY_EVIDENCE_CAPTURED', asset_id=sa['key'], asset_kind=sa['kind'], rgb=last_frame['rgb'])
+                        if judged is not None:
+                            emit('SAFETY_STATION_JUDGED', asset_id=sa['key'], asset_kind=sa['kind'],
+                                 states=judged['states'], reason=judged['reason'], source='MODEL_PROPOSAL')
+                            for criterion, violation in (('psa.helm', 'PPE_HELMET_MISSING'), ('psa.warnweste', 'PPE_VEST_MISSING')):
+                                if judged['states'].get(criterion) == 'DEFECT':
+                                    emit('SAFETY_VIOLATION', asset_id=sa['key'], violation=violation,
+                                         evidence=last_frame['rgb'], source='MODEL_PROPOSAL',
+                                         note='Qwen3-VL pixel proposal; human review pending')
+                        elif sa['kind'] == 'person' and confirmed.get('source') == 'MUJOCO_SEGMENTATION_ORACLE':
                             for flag, violation in (('helmet', 'PPE_HELMET_MISSING'), ('vest', 'PPE_VEST_MISSING')):
                                 if not confirmed[flag]:
                                     emit('SAFETY_VIOLATION', asset_id=sa['key'], violation=violation,
-                                         evidence=frame['rgb'], source='SIMULATION_ORACLE',
+                                         evidence=last_frame['rgb'], source='SIMULATION_ORACLE',
                                          note='Scene ground truth, not visual inference')
                     if sweep_views:
                         payload = sweep_manifest(mid, sweep_views, date.today().isoformat(), [*sim.pose[:2], 0.])
