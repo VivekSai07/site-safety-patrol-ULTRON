@@ -415,11 +415,12 @@ _Not assembled. Reviewer decision: pending (human)._
   AWAIT_OPERATOR if a cancelled goal does not acknowledge a stop. A delayed-cancel mock regression
   passed both acknowledged and unconfirmed-stop cases; the mission package reported 63 passed and
   one skipped. This fix has not been validated in the full integrated simulation.
-- Replay is separately checkpointed, **not merged**, at `7d7444f` on
-  `om/b2-ros-stack-replay-accept`. Its 32 tests passed; the replay clock guard reports stale
+- Replay checkpoint `7d7444f` from `om/b2-ros-stack-replay-accept` is integrated.
+  Its 32 tests passed; the replay clock guard reports stale
   localization when the clock stops, and measured queue-overflow drops fell to zero. One
   startup scan lacked TF; MOLA worker-busy drops, looping, and LOST/DEGRADED states remain
-  unresolved. See that branch's `docs/b2_ros_stack/REPLAY_ACCEPTANCE.md` for evidence.
+  unresolved. See `docs/b2_ros_stack/REPLAY_ACCEPTANCE.md` for evidence. The merged launch,
+  localization and mission package tests pass, but replay has not been rerun after the merge.
 - Complete integration, repeat end-to-end acceptance and investigate the above failures before
   considering M6. Simulation uses kinematic motion and ORACLE detections; neither establishes
   physical walking, real perception, or hardware readiness. Real motion remains NO-GO without

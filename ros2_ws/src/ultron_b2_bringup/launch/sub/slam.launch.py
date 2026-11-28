@@ -21,6 +21,8 @@ def generate_launch_description():
                                                             'slam.launch.py'])),
         launch_arguments=[('mode', LaunchConfiguration('mode')),
                           ('run_mode', LaunchConfiguration('run_mode')),
+                          ('replay_scan_queue_size', LaunchConfiguration('replay_scan_queue_size', default='10')),
+                          ('replay_tf_debug', LaunchConfiguration('replay_tf_debug', default='false')),
                           ('odom_source', LaunchConfiguration('odom_source')),
                           ('use_sim_time', LaunchConfiguration('use_sim_time')),
                           ('provenance', ['ULTRON_B2_', LaunchConfiguration('run_mode'), '_SLAM_TOOLBOX_ESTIMATE']),

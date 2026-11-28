@@ -1,4 +1,4 @@
-"""Verify the simulation scan-buffer tuning does not alter replay or live localization."""
+"""Verify simulation and replay scan-buffer tuning is isolated from live localization."""
 import importlib.util
 from pathlib import Path
 
@@ -7,7 +7,7 @@ from launch import LaunchContext
 
 
 @pytest.mark.parametrize(('run_mode', 'expected'), [('sim', {'scan_queue_size': 10}),
-                                                   ('replay', {}), ('live', {}), ('', {})])
+                                                   ('replay', {'scan_queue_size': 10}), ('live', {}), ('', {})])
 def test_scan_queue_override_is_simulation_only(monkeypatch, run_mode, expected):
     path = Path(__file__).resolve().parents[1] / 'launch' / 'slam.launch.py'
     spec = importlib.util.spec_from_file_location('test_slam_launch_module', path)

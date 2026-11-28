@@ -14,10 +14,12 @@ Map source:
 """
 import json
 import math
+import time
 
 import numpy as np
 
 from .monitor_core import DEFAULT_PARAMS, LocalizationMonitor, MapMatcher, PARAM_KEYS, confirm_label, scan_endpoints
+from .replay_clock_guard import ReplayClockGuard
 
 # Minimum scan age before scoring. slam_toolbox future-dates map->odom (transform_timeout) and processes scans
 # at most every minimum_time_interval, so the limiting link is odom->base_link at the scan stamp: a scan whose
@@ -57,6 +59,15 @@ class LocalizationMonitorNode:
         self.live_update_s = p('live_map_update_s', 2.0)
         self.heartbeat_s = p('heartbeat_s', 0.5)
         self.clock_id = 'ros_sim_time' if node.get_parameter('use_sim_time').value else 'ros_time'
+        replay_watchdog = p('replay_clock_watchdog', False)
+        if replay_watchdog and self.clock_id != 'ros_sim_time':
+            raise ValueError('replay clock watchdog requires use_sim_time')
+        self.clock_guard = ReplayClockGuard(p('replay_clock_timeout_s', 0.5),
+                                            p('replay_clock_jump_s', 0.5)) if replay_watchdog else None
+        self.clock_invalidated = bool(self.clock_guard)
+        self.clock_watchdog_last_publish = -math.inf
+        self.last_observed_ros = None
+        self.static_transforms = {}
         self.buffer = Buffer()
         self.listener = TransformListener(self.buffer, node)
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -78,10 +89,62 @@ class LocalizationMonitorNode:
         self.last_heartbeat = -math.inf
         self.transitions = []
         node.create_timer(0.05, self._tick)
+        if self.clock_guard:
+            from rclpy.clock import Clock, ClockType
+            from rosgraph_msgs.msg import Clock as ClockMsg
+            from tf2_msgs.msg import TFMessage
+            clock_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+            static_qos = QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE,
+                                    durability=DurabilityPolicy.TRANSIENT_LOCAL)
+            node.create_subscription(ClockMsg, '/clock', self._on_clock, clock_qos)
+            node.create_subscription(TFMessage, '/tf_static', self._on_static, static_qos)
+            self.steady_clock = Clock(clock_type=ClockType.STEADY_TIME)
+            node.create_timer(0.1, self._watchdog_tick, clock=self.steady_clock)
         node.get_logger().info(f'localization_monitor: map_source={self.map_source}, params={json.dumps(self.params)}')
 
     def pending_scans_append(self, msg):
+        if self.clock_guard and self.clock_guard.stalled(time.monotonic()):
+            return
         self.pending_scans.append(msg)
+
+    def _on_static(self, msg):
+        for transform in msg.transforms:
+            self.static_transforms[transform.child_frame_id] = transform
+
+    def _invalidate_clock(self, reason, clear_tf=False):
+        self.clock_invalidated = True
+        self.pending_scans.clear()
+        self.scored.clear()
+        self.last_grid_t = None
+        if clear_tf:
+            self.buffer.clear()
+            for transform in self.static_transforms.values():
+                self.buffer.set_transform_static(transform, 'replay_static_cache')
+        if self.monitor is not None:
+            self.monitor.invalidate_clock(self._now(), reason)
+        self._publish(self._now())
+        self.clock_watchdog_last_publish = time.monotonic()
+
+    def _on_clock(self, msg):
+        wall = time.monotonic()
+        if self.clock_guard.stalled(wall) and not self.clock_invalidated:
+            self._invalidate_clock('Replay clock stopped advancing')
+        stamp = msg.clock.sec * 1_000_000_000 + msg.clock.nanosec
+        event = self.clock_guard.observe(stamp, wall)
+        if event == 'jump':
+            self._invalidate_clock('Replay clock jumped; awaiting fresh scans and transforms', clear_tf=True)
+        elif event == 'progress':
+            self.clock_invalidated = False
+
+    def _watchdog_tick(self):
+        wall = time.monotonic()
+        if not self.clock_guard.stalled(wall):
+            return
+        if not self.clock_invalidated:
+            self._invalidate_clock('Replay clock stopped advancing')
+        elif wall - self.clock_watchdog_last_publish >= self.heartbeat_s:
+            self._publish(self._now())
+            self.clock_watchdog_last_publish = wall
 
     # ---------------------------------------------------------------- map
     def _install(self, matcher, map_id, version):
@@ -90,6 +153,8 @@ class LocalizationMonitorNode:
             if self.monitor is not None:
                 self.transitions += self.monitor.transitions
             self.monitor = LocalizationMonitor(self.params, map_id, version)
+            if self.clock_guard and self.clock_guard.stalled(time.monotonic()):
+                self.monitor.invalidate_clock(self._now(), 'Waiting for advancing replay clock')
             self.scored = []
             self.map_key = key
             self.node.get_logger().info(f'localization_monitor: scoring against {map_id} v{version}')
@@ -147,7 +212,9 @@ class LocalizationMonitorNode:
         from ultron_b2_contracts import localization_state_to_msg
         if self.monitor is None:
             d = {'schema': 'ultron.localization_state/v1', 'stamp': now, 'evaluated_at': now, 'map_id': '',
-                 'map_version': 0, 'state': 'INITIALIZING', 'reason': self.no_map_reason,
+                 'map_version': 0, 'state': 'INITIALIZING',
+                 'reason': ('Waiting for advancing replay clock' if self.clock_guard and self.clock_invalidated
+                            else self.no_map_reason),
                  'position': [0.0, 0.0, 0.0], 'orientation_xyzw': [0.0, 0.0, 0.0, 1.0], 'match_score': None,
                  'covariance_xy_yaw': None,
                  'covariance_source': 'UNAVAILABLE: backend does not provide one; use state and match_score',
@@ -161,6 +228,13 @@ class LocalizationMonitorNode:
 
     def _tick(self):
         now = self._now()
+        if self.clock_guard and self.last_observed_ros is not None and now < self.last_observed_ros:
+            self.clock_guard.progressing = False
+            self.clock_guard.last_ns = None
+            self._invalidate_clock('Replay clock jumped; awaiting fresh scans and transforms', clear_tf=True)
+        self.last_observed_ros = now
+        if self.clock_guard and self.clock_guard.stalled(time.monotonic()):
+            return
         if now <= 0:
             return
         if self.monitor is None:
@@ -175,6 +249,9 @@ class LocalizationMonitorNode:
         published = False
         for i, msg in enumerate(pending):
             t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+            if self.clock_guard and (now - t > self.params['scan_age_limit_s'] or
+                                     t - now > self.params['scan_age_limit_s']):
+                continue
             if now - t < SCORE_DELAY_S:
                 self.pending_scans = pending[i:]
                 break
