@@ -26,7 +26,7 @@ if len(ITEM_KEY) != sum(len(g[5]) for g in GROUPS) or any(
     raise ImportError("ultron.protocol.form and ultron.dashboard.checklist no longer describe the same form")
 
 # Pipeline events passed on to the dashboard's event list, under these type names.
-FORWARDED = {"object_found": "OBJECT_FOUND", "object_verified": "OBJECT_VERIFIED",
+FORWARDED = {"object_found": "OBJECT_FOUND", "object_merged": "OBJECT_MERGED", "object_verified": "OBJECT_VERIFIED",
              "object_relabelled": "OBJECT_RELABELLED", "object_rejected": "OBJECT_REJECTED",
              "object_unclear": "OBJECT_UNCLEAR", "view_requested": "VIEW_REQUESTED", "view_failed": "VIEW_FAILED",
              "checklist": "CHECKLIST_DONE", "stage": "STAGE"}
@@ -138,6 +138,9 @@ class Publisher:
         self.store, self.post, self.log = store, post, log
         self.mission_id, self.site_id = mission_id, site_id
         self.started = time.time()
+        # Objects the dashboard has been told about. Events about any other object (a fragment
+        # that is folded into its neighbour later, a one-off box) are kept off the dashboard.
+        self.announced = {e["object"] for e in store.events(limit=None) if e["kind"] == "object_found"}
 
     def _send(self, path, body=None, raw=None, accept=(200, 201, 204)):
         status, text = self.post(path, body, raw)
@@ -183,8 +186,17 @@ class Publisher:
         elif kind in FORWARDED:
             # Objects other than ladders have no record type on the dashboard yet: they appear
             # in its event list, with their position where known.
-            data = {k: v for k, v in event.items() if k not in ("time", "kind", "object")}
-            self._event(FORWARDED[kind], event.get("object"), **data)
+            subject = event.get("object")
+            if kind == "object_found":
+                self.announced.add(subject)
+            elif kind.startswith("object_") and subject not in self.announced:
+                return  # never announced: nothing on the dashboard to update
+            if kind == "object_merged":
+                self.announced.discard(subject)
+            elif kind == "object_relabelled":
+                self.announced.add(event.get("into"))
+            data = {k: v for k, v in event.items() if k not in ("time", "kind", "object", "announced")}
+            self._event(FORWARDED[kind], subject, **data)
 
     def publish(self, ladder_id, number):
         sheet = self.store.ladder(ladder_id)

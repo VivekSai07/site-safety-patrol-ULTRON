@@ -171,36 +171,60 @@ class ObjectMap:
                 found.apart = sorted(set(found.apart) | (set(ids) - {object_id}))
             self._save()
 
-    def consolidate(self, min_sightings=3):
-        """Fold weakly seen objects into a well-seen one of the same kind standing next to them.
+    def beside(self, site_object):
+        """Objects of the same kind that `site_object` may be a fragment of: their footprints
+        touch (or, without footprints, they stand within reach). Of objects seen in the same frame
+        only one lying right on top of the other counts: a second box on a part of the same thing."""
+        if not site_object.position:
+            return []
+        radius, cells = KINDS[site_object.kind].same_object_radius, footprint(site_object)
 
-        A detector that loses and regains an object, or boxes only part of it, leaves such
-        fragments. Objects once seen in the same frame are never merged. Returns
-        {removed id: id it was merged into}.
+        def touches(o):
+            area = footprint(o)
+            if len(cells) and len(area):  # footprints decide where both objects have one
+                return (touching(cells, area, 1) >= ON_TOP if o.id in site_object.apart
+                        else touching(cells, area) >= MIN_SHARE)
+            return math.dist(o.position, site_object.position) <= (
+                radius if o.id in site_object.apart else MERGE_REACH * radius)
+        return [o for o in self._objects.values() if o.kind == site_object.kind and o.id != site_object.id
+                and o.position and o.status != "REJECTED" and touches(o)]
+
+    def fragment_of(self, weak, min_sightings=3):
+        """The well-seen neighbour (see `beside`) that `weak` is a fragment of, or None: a detector
+        that loses and regains an object, or boxes only part of it, leaves objects with far fewer
+        sightings than the one they stand beside."""
+        near = [o for o in self.beside(weak) if o.sightings >= max(min_sightings, weak.sightings)
+                and weak.sightings < max(min_sightings, RELATIVELY_WEAK * o.sightings)]
+        return min(near, key=lambda o: math.dist(o.position, weak.position), default=None)
+
+    def consolidate(self, min_sightings=3, keep=()):
+        """Fold fragments into the objects they belong to. Returns {removed id: id it was merged into}.
+
+        Ids in `keep` (already announced to someone) survive a merge: if a kept fragment folds
+        into an object nobody has heard of, the merged object takes the kept id.
         """
         merged = {}
         with self._lock:
-            by_strength = sorted((o for o in self._objects.values() if o.position), key=lambda o: o.sightings)
-            for weak in by_strength:
-                radius = KINDS[weak.kind].same_object_radius
-                others = [o for o in self._objects.values() if o.kind == weak.kind and o.id != weak.id and o.position
-                          and o.sightings >= max(min_sightings, weak.sightings)]
-                # Never merge what was seen side by side, unless it sits right on top of the other:
-                # then it was a second box on a part of the same object.
-                cells = footprint(weak)
-
-                def beside(o):
-                    area = footprint(o)
-                    if len(cells) and len(area):  # footprints decide where both objects have one
-                        return touching(cells, area, 1) >= ON_TOP if o.id in weak.apart else touching(cells, area) >= MIN_SHARE
-                    return math.dist(o.position, weak.position) <= (radius if o.id in weak.apart else MERGE_REACH * radius)
-                near = [o for o in others if beside(o)]
-                near = [o for o in near if weak.sightings < max(min_sightings, RELATIVELY_WEAK * o.sightings)]
-                if near:
-                    target = min(near, key=lambda o: math.dist(o.position, weak.position))
-                    _join(target, weak)
-                    merged[weak.id] = target.id
-                    del self._objects[weak.id]
+            for weak in sorted(self._objects.values(), key=lambda o: o.sightings):
+                if weak.id not in self._objects:
+                    continue
+                target = self.fragment_of(weak, min_sightings)
+                if target is None:
+                    continue
+                _join(target, weak)
+                target.first_seen = min(target.first_seen, weak.first_seen)
+                target.verified = target.verified or weak.verified
+                del self._objects[weak.id]
+                removed = weak.id
+                if weak.id in keep and target.id not in keep:
+                    removed = target.id
+                    del self._objects[target.id]
+                    target.id = weak.id
+                    self._objects[target.id] = target
+                    for found in self._objects.values():
+                        found.apart = sorted({target.id if i == removed else i for i in found.apart} - {found.id})
+                merged = {old: (target.id if new == removed else new) for old, new in merged.items()}
+                merged[removed] = target.id
             for found in self._objects.values():
                 found.apart = [i for i in found.apart if i in self._objects]
             self._save()

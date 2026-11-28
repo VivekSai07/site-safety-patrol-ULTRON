@@ -76,7 +76,8 @@ class Store:
         path = self.root / "events.jsonl"
         if not path.is_file():
             return []
-        return [json.loads(line) for line in path.read_text().splitlines()[-limit:]]
+        lines = path.read_text().splitlines()
+        return [json.loads(line) for line in (lines if limit is None else lines[-limit:])]
 
     def save_live(self, frame):
         """The frame the robot is looking at right now, for the dashboard."""

@@ -245,8 +245,8 @@ class SurveyTest(Workspace):
         self.assertEqual([(o.id, o.sightings) for o in self.objects.all()],
                          [("LAD-001", 3), ("LAD-002", 1), ("FEX-001", 1)])
         self.assertAlmostEqual(self.objects.get("LAD-001").position[0], 5.0, delta=0.15)
-        self.assertEqual([e["object"] for e in self.store.events() if e["kind"] == "object_found"],
-                         ["LAD-001", "LAD-002", "FEX-001"])
+        # Only an object seen often enough is announced: one box may be a false hit or a part.
+        self.assertEqual([e["object"] for e in self.store.events() if e["kind"] == "object_found"], ["LAD-001"])
 
     def test_two_boxes_in_one_frame_are_two_objects_even_when_close(self):
         class TwoLadders:
@@ -400,6 +400,57 @@ class SurveyTest(Workspace):
         self.objects._objects["LAD-003"].id = "LAD-003"
         new = self.objects.observe(sighting(20.0, [[200, 0]]), 9.0)
         self.assertNotIn(new.id, ("LAD-001", "LAD-003"))
+
+    def posted_events(self):
+        """Event types and asset ids the dashboard would receive from this workspace's store."""
+        from ultron.protocol.publish import Publisher
+        posted = []
+
+        def post(path, body=None, raw=None):
+            if path == "/api/events":
+                posted.append((body["type"], body["asset_id"], body["data"].get("note")))
+            return 201, ""
+        self.store.subscribe(Publisher(self.store, post, "PATROL-1", "site-a", log=lambda *_: None).on_event)
+        return posted
+
+    def test_a_part_boxed_beside_the_whole_never_reaches_the_dashboard(self):
+        posted = self.posted_events()
+
+        class Halves:
+            def detect(self, frame):
+                whole = [Detection("ladder", [300, 200, 600, 800], 0.9, track=1)]
+                # The half box is tracked for four frames: enough sightings, but a fragment of the whole.
+                return whole + ([Detection("ladder", [560, 200, 640, 800], 0.6, track=2)] if 10 <= frame.stamp < 14 else [])
+        survey = Survey(Halves(), self.objects, self.keyframes, self.store, CALIBRATION, interval=0)
+        for stamp in range(20):
+            survey.feed(frame("x", (0.0, 0.0, 0.0), float(stamp), depth=3.0))
+        views = len(self.keyframes.for_object("LAD-001")) + len(self.keyframes.for_object("LAD-002"))
+        self.assertEqual(survey.tidy(), {"LAD-002": "LAD-001"})
+        self.assertEqual([(kind, asset) for kind, asset, _ in posted if kind.startswith("OBJECT_")], [("OBJECT_FOUND", "LAD-001")])
+        self.assertFalse(any("LAD-002" in (note or "") for _, _, note in posted))
+        self.assertEqual(len(self.keyframes.for_object("LAD-001")), views)  # the part's views joined the whole
+
+    def test_an_announced_object_keeps_its_id_when_a_better_seen_one_is_folded_into_it(self):
+        posted = self.posted_events()
+        for stamp in range(3):
+            self.see("ladder", (5.0, 5.0), 0, 3.0, float(stamp))       # announced as LAD-001
+        for stamp in range(3, 23):
+            self.see("ladder", (5.9, 5.0), 0, 3.0, float(stamp))       # 0.9 m on, seen far more often
+        self.assertEqual(self.survey.tidy(), {"LAD-002": "LAD-001"})
+        self.assertEqual([(o.id, o.sightings) for o in self.objects.all()], [("LAD-001", 23)])
+        self.assertEqual([(kind, asset) for kind, asset, _ in posted if kind.startswith("OBJECT_")], [("OBJECT_FOUND", "LAD-001")])
+
+    def test_a_merge_of_an_announced_object_is_forwarded(self):
+        posted = self.posted_events()
+        for stamp in range(20):
+            self.see("ladder", (5.0, 5.0), 0, 3.0, float(stamp))
+        for stamp in range(20, 23):
+            self.see("ladder", (5.0, 6.2), 0, 3.0, float(stamp))       # a fragment seen three times
+        self.objects.update("LAD-002", sightings=4)                    # ... before the strong one had a footprint to tell
+        self.survey.announced.add("LAD-002")
+        self.store.emit("object_found", object="LAD-002", object_kind="ladder")
+        self.assertEqual(self.survey.tidy(), {"LAD-002": "LAD-001"})
+        self.assertIn(("OBJECT_MERGED", "LAD-002"), [(kind, asset) for kind, asset, _ in posted])
 
     def test_a_stopped_survey_resumes_from_disk(self):
         self.see("ladder", (5.0, 5.0), 0, 3.0)

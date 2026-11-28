@@ -14,6 +14,7 @@ EDGE = 10               # thousandths: a box this close to the top or bottom of 
 VERIFY_VIEWS = 3        # keyframes of an object shown to the vision model, one call each
 SAME_BOX_OVERLAP = 0.5  # boxes of one kind overlapping this much (intersection over union) are one object
 PART_OF_BOX = 0.7       # a box of one kind lying this much inside a better one is a part of it
+ANNOUNCE = 3            # sightings before an object is announced: single boxes are often false hits or parts
 
 
 def overlap(a, b):
@@ -47,6 +48,8 @@ class Survey:
         self.min_sharpness = min_sharpness  # frames blurrier than this are skipped
         self._last = None
         self._tracks = {}  # detector track id -> object id, for this run of the detector
+        # Objects announced (`object_found`) in this workspace: resuming does not announce them twice.
+        self.announced = {e["object"] for e in store.events(limit=None) if e["kind"] == "object_found"}
 
     def feed(self, frame, force=False):
         """Process one frame. Returns the objects seen in it (empty if skipped or nothing found)."""
@@ -77,21 +80,35 @@ class Survey:
                 continue  # between two known objects and no way to tell which: wait for a clearer frame
             if detection.track is not None:
                 self._tracks[detection.track] = site_object.id
-            keyframe = self.keyframes.offer(frame, site_object, sighting, sharpness)
-            if site_object.sightings == 1:
-                self.store.emit("object_found", object=site_object.id, object_kind=site_object.kind,
-                                position=site_object.position, approximate=sighting.approximate)
+            self.keyframes.offer(frame, site_object, sighting, sharpness)
             seen.append(site_object)
         for kind in {o.kind for o in seen}:
             together = [o.id for o in seen if o.kind == kind]
             if len(together) > 1:
                 self.objects.seen_together(together)
+        self.announce()
         self.store.save_live(frame)
         best = max(detections, key=lambda d: d.score, default=None)
+        known = sorted({o.id for o in seen} & self.announced)
         self.store.emit("look", frame=frame.name, ladder=any(d.kind == "ladder" for d in detections),
                         view=None, box=best.box if best else None, pose=frame.pose,
-                        note=", ".join(sorted({o.id for o in seen})) or "nothing found")
+                        note=", ".join(known) or ("nothing confirmed yet" if seen else "nothing found"))
         return seen
+
+    def announce(self, min_sightings=ANNOUNCE, settled=False):
+        """Report objects seen often enough (or confirmed by the vision model).
+
+        While the survey runs, an object standing beside another of its kind waits: it may be a
+        fragment, and whether it is one only shows once both are well seen. `settled` (after
+        fragments were merged) reports whatever is left."""
+        for site_object in self.objects.all():
+            if (site_object.id in self.announced or site_object.status == "REJECTED"
+                    or not (site_object.sightings >= min_sightings or site_object.verified)
+                    or not settled and self.objects.beside(site_object)):
+                continue
+            self.announced.add(site_object.id)
+            self.store.emit("object_found", object=site_object.id, object_kind=site_object.kind,
+                            position=site_object.position, sightings=site_object.sightings)
 
     def _replace(self, old, new):
         self._tracks = {track: new if i == old else i for track, i in self._tracks.items()}
@@ -99,12 +116,15 @@ class Survey:
     def tidy(self, min_sightings=3):
         """Merge fragments into the objects they belong to, then have the vision model check
         what is left. Call when a survey pass ends, or now and then during a long one."""
-        merged = self.objects.consolidate(min_sightings)
+        merged = self.objects.consolidate(min_sightings, keep=self.announced)
         for removed, target in merged.items():
-            self.keyframes.drop(removed)
+            self.keyframes.reassign(removed, target)
             self._replace(removed, target)
-            self.store.emit("object_merged", object=removed, into=target)
+            self.store.emit("object_merged", object=removed, into=target, announced=removed in self.announced)
+            self.announced.discard(removed)
+        self.announce(min_sightings, settled=True)
         self.verify(min_sightings)
+        self.announce(min_sightings, settled=True)  # a confirmed object counts as found whatever its sightings
         return merged
 
     def verify(self, min_sightings=3):
@@ -151,6 +171,8 @@ class Survey:
                 new_id = self.objects.relabel(site_object.id, kind)
                 self.keyframes.reassign(site_object.id, new_id)
                 self._replace(site_object.id, new_id)
+                if site_object.id in self.announced:  # the dashboard learns the new id from this event
+                    self.announced.add(new_id)
                 self.store.emit("object_relabelled", object=site_object.id, was=site_object.kind,
                                 now=kind, into=new_id, remark=remark)
 
