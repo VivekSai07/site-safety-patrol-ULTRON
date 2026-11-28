@@ -1,0 +1,26 @@
+# realsense2_camera (realsense-ros 4.5x) parameters for the B2 head RealSense D457 (live mode).
+# WRITTEN, NEVER RUN. bag = docs/b2_ros_stack/BAG_FACTS.md; TO_VERIFY = not established by the bag.
+# Node name `cam_head`; frame prefix comes from camera_name, so frames match the bag
+# (head_link, head_color_optical_frame, head_depth_optical_frame). The description attaches
+# head_link under cam_head_link (calibration/real.yaml).
+/**:
+  ros__parameters:
+    camera_name: head
+    serial_no: ''                       # TO_VERIFY (pin the head unit)
+    device_type: d457                   # bag: 59 mm baseline, 848x480 depth; D457 per team hardware list
+    enable_color: true
+    enable_depth: true
+    enable_infra1: false
+    enable_infra2: false
+    rgb_camera.color_profile: 1280x720x30   # bag: 1280x720 rgb8, 29.99 Hz
+    rgb_camera.color_format: RGB8
+    depth_module.depth_profile: 848x480x30  # bag: 848x480 16UC1, 29.82 Hz
+    depth_module.depth_format: Z16
+    align_depth.enable: false           # bag: no aligned depth recorded
+    pointcloud.enable: false
+    enable_sync: false                  # TO_VERIFY
+    publish_tf: true                    # RealSense-internal head_link -> head_* frames (as in bag /tf_static)
+    tf_publish_rate: 0.0                # static only
+    base_frame_id: link                 # -> head_link with camera_name head
+    enable_metadata: true               # bag recorded color/depth metadata
+    # depth scale not recorded: 0.001 m/unit (RealSense default) TO_VERIFY on the device.

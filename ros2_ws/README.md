@@ -14,7 +14,7 @@ ros2_ws/scripts/dev.sh bash -lc "scripts/import_deps.sh && colcon build --symlin
 ros2_ws/scripts/dev.sh bash -lc "source install/setup.bash && colcon test --packages-select-regex '^ultron_b2_' && colcon test-result --verbose"
 ros2_ws/scripts/dev.sh scripts/ci.sh                    # full CI: deps, build, test, repo unittests
 ros2_ws/scripts/dev.sh bash -lc "source install/setup.bash && scripts/ultron_launch.sh sim mode:=mapping"
-ULTRON_MODE=replay ros2_ws/scripts/dev.sh bash -lc "source install/setup.bash && scripts/ultron_launch.sh replay bag:=/abs/bag"
+ULTRON_MODE=replay ULTRON_BAG_DIR=/abs/bag ros2_ws/scripts/dev.sh bash -lc "source install/setup.bash && scripts/ultron_launch.sh replay bag:=/abs/bag"
 ```
 
 `dev.sh` mounts the repo at the same absolute path, runs as your uid/gid with
@@ -23,6 +23,7 @@ ULTRON_MODE=replay ros2_ws/scripts/dev.sh bash -lc "source install/setup.bash &&
 72 (`ULTRON_MODE=replay`). `ULTRON_DEV_NET=bridge` (default) gives each container a private
 loopback so parallel agents never see each other's DDS graph; `host` shares the host loopback
 (still localhost-only); `none` has no network. Extra docker args: `ULTRON_DEV_ARGS`.
+`ULTRON_BAG_DIR` mounts a bag directory read-only at the same path (it must be outside the repo).
 
 The localhost Cyclone profile raises `MaxAutoParticipantIndex` to 120: loopback has no multicast,
 and the default index limit (9) refuses participants once the stack plus CLI tools exceed it
@@ -55,6 +56,12 @@ names. `replay` never includes `nav`, `control` or `mission`.
 `mode:={mapping,localization,nav,mission}`, `odom_source:={sim,mola,kiss,b2}`,
 `viz:={none,foxglove,rviz_bridge,both}`, `record:={none,minimal,debug}`, `hardware_enable:=false`,
 `bag:=<path>`, `namespace` (must equal the mode's), `publish_description`, `tf_check`.
+Replay only: `replay_rate` (1.0), `replay_loop` (false), `replay_start_offset` (0.0 s),
+`replay_delay` (2.0 s), `replay_cameras` (true). The bag player runs `ros2 bag play --clock 100`
+with only the contract topics remapped into `/ultron/replay` (table:
+`ultron_b2_bringup/replay_topics.py`); the bag's Xsens `/tf` goes to `bag/tf_xsens`, off the TF
+tree. Large clouds/images need **reliable** subscribers on this host: best-effort readers lose
+~1 MB fragmented samples (see `docs/b2_ros_stack/VALIDATION.md`, Agent B).
 
 Preflight refuses (exit 2, nothing else starts) when `ROS_DOMAIN_ID`, `ROS_LOCALHOST_ONLY`,
 namespace or `odom_source` do not match the mode table, when `hardware_enable:=true` outside
