@@ -25,6 +25,7 @@ class Sighting:
     height: float = None     # physical height of the box in metres at the measured range
     cells: list = None       # [[i, j], ...] floor cells (CELL metres) the object's visible surface covers
     zband: tuple = None      # (low, high) metres above (+) or below (-) the camera that the box spans
+    lying: bool = False      # flat on the floor (lift.py): zband is then measured floor to top, not the box
 
     def side(self, robot_pose):
         """Viewing direction as a 45 degree step, 0..7: the map bearing from object to camera."""

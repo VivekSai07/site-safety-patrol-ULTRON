@@ -27,6 +27,7 @@ class Kind:
     sides: int              # how many different viewing directions are wanted (45 degree steps)
     checklist: str          # form to fill: "ladder" or a key of checklists.CHECKLISTS
     extent: float = 0.4     # metres: largest horizontal size, how far behind its nearest surface it may reach
+    lying: bool = False     # may lie flat on the floor: its box height then says nothing (see lift.py)
 
 
 OVERVIEW, CLOSE = View("overview", 2.0, 4.5), View("close", 0.8, 2.0)
@@ -41,11 +42,17 @@ DETAIL = View("detail", 0.3, 0.5)
 # The red kinds get confused with each other from a distance (a 15 cm alarm box scored 0.6 as an
 # extinguisher), so each kind also has a plausible physical height, checked against measured range.
 # Measured in the hall: extinguisher 0.43-0.57 m, alarm box 0.35-0.38 m, hose cabinet 0.77-0.88 m.
+# Ladder candidates for other sites: lying on the floor, wood instead of aluminium. YOLOE barely
+# tells the materials apart (on the hall photos of aluminium ladders "wooden ladder" scored
+# 0.89-0.98 where "ladder" scored 0.76-0.96), so a material word filters nothing; calibration keeps
+# whichever the vision model confirms most often. "ladder" scored 0.97 on a real photo of a ladder
+# lying on the ground (nesseler ladder_12, taken standing at its foot, not from the robot's height).
 KINDS = {kind.name: kind for kind in (
     # A free-standing ladder can be walked around; three directions cover rails, rungs and feet.
     Kind("ladder", "LAD", "portable ladder or stepladder",
-         ("ladder", "stepladder", "aluminium ladder"), 0.5, (0.5, 8.0), 0.7, (OVERVIEW, CLOSE, DETAIL), 3, "ladder",
-         extent=1.8),
+         ("ladder", "stepladder", "aluminium ladder", "wooden ladder", "wooden stepladder",
+          "ladder lying on the floor", "fallen ladder"), 0.5, (0.5, 8.0), 0.7, (OVERVIEW, CLOSE, DETAIL), 3, "ladder",
+         extent=1.8, lying=True),
     # Wall-mounted equipment: one direction, but close enough to read the inspection sticker.
     Kind("fire_extinguisher", "FEX", "portable red cylinder, about 0.5 m tall, with a hose and handle",
          ("red fire extinguisher", "fire extinguisher", "fire extinguisher standing on the floor"), 0.35, (0.42, 0.9), 0.8, (OVERVIEW, CLOSE, DETAIL), 1, "fire_extinguisher"),

@@ -31,6 +31,20 @@ FLOOR_TILT = 0.2    # largest slope of the floor seen from the camera (about 11 
 FLOOR_SHARE = 0.2   # of the lower half's pixels that must lie on it
 CELL = 0.1          # metres: floor grid of object footprints
 COLUMN_BAND = 0.25  # metres: per image column, pixels this far behind the nearest one are background seen through gaps
+# A ladder lying on the floor is a strip 5-15 cm high. FLOOR_BAND removes most of it, its box height
+# is its length foreshortened (the size check rejects it), and per image column its far end lies
+# far behind its near end (COLUMN_BAND would keep 25 cm of a ladder pointing away). For kinds that
+# may lie (catalog `lying`), a mask below the horizon with (almost) nothing measured higher than
+# LYING_TOP above the floor lies flat. Its footprint is where the mask's rays meet a plane LYING_RAY
+# above the floor: that needs the floor plane, not depth on thin, shiny rails or blurred by stereo.
+LYING_TOP = 0.4     # metres above the floor: a ladder flat on the floor stays far below this ...
+LYING_HIGH = 0.1    # ... share of the mask's pixels allowed above it (or above the horizon)
+LYING_RAY = 0.05    # metres above the floor the rays are cut at: about half a rail's height
+LYING_FAR = 10.0    # metres: rays meeting the floor further away graze it, too coarse to place
+# Floor pixels about the fitted plane on the hall recording (71 frames): sd 0.9 cm at 1-2 m, 1.4 cm
+# at 2-3 m, 2.6 cm at 4-6 m, mode +0.5 cm out to 8 m.
+RAISED = 0.04       # metres over the floor plane: the object, not the floor
+NEARER = 0.8        # share of a ray's floor range: a pixel measured nearer is something in front (a wall past its end)
 
 
 def _depth_range(depth, box):
@@ -78,13 +92,26 @@ def floor_plane(depth, calibration, tries=60):
     return tuple(np.linalg.lstsq(design[best], y[best], rcond=None)[0])
 
 
+def frame_floor(frame, depth, calibration):
+    """`floor_plane` of the frame's depth image, computed once per frame."""
+    cached = getattr(frame, "_floor_plane", False)
+    if cached is not False and getattr(frame, "_floor_shape", None) == depth.shape:
+        return cached
+    plane = floor_plane(depth, calibration)
+    try:
+        frame._floor_plane, frame._floor_shape = plane, depth.shape
+    except AttributeError:
+        pass
+    return plane
+
+
 def off_floor(frame, depth, calibration):
     """Pixels of `depth` that are not floor (all of them when no floor is seen); kept on the frame."""
     cached = getattr(frame, "_off_floor", None)
     if cached is not None and cached.shape == depth.shape:
         return cached
     keep = np.ones(depth.shape, dtype=bool)
-    plane = floor_plane(depth, calibration)
+    plane = frame_floor(frame, depth, calibration)
     if plane is not None:
         rows, columns = np.nonzero(np.isfinite(depth) & (depth > MIN_RANGE))
         x, y, z = _camera_points(depth, calibration, rows, columns)
@@ -168,6 +195,68 @@ def footprint(depth, outline, calibration, pose, kind, distance, keep=None):
     return cells.tolist(), (float(xs.mean()), float(ys.mean()))
 
 
+def flat_on_floor(frame, depth, detection, calibration):
+    """(cells, centre, distance, zband) of an object lying flat on the floor, or None when its mask
+    says otherwise (or its kind never lies, or no floor is seen). zband is floor to measured top,
+    relative to the camera."""
+    if not KINDS[detection.kind].lying or not detection.outline:
+        return None
+    plane = frame_floor(frame, depth, calibration)
+    if plane is None:
+        return None
+    a, b, c = plane
+    rows, columns = np.nonzero(_mask(depth.shape, detection.outline))
+    if rows.size < MIN_POINTS:
+        return None
+    u = (columns + 0.5) * calibration.width / depth.shape[1]
+    v = (rows + 0.5) * calibration.height / depth.shape[0]
+    right, below = (u - calibration.cx) / calibration.fx, (v - calibration.cy) / calibration.fy
+    descent = below - a * right - b  # > 0: the ray goes down to the floor
+    if (descent <= 0).mean() > LYING_HIGH:
+        return None  # reaches above the horizon: higher than the camera, so standing
+    z = depth[rows, columns]
+    measured = np.isfinite(z) & (z > MIN_RANGE)
+    if measured.sum() < MIN_POINTS:
+        return None
+    with np.errstate(divide="ignore", invalid="ignore"):
+        above = np.where(measured, (a * right + b - below) * z + c, np.nan)  # height over the floor
+        reach = np.where(descent > 0, (c - LYING_RAY) / descent, np.inf)
+    if (above[measured] > LYING_TOP).mean() > LYING_HIGH:
+        return None
+    # Grazing rays make the plane's range sensitive to its tilt (at 6 m, 0.5 degrees of pitch is
+    # 0.4 m), so a measured depth that agrees with the plane is used instead; one that disagrees is
+    # something else in the mask (a wall past its end, a leg in front). Of the pixels that agree,
+    # those raised off the floor are the object: the floor a mask takes in past its far edge lies
+    # up to 0.4 m behind it at 4 m. Without such pixels (stereo blurred the rails into the floor)
+    # every agreeing pixel counts, and pixels without depth fall back to the plane.
+    agrees = measured & (z >= NEARER * reach) & (z <= reach / NEARER)
+    raised = agrees & (above >= RAISED)
+    usable = (reach > MIN_RANGE) & (reach <= LYING_FAR)
+    hit = usable & ((raised if (usable & raised).sum() >= MIN_POINTS else agrees) | ~measured)
+    if hit.sum() < MIN_POINTS:
+        return None
+    # One scale for the whole mask: per pixel, floor depth is too noisy at range (sd 2.6 cm in
+    # height at 4-6 m on the hall floor is about 16 cm in depth).
+    if agrees.sum() >= MIN_POINTS:
+        reach = reach * float(np.median(z[agrees] / reach[agrees]))
+    reach = reach[hit]
+    left = -right[hit] * reach
+    x, y, yaw = frame.pose
+    xs = x + reach * math.cos(yaw) - left * math.sin(yaw)
+    ys = y + reach * math.sin(yaw) + left * math.cos(yaw)
+    cells = np.unique(np.stack([np.floor(xs / CELL), np.floor(ys / CELL)], axis=1).astype(int), axis=0)
+    top = max(float(np.percentile(above[measured], 95)), LYING_RAY)
+    return (cells.tolist(), (float(xs.mean()), float(ys.mean())), float(np.median(reach)),
+            (round(-c, 3), round(top - c, 3)))
+
+
+def lying(site_object):
+    """Whether a stored object lies on the floor: its measured height band is lower than its kind
+    stands (an upright one shorter than that never passes the size check)."""
+    kind, band = KINDS.get(site_object.kind), site_object.zband
+    return bool(kind and kind.lying and band and band[1] - band[0] < kind.size[0])
+
+
 def _along_bearing(frame, box, calibration, distance):
     """Map position `distance` metres along the ray through the box centre."""
     u = (box[0] + box[2]) / 2000 * calibration.width
@@ -203,6 +292,11 @@ def lift(frame, detection, calibration=None):
     distance = None
     if depth is not None:
         depth = np.asarray(depth, dtype=float)
+        flat = flat_on_floor(frame, depth, detection, calibration)
+        if flat:
+            # No height: a lying ladder's box height is its length foreshortened, not its size.
+            cells, centre, distance, zband = flat
+            return Sighting(detection, centre, distance, cells=cells, zband=zband, lying=True)
         keep = off_floor(frame, depth, calibration) if detection.outline else None
         distance = (_outline_range(depth, detection.outline, keep) if detection.outline else None) or _depth_range(depth, detection.box)
         if detection.outline and distance:
