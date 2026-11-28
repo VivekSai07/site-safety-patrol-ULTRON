@@ -1,4 +1,5 @@
 """Where the pipeline may send the robot (gate, fence) and when (operator first, pause the explorer)."""
+import math
 import unittest
 
 import numpy as np
@@ -82,6 +83,18 @@ class GateTest(Workspace):
         ladder = self.objects.get("LAD-001").position
         self.assertTrue(gate.check(ladder[0], ladder[1])[1].startswith("too close to LAD-001"))
         self.assertTrue(gate(ladder[0] + 3.0, ladder[1]))
+
+    def test_in_a_tight_room_a_view_is_placed_nearer_when_the_middle_of_its_range_is_in_a_wall(self):
+        from ultron.pipeline.coverage import missing_views
+        for stamp in range(3):
+            self.see("ladder", A, 0, 3.0, float(stamp))
+        ladder = self.objects.get("LAD-001")
+        wall = ladder.position[1] + 2.0     # a wall 2 m north: the north-east view (side 1) moves nearer
+        requests = missing_views(ladder, self.keyframes.for_object("LAD-001"), lambda x, y: y < wall)
+        north_east = [r for r in requests if r.side == 1]
+        self.assertTrue(north_east)
+        distance = math.dist((north_east[0].x, north_east[0].y), ladder.position)
+        self.assertAlmostEqual(distance, 2.2, places=1)  # not the middle of the 2-4.5 m range
 
     def test_a_sighting_outside_the_fence_never_becomes_an_object(self):
         self.survey.inside = Fence([[0, 0], [4, 0], [4, 10], [0, 10]]).contains  # A (5, 5) lies beyond it
