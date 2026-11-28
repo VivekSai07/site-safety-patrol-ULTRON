@@ -2,6 +2,9 @@
 
 **Hardware motion: NO-GO.** This baseline exercises inspection and safety plumbing in a kinematic simulation. It does not establish a complete B2 autonomy stack or authorize connecting to the robot. The required gate remains [SIM_TO_HARDWARE.md](SIM_TO_HARDWARE.md).
 
+The step-by-step verification sequence and per-test approvals are in the
+[B2 hardware test plan](B2_HARDWARE_TEST_PLAN.md).
+
 ## What is connected now
 
 The patrol emits a checksum-bound, per-ladder `ASSESSMENT_READY` manifest as soon as acquisition ends. `dashboard.live_tail --assess-openai` runs one background Responses API request at a time using the seven-section/23-criterion prompt pack. It uploads evidence, then publishes the assessment while the patrol can continue. Dashboard ladder details retain criterion reasons, uncalibrated scores, image references and view-sampling coverage. Refusals, malformed responses, timeouts, exhausted request budgets and missing jobs become manual review, never oracle success. A known failure remains FLAGGED.
