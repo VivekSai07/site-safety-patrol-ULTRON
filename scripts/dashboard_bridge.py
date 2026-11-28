@@ -1,43 +1,41 @@
 #!/usr/bin/env python3
-"""ROS 2 bridge between Nav2 and the ULTRON dashboard.
-
-Use only after independently verifying simulation isolation. This bridge has
-no hardware-isolation guard and may send goals to any reachable action server.
-The dashboard has no user authentication, including on localhost.
-
-  ROS -> dashboard: /map (OccupancyGrid) as a PNG; the robot pose from TF map -> base frame.
-  dashboard -> ROS: each goal set on the map becomes a nav2 NavigateToPose action goal; progress
-                    (ACCEPTED / SUCCEEDED / FAILED / CANCELED) is reported back to the map.
-
-A new dashboard goal cancels the running one, like RViz's 2D Goal Pose. Goals that existed before the
-bridge started are ignored, so a restart never replays an old goal. The dashboard only accepts goals
-when started with --goals.
-
-See docs/dashboard_nav_goal.md for the simulation-only procedure and limits.
-"""
+"""Bridge the localhost dashboard to ULTRON's map-scoped simulation action."""
+import argparse
+import json
+from pathlib import Path
 import queue
+import signal
 import sys
 import threading
 import time
-from pathlib import Path
+from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 
 import rclpy
-from action_msgs.msg import GoalStatus
-from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import OccupancyGrid
 from rclpy.action import ActionClient
+from rclpy.clock import Clock, ClockType
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from tf2_ros import Buffer, TransformException, TransformListener
+from rclpy.signals import SignalHandlerOptions
+from std_msgs.msg import String
 
-from ultron.dashboard.ros_link import ACTION_STATUS, Dashboard, grid_png, quaternion_from_yaw, yaw_from_quaternion
+from ultron.autonomy.config import load_sim_slam_config
+from ultron.autonomy.dashboard_goal_node import DASHBOARD_ACTION
+from ultron.autonomy.localization_state import accept_pose
+from ultron.autonomy.motion_gate_node import state_from_json
+from ultron.autonomy.run_navigation import NAV_MAP_TOPIC
+from ultron.autonomy.sim_bridge import check_isolation
+from ultron.dashboard.ros_link import Dashboard, grid_png, quaternion_from_yaw, yaw_from_quaternion
+
+RESULT_STATUS = {'REACHED': 'SUCCEEDED', 'REJECTED': 'REJECTED', 'CANCELLED': 'CANCELED'}
 
 
 class Outbox(threading.Thread):
-    """Sends HTTP calls in order on its own thread; drops work rather than blocking ROS callbacks."""
+    """Send ordered HTTP updates without blocking ROS callbacks."""
 
     def __init__(self, logger):
         super().__init__(daemon=True)
@@ -47,160 +45,263 @@ class Outbox(threading.Thread):
         try:
             self.jobs.put_nowait((name, fn, args))
         except queue.Full:
-            pass  # dashboard down or slow: poses/maps are superseded anyway
+            self.logger.warning(f'dashboard outbox full: {name}', throttle_duration_sec=5.0)
 
     def run(self):
         while True:
             name, fn, args = self.jobs.get()
             try:
                 fn(*args)
-            except Exception as error:  # keep bridging; the dashboard may be restarting
+            except Exception as error:
                 self.logger.warning(f'dashboard {name} failed: {error}', throttle_duration_sec=5.0)
+            finally:
+                self.jobs.task_done()
 
 
 class DashboardBridge(Node):
-    def __init__(self):
-        super().__init__('ultron_dashboard_bridge')
-        p = {name: self.declare_parameter(name, default).value for name, default in [
-            ('dashboard_url', 'http://127.0.0.1:8000'), ('map_topic', '/map'), ('map_frame', 'map'),
-            ('base_frame', 'base_link'), ('action_name', 'navigate_to_pose'), ('pose_rate_hz', 5.0),
-            ('map_min_period_s', 2.0)]}
-        self.p = p
-        self.dash = Dashboard(p['dashboard_url'])
+    def __init__(self, config, map_meta, url):
+        super().__init__('ultron_dashboard_bridge', parameter_overrides=[Parameter('use_sim_time', value=True)])
+        self.live_map = map_meta is None
+        self.map_id = None if self.live_map else map_meta['map_id']
+        self.map_version = None if self.live_map else int(map_meta['map_version'])
+        self.config = config
+        self.dash = Dashboard(url)
         self.outbox = Outbox(self.get_logger())
         self.outbox.start()
-
-        self.mission = None    # running mission id; poses are only sent while one runs
-        self.mission_t0 = None
-        self.pending_goal = None  # newest goal from the stream, picked up on the ROS thread
+        self.closed = threading.Event()
         self.lock = threading.Lock()
-        self.active = None     # (seq, ClientGoalHandle) of the goal nav2 is executing
-        self.latest_seq = None  # newest goal sent to nav2; anything older is cancelled on acceptance
-
-        qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
-        self.create_subscription(OccupancyGrid, p['map_topic'], self.on_map, qos)
-        self.latest_map, self.map_sent_at = None, 0.0
-        self.create_timer(0.5, self.flush_map)
-
-        self.tf = Buffer()
-        self.tf_listener = TransformListener(self.tf, self)
-        self.create_timer(1.0 / p['pose_rate_hz'], self.send_pose)
-
-        self.nav = ActionClient(self, NavigateToPose, p['action_name'])
-        self.create_timer(0.1, self.take_goal)
+        self.connected = False
+        self.mission = self.pose_mission = self.mission_t0 = None
+        self.pending_goal = self.inflight = self.goal_handle = None
+        self.cancel_requested = False
+        self.localization = None
+        self.latest_map = None
+        self.map_pending = False
+        latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                             durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        if self.live_map:
+            from tf2_ros import Buffer, TransformListener
+            self.tf = Buffer(node=self)
+            self.tf_listener = TransformListener(self.tf, self)
+            self.create_subscription(OccupancyGrid, '/map', self.on_map, latched)
+        else:
+            from ultron_nav_interfaces.action import NavigateDashboard
+            self.goal_type = NavigateDashboard
+            self.nav = ActionClient(self, NavigateDashboard, DASHBOARD_ACTION)
+            self.create_subscription(OccupancyGrid, NAV_MAP_TOPIC, self.on_map, latched)
+            self.create_subscription(String, config.topics['localization_state'], self.on_localization, latched)
+        steady = Clock(clock_type=ClockType.STEADY_TIME)
+        self.create_timer(0.5, self.flush_map, clock=steady)
+        self.create_timer(0.2, self.send_pose, clock=steady)
+        self.create_timer(0.1, self.take_goal, clock=steady)
         threading.Thread(target=self.listen, daemon=True).start()
-        self.get_logger().info(f"bridging {p['dashboard_url']} <-> {p['map_topic']}, TF {p['map_frame']}->{p['base_frame']}, "
-                               f"action {p['action_name']}")
 
-    # dashboard -> ROS ------------------------------------------------------------------------
     def listen(self):
-        """Stream thread: follow the dashboard's live events, reconnecting when it restarts."""
-        while rclpy.ok():
-            try:
-                live = self.dash.live()
-                mission = live.get('mission')
-                self.set_mission(mission['id'] if mission and mission['status'] == 'RUNNING' else None)
-                for kind, data in self.dash.events():
-                    if kind == 'goal' and data['status'] == 'SENT':
-                        with self.lock:
-                            self.pending_goal = data
-                    elif kind == 'mission':
-                        self.set_mission(data['id'] if data['status'] == 'RUNNING' else None)
-            except Exception as error:
-                self.get_logger().warning(f'dashboard stream: {error}; retrying', throttle_duration_sec=10.0)
-            time.sleep(2.0)
+        """Follow mission and goal events. Ignore goals already present on connection."""
+        while not self.closed.is_set():
+            existing_request = None
 
-    def set_mission(self, mission_id):
-        if mission_id != self.mission:
-            self.mission, self.mission_t0 = mission_id, None
+            def connected():
+                nonlocal existing_request
+                live = self.dash.live()
+                existing_request = (live.get('goal') or {}).get('request_id')
+                with self.lock:
+                    self.set_mission(live.get('mission'))
+                    self.connected = True
+                    self.map_pending = True
+
+            try:
+                for kind, data in self.dash.events(on_connect=connected):
+                    if self.closed.is_set():
+                        break
+                    with self.lock:
+                        if kind == 'goal' and data['status'] == 'SENT' and data['request_id'] != existing_request:
+                            self.pending_goal = data
+                        elif kind == 'mission':
+                            self.set_mission(data)
+            except Exception as error:
+                self.get_logger().warning(f'dashboard stream: {error}', throttle_duration_sec=10.0)
+            finally:
+                with self.lock:
+                    self.connected = False
+                    self.pending_goal = None
+            self.closed.wait(1.0)
+
+    def set_mission(self, mission):
+        self.mission = mission['id'] if mission and mission['status'] == 'RUNNING' else None
+
+    def cancel(self):
+        if self.goal_handle is not None and not self.cancel_requested:
+            self.cancel_requested = True
+            self.goal_handle.cancel_goal_async()
 
     def take_goal(self):
         with self.lock:
-            goal, self.pending_goal = self.pending_goal, None
-        if goal is None:
+            goal, connected, mission = self.pending_goal, self.connected, self.mission
+            if self.inflight is None:
+                self.pending_goal = None
+        if self.inflight is not None:
+            if goal is not None or not connected or self.closed.is_set():
+                self.cancel()
             return
-        seq = self.latest_seq = goal['seq']
-        if self.active:
-            self.active[1].cancel_goal_async()  # its CANCELED report hits the old seq and is ignored
-            self.active = None
+        if goal is None or not connected or self.closed.is_set():
+            return
+        if self.live_map:
+            self.report(goal, 'REJECTED', 'LIVE_MAP_PREVIEW')
+            return
         if not self.nav.server_is_ready():
-            self.report(seq, 'FAILED', f"action server {self.p['action_name']} not available")
+            self.report(goal, 'FAILED', 'Checked simulation action server is unavailable')
             return
-        msg = NavigateToPose.Goal()
-        pose = msg.pose
-        pose.header.frame_id = goal['frame_id']
-        pose.header.stamp = self.get_clock().now().to_msg()
-        pose.pose.position.x, pose.pose.position.y = float(goal['x']), float(goal['y'])
-        q = pose.pose.orientation
+        msg = self.goal_type.Goal()
+        msg.mission_id = mission or 'DASHBOARD'
+        msg.map_id = goal.get('map_id') or ''
+        msg.map_version = goal.get('map_version') or 0
+        msg.pose.header.frame_id = goal['frame_id']
+        msg.pose.header.stamp = self.get_clock().now().to_msg()
+        pose = msg.pose.pose
+        pose.position.x, pose.position.y = float(goal['x']), float(goal['y'])
+        q = pose.orientation
         q.x, q.y, q.z, q.w = quaternion_from_yaw(float(goal['yaw']))
-        self.get_logger().info(f"goal {seq}: x={goal['x']:.2f} y={goal['y']:.2f} yaw={goal['yaw']:.2f} in {goal['frame_id']}")
-        self.nav.send_goal_async(msg).add_done_callback(lambda future: self.on_accepted(seq, future))
+        self.inflight, self.cancel_requested = goal, False
+        try:
+            future = self.nav.send_goal_async(msg, feedback_callback=lambda f: self.on_feedback(goal, f))
+            future.add_done_callback(lambda f: self.on_accepted(goal, f))
+        except Exception as error:
+            self.clear_goal()
+            self.report(goal, 'FAILED', str(error))
 
-    def on_accepted(self, seq, future):
-        handle = future.result()
-        if not handle.accepted:
-            self.report(seq, 'FAILED', 'rejected by nav2')
-            return
-        if seq != self.latest_seq:  # replaced while nav2 was still deciding
-            handle.cancel_goal_async()
-            return
-        self.active = (seq, handle)
-        self.report(seq, 'ACCEPTED')
-        handle.get_result_async().add_done_callback(lambda result: self.on_result(seq, result))
+    def on_feedback(self, goal, feedback):
+        if self.inflight is goal and feedback.feedback.status == 'ACCEPTED':
+            self.report(goal, 'ACCEPTED')
 
-    def on_result(self, seq, future):
-        status = future.result().status
-        if self.active and self.active[0] == seq:
-            self.active = None
-        self.report(seq, ACTION_STATUS.get(status, 'FAILED'),
-                    '' if status == GoalStatus.STATUS_SUCCEEDED else f'nav2 status {status}')
+    def on_accepted(self, goal, future):
+        try:
+            handle = future.result()
+            if not handle.accepted:
+                self.clear_goal()
+                self.report(goal, 'REJECTED', 'Checked simulation action declined the request')
+                return
+            self.goal_handle = handle
+            handle.get_result_async().add_done_callback(lambda f: self.on_result(goal, f))
+        except Exception as error:
+            self.clear_goal()
+            self.report(goal, 'FAILED', str(error))
 
-    def report(self, seq, status, detail=''):
-        self.get_logger().info(f'goal {seq}: {status} {detail}'.rstrip())
-        self.outbox.put('goal status', self.dash.goal_status, seq, status, detail)
+    def on_result(self, goal, future):
+        self.clear_goal()
+        try:
+            result = future.result().result
+            self.report(goal, RESULT_STATUS.get(result.status, 'FAILED'), result.reason)
+        except Exception as error:
+            self.report(goal, 'FAILED', str(error))
 
-    # ROS -> dashboard ------------------------------------------------------------------------
+    def clear_goal(self):
+        self.inflight = self.goal_handle = None
+
+    def report(self, goal, status, detail=''):
+        self.get_logger().info(f"goal {goal['seq']}: {status} {detail}".rstrip())
+        self.outbox.put('goal status', self.dash.goal_status, goal['seq'], status, detail, goal['request_id'])
+
     def on_map(self, msg):
-        self.latest_map = msg
+        if msg.header.frame_id == 'map':
+            self.latest_map = msg
+            with self.lock:
+                self.map_pending = True
 
     def flush_map(self):
-        msg = self.latest_map
-        if msg is None or time.monotonic() - self.map_sent_at < self.p['map_min_period_s']:
-            return
-        self.latest_map, self.map_sent_at = None, time.monotonic()
+        with self.lock:
+            msg = self.latest_map
+            if msg is None or not self.connected or not self.map_pending:
+                return
+            self.map_pending = False
         info = msg.info
-        if abs(yaw_from_quaternion(*(getattr(info.origin.orientation, k) for k in 'xyzw'))) > 1e-3:
-            self.get_logger().warning('rotated map origins are not supported; map not sent', throttle_duration_sec=30.0)
+        q = info.origin.orientation
+        if abs(yaw_from_quaternion(q.x, q.y, q.z, q.w)) > 1e-3:
+            self.get_logger().warning('Dashboard cannot display a rotated map origin')
             return
         png = grid_png(info.width, info.height, msg.data)
-        self.outbox.put('map', self.dash.post_map, png, info.resolution, info.origin.position.x, info.origin.position.y)
+        self.outbox.put('map', self.dash.post_map, png, info.resolution, info.origin.position.x,
+                        info.origin.position.y, self.map_id, self.map_version,
+                        'live_slam' if self.live_map else None)
+
+    def on_localization(self, msg):
+        try:
+            self.localization = state_from_json(msg.data)
+        except (ValueError, TypeError):
+            self.localization = None
 
     def send_pose(self):
-        mission = self.mission
+        mission, state = self.mission, self.localization
         if mission is None:
             return
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if self.live_map:
+            pose = self.mapping_pose(now)
+            if pose is None:
+                return
+            x, y, yaw = pose
+            status = 'MAPPING_ESTIMATE'
+        else:
+            if not accept_pose(state, self.map_id, self.map_version, now)[0]:
+                return
+            x, y, yaw = state.position[0], state.position[1], state.yaw
+            status = 'NAVIGATING' if self.inflight else 'VALID'
+        wall = time.monotonic()
+        if self.pose_mission != mission:
+            self.pose_mission, self.mission_t0 = mission, wall
+        self.outbox.put('pose', self.dash.post_pose, mission, round(wall - self.mission_t0, 2),
+                        x, y, yaw, status)
+
+    def mapping_pose(self, now):
+        from rclpy.time import Time
+        from tf2_ros import TransformException
+
+        frames = self.config.frames
         try:
-            tf = self.tf.lookup_transform(self.p['map_frame'], self.p['base_frame'], rclpy.time.Time())
-        except TransformException as error:
-            self.get_logger().warning(f'no TF yet: {error}', throttle_duration_sec=10.0)
-            return
-        now = time.monotonic()
-        if self.mission_t0 is None:
-            self.mission_t0 = now
-        t, r = tf.transform.translation, tf.transform.rotation
-        state = 'NAVIGATING' if self.active else ''
-        self.outbox.put('pose', self.dash.post_pose, mission, round(now - self.mission_t0, 2), t.x, t.y,
-                        yaw_from_quaternion(r.x, r.y, r.z, r.w), state)
+            tf = self.tf.lookup_transform(frames['map'], frames['base'], Time())
+        except TransformException:
+            return None
+        stamp = tf.header.stamp.sec + tf.header.stamp.nanosec * 1e-9
+        if not 0 < stamp <= now or now - stamp > self.config.localization['pose_age_limit_s']:
+            return None
+        t, q = tf.transform.translation, tf.transform.rotation
+        return t.x, t.y, yaw_from_quaternion(q.x, q.y, q.z, q.w)
 
 
 def main():
-    rclpy.init()
-    node = DashboardBridge()
+    parser = argparse.ArgumentParser(description=__doc__)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument('--map', type=Path, help='Saved map for checked navigation')
+    source.add_argument('--live-map', action='store_true', help='Preview the current slam_toolbox map and estimate')
+    parser.add_argument('--url', default='http://127.0.0.1:8000')
+    args = parser.parse_args()
+    url = urlsplit(args.url)
+    if url.scheme != 'http' or url.hostname not in ('127.0.0.1', '::1', 'localhost') or url.username is not None:
+        parser.error('The simulation dashboard URL must be HTTP on loopback')
+    meta = None
+    if args.map is not None:
+        meta = json.loads((args.map / 'map_meta.json').read_text())
+        if 'sim_run' not in meta:
+            parser.error('Load a map produced by the simulation mapping workflow')
+    config = load_sim_slam_config()
+    check_isolation(config)
+
+    stopping = threading.Event()
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: stopping.set())
+    node = DashboardBridge(config, meta, args.url)
     try:
-        rclpy.spin(node)
+        while rclpy.ok() and not stopping.is_set():
+            rclpy.spin_once(node, timeout_sec=0.1)
     except (KeyboardInterrupt, ExternalShutdownException):  # Ctrl+C, or SIGTERM from scripts/dashboard.sh
         pass
     finally:
+        node.closed.set()
+        deadline = time.monotonic() + 2
+        while node.inflight and time.monotonic() < deadline:
+            node.cancel()
+            rclpy.spin_once(node, timeout_sec=0.05)
         node.destroy_node()
         rclpy.try_shutdown()
 

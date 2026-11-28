@@ -8,7 +8,8 @@ import json
 import math
 from pathlib import Path
 
-from .localization_state import LocalizationState, accept_pose
+from .localization_state import accept_pose
+from .motion_gate_node import state_from_json
 from .navigation_contract import GoalTracker, MapFootprint, check_goal
 
 ACTION = '/navigate_to_pose'
@@ -20,7 +21,7 @@ class Nav2Adapter:
         from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
         from nav2_msgs.action import NavigateToPose
         from nav_msgs.msg import Odometry
-        from std_msgs.msg import String
+        from std_msgs.msg import Bool, String
         self.node, self.config = node, config
         meta = json.loads((Path(map_dir) / 'map_meta.json').read_text())
         self.map_id, self.map_version = meta['map_id'], int(meta['map_version'])
@@ -32,22 +33,43 @@ class Nav2Adapter:
         self.gate = {'inhibited': True, 'reason': 'NO_GATE_STATUS'}
         self.speed = self.yaw_rate = 0.0
         self.operator_enabled = False
+        self.operator_stamp = None
         self.handle = None
         self.results = []
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
         t = config.topics
         node.create_subscription(String, t['localization_state'], self._on_state, latched)
-        node.create_subscription(String, t['gate_status'], lambda m: self.gate.update(json.loads(m.data)), latched)
+        node.create_subscription(String, t['gate_status'], self._on_gate, latched)
+        node.create_subscription(Bool, t['operator_enable'], self._on_operator, qos)
         node.create_subscription(Odometry, t['odom'], self._on_odom, qos)
 
     def now(self):
         return self.node.get_clock().now().nanoseconds * 1e-9
 
     def _on_state(self, msg):
-        data = json.loads(msg.data)
-        fields = set(LocalizationState.__dataclass_fields__)
-        self.localization = LocalizationState(**{k: v for k, v in data.items() if k in fields})
+        try:
+            self.localization = state_from_json(msg.data)
+        except (TypeError, ValueError):
+            self.localization = None
+
+    def _on_gate(self, msg):
+        try:
+            status = json.loads(msg.data)
+            if (status['map_id'], status['map_version']) != (self.map_id, self.map_version):
+                raise ValueError('Motion gate has a different map')
+            if type(status['inhibited']) is not bool:
+                raise ValueError('Invalid gate status')
+            self.gate = status
+        except (KeyError, TypeError, ValueError):
+            self.gate = {'inhibited': True, 'reason': 'INVALID_GATE_STATUS'}
+
+    def _on_operator(self, msg):
+        self.operator_enabled, self.operator_stamp = msg.data, self.now()
+
+    def operator_allowed(self, now):
+        return (self.operator_enabled and self.operator_stamp is not None
+                and 0 <= now - self.operator_stamp <= self.config.navigation['operator_enable_max_age_s'])
 
     def _on_odom(self, msg):
         self.speed, self.yaw_rate = msg.twist.twist.linear.x, msg.twist.twist.angular.z
@@ -57,7 +79,7 @@ class Nav2Adapter:
         """Pre-check and send. Returns a terminal NavigationResult if rejected, else None."""
         now = self.now()
         ok, reason = check_goal(goal, map_id=self.map_id, map_version=self.map_version, localization=self.localization,
-                                now=now, operator_enabled=self.operator_enabled, footprint=self.footprint,
+                                now=now, operator_enabled=self.operator_allowed(now), footprint=self.footprint,
                                 clearance_m=self.config.navigation['target_clearance_m'])
         if ok and not self.client.server_is_ready():
             ok, reason = False, 'NAV2_ACTION_SERVER_NOT_READY'
@@ -65,25 +87,46 @@ class Nav2Adapter:
         if rejected:
             self.results.append(rejected)
             return rejected
+        self.handle = None
         msg = self.NavigateToPose.Goal()
         msg.pose.header.frame_id = goal.frame_id
         msg.pose.header.stamp = self.node.get_clock().now().to_msg()
         msg.pose.pose.position.x, msg.pose.pose.position.y = goal.x, goal.y
         msg.pose.pose.orientation.z, msg.pose.pose.orientation.w = math.sin(goal.yaw / 2), math.cos(goal.yaw / 2)
         goal_id = goal.goal_id
-        future = self.client.send_goal_async(msg)
-        future.add_done_callback(lambda f: self._on_goal_response(goal_id, f))
+        try:
+            future = self.client.send_goal_async(msg)
+            future.add_done_callback(lambda f: self._on_goal_response(goal_id, f))
+        except Exception as error:
+            self._apply(goal_id, 6, f'Nav2 request failed: {error}')
+            return self.tracker.result
         return None
 
     def _on_goal_response(self, goal_id, future):
-        handle = future.result()
+        try:
+            handle = future.result()
+        except Exception as error:
+            self._apply(goal_id, 6, f'Nav2 goal response failed: {error}')
+            return
         if not handle.accepted:
             self._apply(goal_id, 6, 'Nav2 rejected the goal')
             return
-        if self.tracker.goal is not None and self.tracker.goal.goal_id == goal_id:
-            self.handle = handle
-        handle.get_result_async().add_done_callback(lambda f: self._apply(goal_id, f.result().status, 'Nav2 result'))
+        if self.tracker.goal is None or self.tracker.goal.goal_id != goal_id:
+            handle.cancel_goal_async()
+            return
+        self.handle = handle
+        if self.tracker.cancel_requested:
+            handle.cancel_goal_async()
+        handle.get_result_async().add_done_callback(lambda f: self._on_result(goal_id, f))
         self._apply(goal_id, 2, 'Nav2 executing')
+
+    def _on_result(self, goal_id, future):
+        try:
+            response = future.result()
+        except Exception as error:
+            self._apply(goal_id, 6, f'Nav2 result failed: {error}')
+            return
+        self._apply(goal_id, response.status, 'Nav2 result')
 
     def _apply(self, goal_id, code, reason):
         result = self.tracker.on_backend_status(goal_id, code, self.now(), reason)
@@ -107,6 +150,8 @@ class Nav2Adapter:
         now = self.now()
         if self.tracker.tick(now) == 'CANCEL' and self.handle is not None:
             self.handle.cancel_goal_async()
+        if self.tracker.status in ('ACCEPTED', 'ACTIVE') and not self.operator_allowed(now):
+            self.cancel('OPERATOR_MOTION_NOT_ENABLED')
         if (self.tracker.status in ('ACCEPTED', 'ACTIVE') and self.gate.get('inhibited')
                 and self.gate.get('reason') not in (None, 'NO_COMMAND', 'COMMAND_STALE')):
             self.cancel(f'MOTION_GATE: {self.gate.get("reason")}')

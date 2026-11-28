@@ -205,3 +205,109 @@ First full run (`runs/nav/all1`) recorded 8/9: the unreachable case's "stopped" 
 Findings: the stack preflight first matched free text and flagged the agent's own shell; it now matches exact argv tokens and skips its own ancestors. Nav2 warnings during the run were expected for the failure cases (planner failures, RPP collision-ahead, controller patience exceeded).
 
 Limitations: kinematic base; one map and hall; goals chosen by the test; Nav2's own recovery behaviours (spin/back-up) move the robot during failure handling; supervisor-driven mission (N3) not yet run; the gate is software in the same computer, not an independent watchdog or E-stop.
+
+## Recorded B2 LiDAR replay
+
+28 November 2026. ROS 2 Humble, slam_toolbox 2.6.10 and KISS-ICP 1.3.0. The source is the team recording `rosbag2_2026_11_28-00_48_42`. The local source ZIP has SHA-256 `00406d92a93c2961c01c97831d408c1358a4fae23b298baa3267c19ee968f20d`.
+
+`ros2 bag info` reports 36.56 s, 364 PointCloud2 messages on `/scan_cloud`, IMU streams and RealSense frames. Recorded TF consists of `world -> imu_link` and the static head camera transforms. The recording has no base odometry, reference trajectory or LiDAR-to-base transform.
+
+Run these commands from the repository root with the existing ROS Humble mapping dependencies and an extracted SQLite bag.
+
+```bash
+scripts/setup-ros-venv.sh
+.venv-ros/bin/python -m pip install 'kiss-icp==1.3.0'
+scripts/sim-slam.sh real-bag runs/b2_real/rosbag2_2026_11_28-00_48_42 runs/b2_real/slam_replay
+```
+
+Use a new output folder and stop any active local SLAM or Nav2 stack before replay. The launcher confines ROS to localhost. Only the derived 2D scans, odometry and TF are replayed. KISS-ICP estimates translation and rotation from the LiDAR clouds. The first ten clouds provide the floor estimate and define a replay base directly below the levelled LiDAR. The projection uses a 0.25–1.60 m height band with 0.5° rays. The derived messages and replay clock use the LiDAR acquisition timestamps.
+
+The run exports the occupancy grid, serialized pose graph, versioned map metadata, odometry and mapping trajectories, and the reload monitor's scan-by-scan localization states. The reload process starts with the mapping origin as its pose guess and uses the same recording. This checks map persistence and scan alignment on familiar data. Endpoint separation measures the closure of each estimated trajectory, and pose error against ground truth is unavailable.
+
+Run `runs/b2_real/slam_replay_02` used 1× playback.
+
+| Check | Result |
+|---|---|
+| Recorded input | All 364 clouds processed in 36.30 s of LiDAR acquisition time (10.00 Hz). Estimated LiDAR height 0.722 m and tilt 0.80°. |
+| Map save and serialization | Both services succeeded. The 5 cm occupancy map has 5,634 occupied cells. The mapping logger resolved 361 poses and missed the first three timestamps during startup. |
+| Estimated path and endpoint separation | KISS-ICP estimated a 17.40 m path and 0.137 m endpoint separation. slam_toolbox estimated an 18.66 m path and 0.237 m endpoint separation. The earlier team KISS-ICP result was about 0.15 m. |
+| Map reload | A fresh localization process deserialized the graph. Of 362 scored scans, 8 were INITIALIZING, 349 VALID and 5 DEGRADED. It reached VALID at 0.80 s, briefly degraded at 29.70 s, and recovered after 0.50 s. The last two scans arrived within the monitor's scoring delay of playback shutdown. |
+
+The raw bag and run artifacts are local. This run provides no evidence for localization on a separate patrol, measured sensor calibration, or physical navigation.
+
+## Dashboard goals and the SDK wrapper
+
+28 November 2026. Run `runs/dashboard-nav-e2e-03` used ROS 2 Humble,
+Nav2 1.1.20, slam_toolbox 2.6.10, the existing simulated hall map
+`ultron-hall-be73b8cbf8bf` v1 and the kinematic MuJoCo bridge. Goals were
+submitted through the dashboard's HTTP API. [Launch and reproduction commands](dashboard_nav_goal.md)
+
+| Check | Observed result |
+|---|---|
+| Saved map and pose | The dashboard received the matching map ID and version with a valid localization pose. |
+| Goal rejection | Disabled operator, wrong map version, occupied footprint, out-of-map target, and stale localization after an injected LiDAR blackout each returned `REJECTED` with a reason. Simulated displacement stayed within 2 cm during these checks. |
+| Goal arrival | Nav2 reported success. Simulated ground truth was 0.182 m and 0.119 rad from the goal, within the existing 0.25 m and 0.35 rad thresholds. |
+| Goal replacement | The first goal received backend cancellation acknowledgement before the replacement was dispatched. The replacement succeeded. |
+| Operator inhibition during navigation | The gate inhibited output in 0.06 s, Nav2 confirmed cancellation, and kinematic motion stopped in 0.84 s. |
+| Gated commands and shutdown | The recording SportClient received 345 `Move` calls and five `StopMove` calls across the two cases. The final call was the shutdown stop. |
+
+The separate ROS test published commands on both velocity topics in the
+simulation domain. Only the motion-gate output topic reached the stand-in.
+After command silence, the wrapper's steady-clock watchdog issued `StopMove`.
+The interactive launch also published the map and pose and rejected a goal
+without an operator heartbeat. Its SDK wrapper was off by default.
+Unit tests also exercised clamping, zero commands, unsupported axes,
+nonfinite values and SDK error handling. The configured limits are simulation
+values. The SDK package and physical B2 transport remain untested. The pinned
+SportClient sends `Move` without waiting for a robot reply. [Unitree source](https://github.com/unitreerobotics/unitree_sdk2_python/blob/814556d15970dd2ecf1c9984e845ca02ab07e206/unitree_sdk2py/b2/sport/sport_client.py#L125)
+
+## Live dashboard mapping
+
+On 28 November 2026, `runs/live-map-replay-01` rebuilt a map from the
+simulated hall recording at 2× playback. The HTTP probe captured four grid
+updates with three distinct PNGs and 18 changing `MAPPING_ESTIMATE` poses
+while mapping ran. It received HTTP 409 with `LIVE_MAP_PREVIEW` on a goal
+request to the live grid. Map save and pose-graph serialization both succeeded.
+The probe log and sampled PNGs are under `runs/live-map-dashboard-test/`.
+[Launch instructions](dashboard_nav_goal.md#watch-the-map-while-it-is-being-built)
+
+## 3D LiDAR SLAM on the recorded B2 scan
+
+The offline path gives KISS-SLAM each full `/scan_cloud` point set at its
+acquisition timestamp. It estimates 6-DoF poses in the initial LiDAR frame,
+runs its submap pose graph, and writes a merged PLY, a graph and timestamped
+trajectories. The comparison is a separate KISS-ICP-only run on the same input
+and odometry settings. Both runs use LiDAR only and leave scan deskew disabled.
+[KISS-SLAM project and paper](https://github.com/PRBonn/kiss-slam)
+
+Install into a separate target so these versions stay out of the regular ROS
+mapping environment. Run from the repository root with the extracted bag.
+
+```bash
+.venv-ros/bin/python -m pip install --target runs/kiss-slam-python \
+  'kiss-slam==0.0.2' 'kiss-icp==1.3.0' 'map-closures==2.0.2' \
+  'open3d==0.20.0' 'numpy==1.26.4'
+PYTHONPATH="$PWD/runs/kiss-slam-python" PYTHONNOUSERSITE=1 \
+  scripts/sim-slam.sh slam3d runs/b2_real/rosbag2_2026_11_28-00_48_42 runs/b2_real/slam3d
+```
+
+All three trials processed the 364 scans and produced five submaps. The
+recording has no ground-truth trajectory. The values below are estimated
+3D distances between the first and last poses.
+
+| Trial | Merged 3D points | Accepted closure edges | KISS-SLAM endpoint separation | Odometry-only endpoint separation |
+|---|---:|---|---:|---:|
+| `slam3d_kiss_01` | 55,243 | 0 → 4 | 0.160 m | 0.152 m |
+| `slam3d_kiss_02` | 55,420 | none | 0.166 m | 0.152 m |
+| `slam3d_kiss_03` | 55,262 | none | 0.177 m | 0.152 m |
+
+The first trial's backend overlap log was 1.195, outside the range of a
+fraction. Treat the accepted edge as provisional. The script now records
+bounded nearest-neighbor fractions for any accepted edge. The two repeats
+had no accepted edge to score. This recording demonstrates 3D reconstruction
+and full-pose export. It leaves reliable loop closure and any accuracy benefit
+unverified.
+
+The local run folders contain `map.ply`, `slam.csv`, `odometry.csv`,
+`submaps.g2o`, `config.json` and `summary.json`. The optional
+`slam3d_kiss_02/map_view.html` shows a cropped view around the route.

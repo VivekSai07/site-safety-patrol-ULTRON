@@ -1,0 +1,9 @@
+geometry_msgs/PoseStamped pose
+string mission_id
+string map_id
+int32 map_version
+---
+string status
+string reason
+---
+string status

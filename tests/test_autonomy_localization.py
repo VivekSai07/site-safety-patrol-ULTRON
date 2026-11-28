@@ -103,6 +103,11 @@ class MonitorTest(unittest.TestCase):
         self.assertIn('STALE', accept_pose(state, 'map-A', 1, now + 1.0)[1])
         self.assertIn('FUTURE', accept_pose(state, 'map-A', 1, state.stamp - 0.5)[1])
         self.assertFalse(accept_pose(None, 'map-A', 1, now)[0])
+        state.age_limit_s = math.nan
+        self.assertEqual(accept_pose(state, 'map-A', 1, now), (False, 'INVALID_CLOCK_FIELDS'))
+        state.age_limit_s = 0.5
+        state.orientation_xyzw = [0.0, 0.0, 0.0, 0.0]
+        self.assertEqual(accept_pose(state, 'map-A', 1, now), (False, 'INVALID_POSE'))
         self.feed((2, 2, 0), truth=(2.6, 2.6, 0.5))
         self.assertIn('NOT_VALID', accept_pose(self.monitor.snapshot(self.t), 'map-A', 1, self.t)[1])
         record = state.to_dict()

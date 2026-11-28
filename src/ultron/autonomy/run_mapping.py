@@ -43,7 +43,8 @@ def terminate_cleanly():
 
 
 STACK_MODULES = {'ultron.autonomy.sim_bridge', 'ultron.autonomy.slam_logger', 'ultron.autonomy.localization_monitor',
-                 'ultron.autonomy.latency_probe', 'ultron.autonomy.tf_filter', 'ultron.autonomy.motion_gate_node'}
+                 'ultron.autonomy.latency_probe', 'ultron.autonomy.tf_filter', 'ultron.autonomy.motion_gate_node',
+                 'ultron.autonomy.dashboard_goal_node', 'ultron.autonomy.sdk_velocity_node'}
 STACK_EXECUTABLES = ('slam_toolbox/async_slam_toolbox_node', 'slam_toolbox/localization_slam_toolbox_node',
                      'nav2_controller/controller_server', 'nav2_planner/planner_server', 'nav2_bt_navigator/bt_navigator',
                      'nav2_behaviors/behavior_server', 'nav2_map_server/map_server')
@@ -195,6 +196,7 @@ def main(argv=None):
     parser.add_argument('--record', action='store_true', help='Record a small rosbag for replay')
     add_bridge_options(parser)
     parser.add_argument('--no-eval', action='store_true')
+    parser.add_argument('--dashboard-url', help='Stream the evolving map to a loopback dashboard')
     parser.add_argument('--replay', type=Path, metavar='RUN',
                         help='Instead of simulating, replay RUN/bag (scan, odom, tf without map) into a new SLAM instance')
     args = parser.parse_args(argv)
@@ -220,6 +222,10 @@ def main(argv=None):
         if args.record:
             procs['bag'] = spawn(['ros2', 'bag', 'record', '-o', str(out / 'bag'), '--use-sim-time', *BAG_TOPICS],
                                  out / 'bag.log')
+        if args.dashboard_url:
+            script = Path(__file__).resolve().parents[3] / 'scripts' / 'dashboard_bridge.py'
+            procs['dashboard'] = spawn([py, str(script), '--live-map', '--url', args.dashboard_url],
+                                       out / 'dashboard.log')
         time.sleep(4.0)  # let subscribers come up before the first scan
         for name, proc in procs.items():
             if proc.poll() is not None:
@@ -250,7 +256,7 @@ def main(argv=None):
         try:
             resources = sampler.stop()
         finally:
-            for name in ('bag', 'tf_filter', 'latency', 'logger', 'slam'):
+            for name in ('dashboard', 'bag', 'tf_filter', 'latency', 'logger', 'slam'):
                 if name in procs:
                     stop(procs[name])
         (out / 'resources.json').write_text(json.dumps({'processes': resources, 'cpu_count': os.cpu_count(),

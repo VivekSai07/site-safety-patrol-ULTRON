@@ -1296,6 +1296,7 @@ class NavigatorTest(unittest.TestCase):
         self.assertTrue(self.navigator([accepted, accepted, {"seq": 4, "status": "SUCCEEDED"}]).go_to(self.REQUEST))
         self.assertEqual(self.posted, {"x": 3.0, "y": 1.0, "yaw": 1.57})
         self.assertFalse(self.navigator([{"seq": 4, "status": "FAILED"}]).go_to(self.REQUEST))
+        self.assertFalse(self.navigator([{"seq": 4, "status": "REJECTED"}]).go_to(self.REQUEST))
 
     def test_replaced_goal_timeout_and_disabled_goals_all_fail(self):
         self.assertFalse(self.navigator([{"seq": 5, "status": "SENT"}]).go_to(self.REQUEST))

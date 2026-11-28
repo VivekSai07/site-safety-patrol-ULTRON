@@ -1,118 +1,148 @@
-# Sending navigation goals from the dashboard
+# Dashboard navigation in the simulator
 
-The dashboard can send a goal from its map or an HTTP call.
-`scripts/dashboard_bridge.py` forwards it to a Nav2 `NavigateToPose` action
-server. Goals are off by default, but **the bridge has no independent
-simulation-only guard**: any reachable matching server, including one attached
-to real hardware, could receive a goal. The dashboard endpoints have no user
-authentication, including on localhost.
+## Watch the map while it is being built
 
-Do not run the bridge or goal examples unless a responsible operator has
-independently verified an isolated simulation with no route to hardware.
-Localhost, a ROS domain or a namespace alone do not prove isolation. This
-document authorizes no hardware connection or motion.
+The dashboard can display slam_toolbox's current `/map` and fresh
+`map -> base_link` estimates as the simulator maps. This mode streams live
+occupancy updates and labels the pose `MAPPING_ESTIMATE`.
 
-```text
-browser / curl ──HTTP──▶ dashboard ──live stream──▶ dashboard_bridge.py ──▶ nav2 navigate_to_pose
-               ◀─status─           ◀── status, /map, TF pose ──
-```
-
-## 1. Run it next to your Nav2 + SLAM sim
-
-The dashboard is present in main. Only after independently verifying the
-simulation isolation above, install the extras with
-`pip install -e '.[dashboard]'` and use a simulated Nav2/SLAM environment.
-The following are examples, not evidence that the present host is isolated:
+Start the dashboard on loopback and create a mission for the live pose.
 
 ```bash
-# terminal 1: the dashboard, with goals turned on (they are off by default)
-PYTHONPATH=src .venv/bin/python -m ultron.dashboard --goals        # open http://127.0.0.1:8000
-
-# terminal 2: the bridge, in a shell with ROS sourced (Humble or Jazzy)
-python3 scripts/dashboard_bridge.py --ros-args -p base_frame:=base_link
+PYTHONPATH=src .venv-ros/bin/python -m ultron.dashboard --port 8000 \
+  --db runs/live-mapping-dashboard.sqlite --media runs/live-mapping-dashboard-media
 ```
 
-Do **not** prefix the bridge with `PYTHONPATH=src`. That replaces ROS's `PYTHONPATH`, so `rclpy` is not found. The script finds `src/` itself.
-
-The robot only shows on the map while a mission is running. The pose API is per mission. To start one by hand:
+In another terminal, create the dashboard mission and start mapping.
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/missions -H 'Content-Type: application/json' -d '{"mission_id":"NAV-01","site_id":"sim"}'
+curl -X POST http://127.0.0.1:8000/api/missions \
+  -H 'Content-Type: application/json' -d '{"mission_id":"LIVE-MAP-01","site_id":"sim"}'
+scripts/sim-slam.sh map runs/sim-hall-live-map --dashboard-url http://127.0.0.1:8000
 ```
 
-| Bridge parameter | Default | Purpose |
-| --- | --- | --- |
-| `dashboard_url` | `http://127.0.0.1:8000` | Where the dashboard runs |
-| `map_topic` | `/map` | OccupancyGrid from SLAM or map_server |
-| `map_frame` / `base_frame` | `map` / `base_link` | TF used for the robot pose; set `base_frame` to your robot's frame |
-| `action_name` | `navigate_to_pose` | nav2 action |
-| `pose_rate_hz` / `map_min_period_s` | `5` / `2` | Upload rates |
+Open `http://127.0.0.1:8000`. The mapper saves a versioned map at the end of
+the survey. The live preview has no navigation authority. Checked goals use
+the saved map workflow below. Navigation during mapping would require the
+goal checker and Nav2 to consume the same occupancy revision and a policy for
+revalidating goals when loop closure shifts the map.
 
-`--lan` exposes the unauthenticated dashboard on all interfaces. Do not use it
-on a shared network or with sensitive data; a private network alone is not an
-authentication or hardware-isolation boundary.
+## Navigate on a checked map
 
-## 2. The API
+The dashboard uploads a saved occupancy map and the simulator's current valid
+localization pose. Its goal bridge sends a map-scoped ROS action to the checked
+navigation adapter. The adapter verifies the frame, map ID and version, fresh
+operator enable, current localization and the target footprint before handing
+the goal to Nav2. Nav2 velocities reach the simulated driver through the motion
+gate.
 
-Positions are in metres in the `map` frame. `yaw` is in radians, counter-clockwise from +x (0 faces +x, 1.57 faces +y).
+```mermaid
+flowchart LR
+    UI[Dashboard map and HTTP API] --> Bridge[Dashboard bridge]
+    Bridge --> Guard[Checked dashboard action]
+    Guard --> Nav2
+    Nav2 --> Gate[Motion gate]
+    Gate --> Driver[Kinematic simulation driver]
+    Gate -. optional .-> SDK[Recording SDK stand-in]
+    Map[Saved occupancy map] --> Bridge
+    Pose[Localization monitor] --> Bridge
+    Pose --> Guard
+    Pose --> Gate
+```
 
-| Call | Purpose |
-| --- | --- |
-| `POST /api/goal` `{"x": 3.0, "y": 1.0, "yaw": 1.57}` | Send a goal. A new goal replaces and cancels the running one. Returns `201` and the goal with its `seq`. Returns `403` if the dashboard runs without `--goals`. |
-| `GET /api/goal` | The current goal and its `status`. |
-| `GET /api/stream` | Live events (Server-Sent Events). Each `goal` event carries the new status. |
-| `GET /api/map` / `GET /api/map.png` | Occupancy map metadata and image (from the bridge). |
+The dashboard has no user authentication. The commands below use loopback
+HTTP and the isolated simulation ROS domain. Physical B2 setup and operation
+have separate requirements. [Hardware readiness](HARDWARE_READINESS.md)
 
-Goal `status` moves through these values:
+## Build the action interface
 
-- `SENT`: the dashboard has the goal.
-- `ACCEPTED`: Nav2 took it.
-- One final value:
-  - `SUCCEEDED`: the action server reported success, not independent proof of physical arrival.
-  - `FAILED`: Nav2 rejected or aborted the goal, or no Nav2 is running. `detail` says why.
-  - `CANCELED`: a newer goal replaced this one.
-
-### curl
+Use a ROS 2 Humble shell with `colcon` and the simulation dependencies installed.
 
 ```bash
-H=http://127.0.0.1:8000
-curl -X POST $H/api/goal -H 'Content-Type: application/json' -d '{"x": 3.0, "y": 1.0, "yaw": 1.57}'
-curl $H/api/goal                  # poll the status
-curl -N $H/api/stream             # or watch it live (Ctrl-C to stop)
+source /opt/ros/humble/setup.bash
+colcon --log-base runs/ros-nav-interfaces/log build \
+  --base-paths adapters/ros2/ultron_nav_interfaces \
+  --build-base runs/ros-nav-interfaces/build \
+  --install-base runs/ros-nav-interfaces/install
+source runs/ros-nav-interfaces/install/local_setup.bash
 ```
 
-### Python (standard library only)
+Use `scripts/setup-ros-venv.sh` for the ROS virtual environment. The dashboard
+process needs the `dashboard` extra. The build output stays under `runs/`.
 
-```python
-import json, time, urllib.request
+## Run the simulator and dashboard
 
-HOST = 'http://127.0.0.1:8000'
+In terminal 1, start a dashboard with goals enabled.
 
-def send_goal(x, y, yaw=0.0):
-    req = urllib.request.Request(f'{HOST}/api/goal', method='POST', headers={'Content-Type': 'application/json'},
-                                 data=json.dumps({'x': x, 'y': y, 'yaw': yaw}).encode())
-    return json.load(urllib.request.urlopen(req, timeout=5))
-
-def wait(seq, timeout=120):
-    end = time.time() + timeout
-    while time.time() < end:
-        goal = json.load(urllib.request.urlopen(f'{HOST}/api/goal', timeout=5))
-        if goal['seq'] != seq:
-            return 'REPLACED'
-        if goal['status'] in ('SUCCEEDED', 'FAILED', 'CANCELED'):
-            return goal['status'], goal['detail']
-        time.sleep(0.5)
-    return 'TIMEOUT'
-
-goal = send_goal(3.0, 1.0, 1.57)
-print(wait(goal['seq']))
+```bash
+PYTHONPATH=src .venv-ros/bin/python -m ultron.dashboard --goals --port 8000 \
+  --db runs/nav-dashboard.sqlite --media runs/nav-dashboard-media
 ```
 
-## What has been checked
+In terminal 2, source the action overlay and load a map from the simulation.
+If needed, first create one with `scripts/sim-slam.sh map runs/sim-hall-map`.
+For an existing map, pass its mapping-run folder to `--map`.
 
-- Unit tests: `tests/test_dashboard.py` (goal and map endpoints) and `tests/test_ros_link.py` (map conversion, stream parsing).
-- A teammate reported a ROS 2 Jazzy test against a stand-in
-  `navigate_to_pose` server: map and pose reached the dashboard, success and
-  cancellation were observed, and no server yielded failure. The exact
-  network isolation and reproduction were not independently verified here.
-- **Not yet checked:** real Nav2 with SLAM, ROS Humble, and the B2's real base frame name.
+```bash
+source /opt/ros/humble/setup.bash
+source runs/ros-nav-interfaces/install/local_setup.bash
+scripts/sim-slam.sh nav runs/nav-dashboard-live --map runs/sim-hall-map \
+  --serve-dashboard --dashboard-url http://127.0.0.1:8000
+```
+
+Start a dashboard mission so the live page shows the robot pose.
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/missions \
+  -H 'Content-Type: application/json' -d '{"mission_id":"NAV-01","site_id":"sim"}'
+```
+
+In a third terminal, publish the simulation operator heartbeat while you
+intend to allow command dispatch. Ctrl-C stops the heartbeat, and the gate
+inhibits command forwarding when it expires.
+
+```bash
+scripts/sim-slam.sh exec ros2 topic pub -r 5 /ultron/sim/operator_enable \
+  std_msgs/msg/Bool '{data: true}'
+```
+
+Open the dashboard at `http://127.0.0.1:8000` and select **Set goal**. Click
+the map and drag to choose the heading. For scripted testing, send
+`POST /api/goal` with `{"x": 3.0, "y": 1.0, "yaw": 1.57}` and read
+`GET /api/goal`. Coordinates are in metres in the `map` frame. Yaw is
+counterclockwise from +x, in radians. HTTP callers can supply `map_id` and
+`map_version` explicitly. The dashboard binds requests that omit both to the
+current displayed map.
+
+| Status | Meaning |
+|---|---|
+| `SENT` | The dashboard queued the request. |
+| `ACCEPTED` | The checked action passed its preconditions and dispatched to Nav2. |
+| `REJECTED` | A precondition failed. `detail` carries the reason. |
+| `SUCCEEDED` | Nav2 reported arrival in the simulation. |
+| `FAILED` | Navigation failed or the action was unavailable. |
+| `CANCELED` | Cancellation completed. A replacement waits for the previous goal to finish before dispatch. |
+
+## Run the automated check
+
+Start a fresh local dashboard with goals enabled, then run this command from
+the same ROS Humble setup used above. The test creates its own mission and
+publishes a simulation operator heartbeat.
+
+```bash
+scripts/sim-slam.sh nav runs/nav-dashboard-check --map runs/sim-hall-map \
+  --cases dashboard,operator_inhibit --dashboard-url http://127.0.0.1:8000 \
+  --sdk-stand-in
+```
+
+The SDK wrapper is optional and starts only with `--sdk-stand-in` or an
+explicit `--stand-in-log`. Its input is `/ultron/sim/cmd_vel`, the motion
+gate's output. The stand-in records `Move` and `StopMove` calls, including a
+shutdown stop. The wrapper clamps forward and yaw speed to the simulation
+limits, rejects unsupported axes, and uses a steady-clock 250 ms timeout for
+missing commands. SDK errors latch inhibition and failed stops are retried
+while the process is running. An independently supervised stop remains a
+hardware prerequisite. [Pinned Unitree B2 SportClient source](https://github.com/unitreerobotics/unitree_sdk2_python/blob/814556d15970dd2ecf1c9984e845ca02ab07e206/unitree_sdk2py/b2/sport/sport_client.py#L125)
+
+Look for `nav_cases.json`, `dashboard_bridge.log`, `gate.json` and
+`sdk_stand_in.jsonl` in the run folder. [Measured validation](SAHIL_VALIDATION.md)

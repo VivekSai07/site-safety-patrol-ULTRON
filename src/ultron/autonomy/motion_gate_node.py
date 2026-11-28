@@ -16,6 +16,8 @@ GATE_RATE_HZ = 20.0
 
 def state_from_json(text):
     data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError('Localization state must be a JSON object')
     fields = set(LocalizationState.__dataclass_fields__)
     return LocalizationState(**{k: v for k, v in data.items() if k in fields})
 

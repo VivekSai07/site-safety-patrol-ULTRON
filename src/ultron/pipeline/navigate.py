@@ -51,7 +51,7 @@ def http_json(url):
 class DashboardNavigator:
     """Goals go through the dashboard's `/api/goal` (start it with --goals and run dashboard_bridge.py)."""
     moves = True
-    FINAL = {"SUCCEEDED": True, "FAILED": False, "CANCELED": False}
+    FINAL = {"SUCCEEDED": True, "REJECTED": False, "FAILED": False, "CANCELED": False}
 
     def __init__(self, call, timeout=90.0, poll=1.0, sleep=time.sleep):
         self.call, self.timeout, self.poll, self.sleep = call, timeout, poll, sleep
@@ -63,7 +63,8 @@ class DashboardNavigator:
         waited = 0.0
         while waited < self.timeout:
             status, current = self.call("GET", "/api/goal")
-            if status == 200 and current and current.get("seq") != goal["seq"]:
+            if status == 200 and current and (current.get("seq"), current.get("request_id")) != (
+                    goal["seq"], goal.get("request_id")):
                 return False  # someone set a newer goal on the map
             if status == 200 and current and current.get("status") in self.FINAL:
                 return self.FINAL[current["status"]]

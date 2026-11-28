@@ -63,6 +63,7 @@ class SlamLogger:
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Log SLAM map->base_link at odometry stamps')
     parser.add_argument('out', type=Path)
+    parser.add_argument('--odom-topic', help='Override the odometry topic for offline replay')
     args = parser.parse_args(argv)
     import signal
     import rclpy
@@ -76,7 +77,7 @@ def main(argv=None):
     stopping = []
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stopping.append(True))
-    logger = SlamLogger(args.out, config.frames, config.topics['odom'])
+    logger = SlamLogger(args.out, config.frames, args.odom_topic or config.topics['odom'])
     try:
         while not stopping:
             rclpy.spin_once(logger.node, timeout_sec=0.1)

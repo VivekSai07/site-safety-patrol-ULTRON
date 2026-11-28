@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ULTRON lidar SLAM simulation launcher. SIMULATION ONLY: isolated ROS domain, localhost
-# only, no hardware topics. Requires .venv-ros (scripts/setup-ros-venv.sh).
+# ULTRON lidar SLAM launcher for simulation and offline recording replay.
+# Uses an isolated, localhost-only ROS domain. Requires .venv-ros (scripts/setup-ros-venv.sh).
 set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 venv="${ULTRON_ROS_VENV:-$repo_root/.venv-ros}"
@@ -26,6 +26,11 @@ case "$action" in
             --route "$repo_root/config/autonomy/routes/hall_survey_loop.yaml" --out "$out" "$@" ;;
     map)      # scripted mapping + save + evaluate: scripts/sim-slam.sh map OUT_DIR [--rate R] [--record]
         exec "$venv/bin/python" -m ultron.autonomy.run_mapping "$@" ;;
+    real-bag) # recorded B2 LiDAR, offline map and reload: scripts/sim-slam.sh real-bag BAG OUT_DIR
+        exec "$venv/bin/python" -m ultron.autonomy.run_real_bag "$@" ;;
+    slam3d)   # offline 3D LiDAR replay: scripts/sim-slam.sh slam3d BAG OUT_DIR
+        export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
+        exec "$venv/bin/python" -m ultron.autonomy.run_slam3d "$@" ;;
     localize) # scripts/sim-slam.sh localize OUT --map MAP_RUN [--scenario FILE] [--offset DX DY DYAW_DEG] [--rate R]
         exec "$venv/bin/python" -m ultron.autonomy.run_localization "$@" ;;
     nav)      # scripts/sim-slam.sh nav OUT --map MAP_RUN [--cases a,b] [--rate R]   (Nav2 N1/N2 cases)
@@ -46,6 +51,6 @@ case "$action" in
     exec)     # run any command inside the isolated environment
         exec "$@" ;;
     *)
-        echo 'Usage: scripts/sim-slam.sh {bridge|survey|map|localize|nav|eval|record|rviz|env|exec} [args]' >&2
+        echo 'Usage: scripts/sim-slam.sh {bridge|survey|map|real-bag|slam3d|localize|nav|eval|record|rviz|env|exec} [args]' >&2
         exit 2 ;;
 esac

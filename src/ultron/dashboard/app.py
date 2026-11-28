@@ -6,6 +6,7 @@ import io
 import math
 from collections import deque
 from pathlib import Path
+import uuid
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -52,7 +53,7 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
     store, bus = Store(db_path), Bus()
     media = Path(media_dir)
     notifier = Notifier(store, bus, notify_config or load_config(), channels)
-    live = {'pose': {}, 'trail': {}, 'frames': {}, 'map': None, 'goal': None, 'route_last': {},
+    live = {'pose': {}, 'trail': {}, 'frames': {}, 'map': None, 'map_images': deque(maxlen=3), 'goal': None, 'route_last': {},
             'exploration': {'seq': 0, 'state': ExplorationState.IDLE.value, 'detail': '', 'by': '', 'since': now()}}
 
     @contextlib.asynccontextmanager
@@ -191,7 +192,8 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
 
     # Occupancy map (robot side -> browsers): a PNG of the ROS OccupancyGrid, top row = largest y
     @app.post('/api/map', status_code=204)
-    async def set_map(request: Request, resolution: float, origin_x: float, origin_y: float):
+    async def set_map(request: Request, resolution: float, origin_x: float, origin_y: float,
+                      map_id: str | None = None, map_version: int | None = None, source: str | None = None):
         if request.headers.get('content-type') != 'image/png':
             raise HTTPException(415, 'send the map as image/png')
         if not 0 < resolution <= 10:
@@ -208,6 +210,11 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
         seq = (live['map'] or {}).get('seq', 0) + 1
         live['map'] = {'seq': seq, 'resolution': resolution, 'origin': [origin_x, origin_y],
                        'width': width, 'height': height, 'png': data}
+        if source == 'live_slam':
+            live['map']['source'] = source
+        elif map_id is not None and map_version is not None:
+            live['map'].update(map_id=map_id, map_version=map_version)
+        live['map_images'].append((seq, data))
         for mission in store.missions():  # every running patrol keeps the newest map it drove on
             if mission['status'] == 'RUNNING':
                 store.save_mission_map(mission['id'], live['map'])
@@ -218,10 +225,11 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
         return map_meta()
 
     @app.get('/api/map.png')
-    async def get_map_png():
-        if live['map'] is None:
-            raise HTTPException(404, 'no map yet')
-        return Response(live['map']['png'], media_type='image/png', headers={'Cache-Control': 'no-store'})
+    async def get_map_png(v: int | None = None):
+        for seq, png in reversed(live['map_images']):
+            if v is None or v == seq:
+                return Response(png, media_type='image/png', headers={'Cache-Control': 'no-store'})
+        raise HTTPException(404, 'map revision unavailable')
 
     # Route history: where a finished (or running) patrol went, on the map it used
     @app.get('/api/missions/{mission_id}/route')
@@ -246,9 +254,15 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
             raise HTTPException(403, 'goals are disabled; start the dashboard with --goals')
         if exploring():  # the explorer drives the same Nav2 action, and pausing it cancels every goal
             raise HTTPException(409, 'the robot is exploring; finish mapping before setting a goal')
+        if (live['map'] or {}).get('source') == 'live_slam':
+            raise HTTPException(409, 'LIVE_MAP_PREVIEW: navigation requires a checked map')
         seq = (live['goal'] or {}).get('seq', 0) + 1
-        live['goal'] = {'seq': seq, **body.model_dump(), 'status': 'SENT', 'detail': ''}
-        bus.publish('goal', live['goal'])
+        goal = body.model_dump(exclude_none=True)
+        grid = live['map'] or {}
+        if body.map_id is None and body.map_version is None and 'map_id' in grid:
+            goal.update(map_id=grid['map_id'], map_version=grid['map_version'])
+        live['goal'] = {'seq': seq, 'request_id': uuid.uuid4().hex, **goal, 'status': 'SENT', 'detail': ''}
+        bus.publish('goal', dict(live['goal']))
         return live['goal']
 
     @app.get('/api/goal')
@@ -258,10 +272,10 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
     @app.post('/api/goal/status')
     async def goal_status(body: GoalUpdate):
         goal = live['goal']
-        if goal is None or goal['seq'] != body.seq:
+        if goal is None or goal['seq'] != body.seq or (body.request_id is not None and goal['request_id'] != body.request_id):
             raise HTTPException(409, 'that goal is no longer the current one')
         goal.update(status=body.status.value, detail=body.detail[:200])
-        bus.publish('goal', goal)
+        bus.publish('goal', dict(goal))
         return goal
 
     # Exploration (browser -> bridge -> m-explore-ros2): the operator starts mapping whenever they want
