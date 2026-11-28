@@ -1,6 +1,7 @@
 # Patrol zone for the ULTRON lidar test hall (SIMULATION). Interior 0..12 x 0..10 m in the simulator
 # world frame (src/ultron/autonomy/hall_scene.py), inset 5 cm. Converted to the map frame with
-# map_origin_in_world = robot start pose (TO_VERIFY with Agent C: the map origin of the saved map).
+# map_origin_in_world = robot start pose = sim DEFAULT_START (verified at integration, test_map_origin.py;
+# holds for maps built by a mapping run from the default start, localized with initial_pose:=0,0,0).
 schema: ultron.patrol_zone/v1
 zone_id: HALL-SIM-1
 frame: world
