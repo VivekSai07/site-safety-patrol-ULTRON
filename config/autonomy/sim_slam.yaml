@@ -70,8 +70,8 @@ navigation:
   # Nav2 adapter and motion gate (simulation choices, fixed before Nav phase evaluation).
   operator_enable_max_age_s: 1.0   # operator enable must be re-asserted at least this often
   command_max_age_s: 0.3           # Nav2 command older than this is not forwarded
-  goal_xy_tolerance_m: 0.25
-  goal_yaw_tolerance_rad: 0.35
+  goal_xy_tolerance_m: 0.4         # relaxed with Nav2's goal checker: views need the object in frame
+  goal_yaw_tolerance_rad: 0.4
   default_timeout_s: 90.0
   settle_time_s: 0.8               # REACHED + still for this long + VALID -> capture ready
   settle_speed_m_s: 0.02

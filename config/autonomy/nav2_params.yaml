@@ -87,8 +87,8 @@ controller_server:
     general_goal_checker:
       stateful: true
       plugin: nav2_controller::SimpleGoalChecker
-      xy_goal_tolerance: 0.2
-      yaw_goal_tolerance: 0.25
+      xy_goal_tolerance: 0.4           # a view needs the object in frame, not an exact pose: the B2 spent
+      yaw_goal_tolerance: 0.4          # long on the last centimetres/degrees (user, 2026-11-28)
     FollowPath:
       plugin: nav2_rotation_shim_controller::RotationShimController
       primary_controller: nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController
