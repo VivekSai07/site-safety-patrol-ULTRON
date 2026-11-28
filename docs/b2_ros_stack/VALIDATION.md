@@ -123,7 +123,118 @@ odometry topic (C). Next: Agent B second half (replay launch with remaps from
 BAG_FACTS.md).
 
 ## Agent C — State estimation, mapping, localization
-_No results yet._
+
+Branch `om/b2-ros-stack-c` (from fb9f092). Package `ultron_b2_localization` (see its README).
+Bringup `state_estimation` and `slam` sub-launches are filled in. Every number below comes from
+**simulation or bag replay on the dev PC** (20 cores, 15 GB, shared with other agents). None of
+it is hardware, walking or real-perception validation. Thresholds are PROPOSED. Run artifacts and
+maps live in ignored `runs/b2_stack/c/` and are not committed.
+
+**Tests**
+- `ultron_b2_localization`: 21 passed. Coverage:
+  - map store: versioning, hashes, `free_thresh` fix, tamper refusal, directory refs;
+  - monitor: VALID path, blackout/STALE and recovery, kidnap (jump) → DEGRADED → LOST, stale
+    pose, parity with `src/ultron/autonomy/localization_state.py`;
+  - odometry: KISS cloud parsing/deskew times, KISS-ICP tracking synthetic motion, B2 adapter on mocks (planarization, rejects
+    non-finite data), planarizer.
+- `ultron_b2_bringup`: 41 passed. Expected node sets were updated: slam_toolbox, `localization_monitor`
+  and `map_manager` in sim/nav, plus `mola_lidar_odometry` and `mola_odom_planarizer` in replay.
+- Repo suite (`PYTHONPATH=src python3 -m unittest discover -s tests`, host): 414 run, 74 skipped,
+  2 errors (`reportlab` missing). This matches the base branch, so there is no regression.
+
+**Simulation ATE vs ground truth** (`tools/eval_sim.sh`)
+- Setup: the validated `sim_bridge` hall survey loop (100 s, 30.75 m), domain 71, slam_toolbox
+  mapping.
+- Estimates are compared with ground truth interpolated at each estimate stamp and anchored at the
+  start pose. There is no best-fit alignment.
+- The bridge's leg odometry and its TF are moved off the stack topics for mola/kiss, so the lidar
+  odometry under test is the only `odom → base_link` authority.
+
+| odom_source | seed | SLAM ATE RMSE / max (m) | SLAM yaw RMSE / max (°) | odometry-only ATE RMSE / max (m) | map precision / wall recall |
+|---|---|---|---|---|---|
+| sim (leg-odom model) | 7 | 0.069 / 0.160 | 1.15 / 2.3 | 1.25 / 2.02 | 0.98 / 0.95 |
+| mola | 7 | **0.040** / 0.155 | 0.83 / 2.8 | 0.031 / 0.120 | 1.00 / 0.93 |
+| mola | 21 | **0.043** / 0.166 | 0.80 / 2.6 | 0.030 / 0.120 | 1.00 / 0.98 |
+| mola | 99 | **0.045** / 0.172 | 0.81 / 2.5 | 0.031 / 0.119 | 1.00 / 0.96 |
+| kiss | 7 | **0.063** / 0.214 | 1.53 / 6.5 | 0.101 / 0.240 | 1.00 / 0.95 |
+| kiss | 21 | **0.055** / 0.221 | 1.65 / 7.6 | 0.100 / 0.258 | 1.00 / 0.96 |
+| kiss | 99 | **0.058** / 0.184 | 1.65 / 11.1 | 0.102 / 0.272 | 1.00 / 0.95 |
+
+- All runs are within the PROPOSED limits: ATE RMSE ≤ 0.10 m, max ≤ 0.25 m, yaw RMSE ≤ 2°.
+- KISS's yaw max (6.5–11°) is a transient and is not checked against any limit.
+- Sim latency (cloud stamp → `state/odom`), median / p95: MOLA 16 / 107 ms, KISS 10 / 18 ms, both
+  with the bridge sharing the CPU.
+
+**Real bag replay** (`tools/eval_bag.sh`)
+- Bag: `rosbag2_2026_11_28-00_48_42`, mounted read-only, domain 72, rate 1.0. Only `/scan_cloud`
+  is played, remapped to `/ultron/replay/sensors/lidar/points_filtered`.
+- Scans come from the eval converter `tools/cloud_to_scan.py` (364/364 delivered). The B2's
+  `pointcloud_to_laserscan` (best effort) delivered only 0.3–79 % of the 1.5 MB clouds, and in one
+  run slam_toolbox diverged as a result.
+- There is no ground truth. The start/end gap only bounds loop error if the operator really
+  returned to the start pose, which is unverified.
+
+| run | odom path (m) | odom start/end gap (m) / yaw (°) | SLAM start/end gap (m) / yaw (°) | latency median / p95 / max (ms) | monitor |
+|---|---|---|---|---|---|
+| MOLA mapping 1 | 15.81 | 0.407 / 41.0 | 0.431 / 41.4 | 18.1 / 26.9 / 216 | live map: VALID 52 % |
+| MOLA mapping 2 | 15.78 | 0.405 / 41.0 | 0.474 / 41.0 | 18.0 / 29.8 / 124 | live map: VALID 50 % |
+| KISS mapping 1 | 18.05 | 0.406 / 41.3 | 0.382 / 42.9 | 17.9 / 32.4 / 123 | live map: VALID 37 % |
+| KISS mapping 2 | 19.45 | 0.398 / 41.1 | 0.351 / 44.6 | 17.6 / 32.1 / 42 | live map: VALID 49 % |
+| MOLA localization on saved `bag-mola` v2 | 15.78 | 0.405 / 41.0 | 0.468 / 41.3 | 15.5 / 22.3 / 120 | **VALID 75 %**, DEGRADED 82, no LOST/STALE |
+| KISS localization on saved `bag-kiss` v2 | 17.88 | 0.390 / 41.1 | 0.339 / 44.1 | 18.7 / 35.3 / 124 | VALID 69 %, LOST 3 (last state LOST: DEGRADED > 3 s) |
+
+- **Loop closure (bag).** The trajectory ends about 0.35–0.47 m and +41° from its start.
+  - The yaw change matches the bag's IMU yaw change (−49° → −8°, BAG_FACTS), so this is probably
+    the operator's real end pose, not drift.
+  - The earlier unvalidated KISS estimate of "0.27 m from start" (BAG_FACTS) was not reproduced
+    with the stack configuration.
+  - Path length differs by estimator: MOLA 15.8 m (consistent across runs), KISS 17.9–19.5 m
+    (varies run to run).
+- **Save/reload.**
+  - `map/save` wrote v1/v2 per map_id: `map.pgm`/`yaml`/`posegraph`/`data`, and for MOLA also
+    `map3d.mm`/`.simplemap`. `map_meta.json` records the sha256 hashes.
+  - The localization launch verified the hashes and reloaded the pose graph.
+  - Bug found and fixed: the launch passed the version directory as `initial_map`, which crashed
+    map_manager.
+- **Mapping-mode monitor.** In mapping mode the monitor scores against the growing map. These
+  numbers are a consistency check only and are not localization validity.
+- **Resources on this PC.** The figures below are CPU % of one core (mean / p95) and RSS. They come
+  from replaying the bag; sim figures were lower.
+  - MOLA-LO: 59–78 % / 99–138 %, 215–224 MB. It drops about 0.8 % of frames ("worker busy").
+  - KISS-ICP (Python wrapper): 123–139 % / 264–293 %, 113–115 MB. Processing per frame takes
+    17–18 ms median and up to 40 ms.
+  - slam_toolbox: 2–7 %, 47–62 MB.
+  - monitor: about 6 %, 60 MB.
+  - map_manager: about 4 %, 59 MB.
+  - eval scan converter: about 8 %, 60 MB.
+
+**Bugs found and fixed during evaluation**
+- MOLA's `MOLA_NAVSTATE_ENFORCE_PLANAR_MOTION` does not constrain the published ICP pose. On the
+  bag, |z| reached 0.11 m and roll/pitch 2.6°.
+  - MOLA's `/tf` and pose output are now remapped to private `mola/tf_raw` and `mola/odom_raw`.
+  - `mola_odom_planarizer` is the `odom → base_link` authority.
+- The monitor's scan QoS changed from RELIABLE to BEST_EFFORT, because it was incompatible with
+  sensor-data publishers.
+
+**Recommendation.** Make **MOLA-LO** the default `odom_source`.
+- In sim it has lower ATE (0.040–0.045 m vs 0.055–0.063 m) and odometry-only ATE about 3× lower.
+- On the bag its path length is more stable, it uses about half of KISS's CPU, it gives the best
+  reload VALID fraction, and it can save a 3D map.
+- KISS-ICP (MIT) stays the permissively licensed fallback, with identical outputs.
+
+**UNRUN / open**
+- B2 adapter against a real `/sportmodestate`. It is mock-tested only; the message variant and
+  topic must be confirmed on the robot.
+- Bringup end-to-end with Agent B's preprocessing (`sensors/scan` from B). B's scan must be
+  reliable and complete; see the converter finding above.
+- Bringup sim with Agent F's `ultron_b2_sim`. The eval harness used the bridge directly and
+  without `robot_state_publisher`.
+- IMU fusion.
+- Kidnap and blackout on live ROS. These are covered by unit tests only.
+- Bag playback at rates other than 1.0.
+- Real-profile override of slam_toolbox `min_laser_range` (0.3 < scan range_min 1.0 m; it logs a
+  harmless warning).
+
 
 ## Agent D — Navigation, safety chain, control
 _No results yet._

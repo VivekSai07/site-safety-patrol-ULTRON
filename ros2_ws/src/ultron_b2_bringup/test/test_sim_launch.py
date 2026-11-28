@@ -3,13 +3,16 @@ import time
 
 from _graph import node_list, ros_env, start, stop
 
+# Localization (Agent C): sim odometry comes from the simulator, so state_estimation starts no node; mapping
+# starts slam_toolbox. Replay localization without map:= starts MOLA-LO (+ planar relay) plus monitor/map_manager.
+SLAM_COMMON = {'localization_monitor', 'map_manager'}
 EXPECTED_SIM = {'robot_state_publisher', 'tf_authority_check', 'drivers_placeholder', 'cloud_filter',
-                'pointcloud_to_laserscan',
-                'state_estimation_placeholder', 'slam_placeholder', 'nav_placeholder', 'control_placeholder',
-                'mission_placeholder', 'viz_placeholder', 'record_placeholder'}
+                'pointcloud_to_laserscan', 'slam_toolbox', 'nav_placeholder', 'control_placeholder',
+                'mission_placeholder', 'viz_placeholder', 'record_placeholder'} | SLAM_COMMON
 CONTROL = {'nav_placeholder', 'control_placeholder', 'mission_placeholder'}
 # Replay without bag:=... plays nothing, so no driver node exists.
-EXPECTED_REPLAY_NO_BAG = EXPECTED_SIM - CONTROL - {'drivers_placeholder'}
+EXPECTED_REPLAY_LOCALIZATION = ((EXPECTED_SIM - CONTROL - {'slam_toolbox', 'drivers_placeholder'})
+                                | {'mola_lidar_odometry', 'mola_odom_planarizer'})
 
 
 def _launch(run_mode, domain, *args, wait_s=6.0, expect=None):
@@ -24,7 +27,7 @@ def _launch(run_mode, domain, *args, wait_s=6.0, expect=None):
 
 
 def _stack_nodes(nodes, namespace):
-    # tf2_ros::TransformListener (used by pointcloud_to_laserscan) adds an internal transform_listener_impl_<id> node.
+    # tf2_ros TransformListeners (pointcloud_to_laserscan, slam_toolbox) spawn hidden transform_listener_impl_<id> nodes.
     return {n[len(namespace) + 1:] for n in nodes
             if n.startswith(namespace + '/') and not n[len(namespace) + 1:].startswith('transform_listener_impl_')}
 
@@ -44,12 +47,12 @@ def test_sim_mapping_starts_all_stubs_under_namespace():
 
 
 def test_replay_starts_no_control_nodes():
-    proc, nodes, _ = _launch('replay', 72, 'mode:=localization', expect=EXPECTED_REPLAY_NO_BAG)
+    proc, nodes, _ = _launch('replay', 72, 'mode:=localization', expect=EXPECTED_REPLAY_LOCALIZATION)
     alive = proc.poll() is None
     out = stop(proc)
     assert alive, out
     started = _stack_nodes(nodes, '/ultron/replay')
-    assert started == EXPECTED_REPLAY_NO_BAG, (nodes, out)
+    assert started == EXPECTED_REPLAY_LOCALIZATION, (nodes, out)
     assert 'Traceback' not in out and '[ERROR]' not in out, out
 
 

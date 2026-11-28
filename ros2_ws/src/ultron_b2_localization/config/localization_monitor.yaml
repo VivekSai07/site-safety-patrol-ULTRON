@@ -1,0 +1,19 @@
+# LocalizationState rules. Values = the simulation-validated set (config/autonomy/sim_slam.yaml:
+# localization; docs/SAHIL_VALIDATION.md Phase 4/5). PROPOSED for the robot; re-validate on site.
+/**/localization_monitor:
+  ros__parameters:
+    scan_topic: sensors/scan
+    state_topic: state/localization
+    map_frame: map
+    base_frame: base_link
+    scan_age_limit_s: 0.5
+    pose_age_limit_s: 0.5
+    match_tolerance_m: 0.15
+    score_valid_min: 0.70
+    score_lost_max: 0.40
+    valid_consecutive: 5
+    recover_consecutive: 10
+    lost_consecutive: 5
+    degraded_timeout_s: 3.0
+    jump_threshold_m: 0.5
+    jump_threshold_rad: 0.35
