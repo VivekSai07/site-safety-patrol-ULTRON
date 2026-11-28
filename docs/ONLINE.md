@@ -85,18 +85,52 @@ ladder within 1.2 m (not identified further), which the camera has to dismiss.
 Do not put the cloud in `frame.points`: `lift.py` then ranges detections from the lidar instead
 of the depth image. The attribute is `frame.cloud`.
 
-## How this fits exploration and map building
+## Exploration, goals and where the robot may go
 
-The dashboard now has an exploration state (frontier exploration with m-explore-ros2 through
-Nav2). `/api/goal` returns 409 while exploration runs, so exploration goals and view goals
-exclude each other. A full loop would be:
-1. Explore.
-2. On a `candidate` or `object_found` event, pause exploration and give the focus to the
-   inspection goals.
-3. Resume exploration when nothing is collecting.
+Contract: [EXPLORATION_CONTRACT.md](EXPLORATION_CONTRACT.md).
 
-None of that is wired. Today `online` works with a person driving, with a recording, or with goals
-through the dashboard or contract navigators when exploration is idle.
+**Explorer: m-explore-ros2 (`explore_lite`), not our own.**
+- It is a frontier explorer built on Nav2's costmap, and the dashboard already plans for it. It
+  answers the question "where is unmapped space".
+- `LidarCandidates` answers a different one: "what nearby is worth a look". It proposes looks at
+  things already in sensor range, so the two work together.
+- Frontier exploration has no boundary of its own (no polygon parameter in its documented
+  options). Through a window it sees "free" space and would chase it. So it reads the fenced
+  map (`/map_fenced`), not the raw SLAM map.
+- Nav2 has never run on the B2, so the demo depends on neither. The ladder is: explore, then
+  manual dashboard goals, then teleop. `online` behaves the same at every rung.
+
+**What the pipeline does while exploring** (`--navigator dashboard`):
+1. When an object found is within 4 m and the gate has a goal for a view it still lacks, the
+   pipeline pauses the explorer through the dashboard. Nearby objects are batched into the same
+   pause.
+2. While paused it sends view goals and renews the lease.
+3. It resumes the explorer when the views are in, no reachable view is left, or 90 s
+   (`--pause-cap`) have passed. Each object pauses the explorer once per patrol.
+4. Resume also happens on Ctrl-C, on an error, and at the end of the stream. If the pipeline dies,
+   the dashboard resumes on its own when the lease runs out.
+
+**One owner of Nav2: operator first.**
+- An operator goal underway is never replaced; the pipeline waits until it ends, plus 10 s.
+- A goal refused because the explorer drives, or because there is no navigation, is held and
+  retried. It is not counted against the place.
+- Only a goal Nav2 failed, or one reached without the view, marks that side as tried.
+
+**Goal gate** (`gate.py`, used by `online`, `patrol` and `inspect`). A goal goes out only if:
+- it is inside the fence (`--fence FILE` or the dashboard's), by the clearance;
+- it is known free in the dashboard's latest map and reachable from the robot through free space;
+- it is clear of every known object's footprint, a ladder lying on the floor included.
+
+Where the middle of a view's distance range is not standable (tight room), the view is placed
+nearer or farther. Sightings outside the fence are dropped before they become objects.
+
+**Done with an object** also when its views have not grown for 20 s (`--stall-seconds`), or when
+no reachable view is left. In a tight room the robot may never get 3.5 m away from an object, so
+"left behind" alone would not fire.
+
+**Known footprints go to the navigation stack** through the dashboard (`/api/obstacles`), for an
+obstacle layer. That layer is what keeps Nav2's own paths, and the explorer's, off a ladder on the
+floor. The pipeline's gate only covers its own goals. **Not configured in the navigation stack yet.**
 
 ## Tested
 
@@ -134,7 +168,9 @@ read, reopen, off-thread view goals, and candidate explained or dismissed.
 
 ## Not verified
 
-- Never run on the robot or with Nav2. Moving navigators are tested only with a scripted navigator.
+- Never run on the robot or with Nav2. The driving rules (gate, operator first, pause lease, crash
+  resume) are tested against a fake dashboard that follows the contract (`tests/test_pipeline_drive.py`),
+  not against the real bridge or explorer.
 - The hall recording has no lidar in its frames, so the candidates have only run on sim data.
 - A form read takes 10–40 s with Qwen3-VL 8B (eight section calls per ladder). In the sim yard the
   robot finds ladders faster than they are read, so the reader falls behind. The robot never waits
