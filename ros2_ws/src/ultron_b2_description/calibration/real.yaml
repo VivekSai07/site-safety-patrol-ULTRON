@@ -1,5 +1,7 @@
-# ULTRON B2 sensor mounts for the REAL robot. ALL VALUES TO_VERIFY: placeholders copied from sim.yaml.
-# Agent B replaces them from the real bag /tf_static plus measurement; never treat as measured.
+# ULTRON B2 sensor mounts for the REAL robot. ALL VALUES TO_VERIFY: placeholders, never treat as measured.
+# The real bag (docs/b2_ros_stack/BAG_FACTS.md) has NO base_link and no lidar/IMU/camera-to-body edge:
+# its /tf_static holds only RealSense-internal frames (recorded under `observed_bag_tf_static` below,
+# published at replay by the bag itself / at live by realsense2_camera, never by this description).
 # Each frame: parent, xyz [m], rpy [rad], source (datasheet|organizer|measured|assumed|TO_VERIFY), provenance.
 schema: ultron.b2_calibration/v1
 profile: real
@@ -12,10 +14,10 @@ frames:
     provenance: src/ultron/autonomy/hall_scene.py BASE_HEIGHT_M (kinematic standing height)
   lidar_link:
     parent: base_link
-    xyz: [0.342, 0.0, 0.18]
+    xyz: [0.342, 0.0, 0.10]
     rpy: [0.0, 0.0, 0.0]
     source: TO_VERIFY
-    provenance: config/autonomy/lidar_helios32.yaml mount_xyz_m / mount_rpy_rad
+    provenance: x from config/autonomy/lidar_helios32.yaml (sim); z chosen so lidar_link sits 0.75 m above base_footprint, matching the bag floor estimate (floor median -0.747 m in lidar_link, lidar roughly z-up); base_link height and lidar yaw/forward axis unknown
   imu_link:
     parent: base_link
     xyz: [0.0, -0.02341, 0.04927]
@@ -40,3 +42,17 @@ frames:
     rpy: [-1.5707963267948966, 0.0, -1.5707963267948966]
     source: TO_VERIFY
     provenance: simulated RGB-D shares one optical centre
+  head_link:
+    parent: cam_head_link
+    xyz: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]
+    source: TO_VERIFY
+    provenance: identity joint attaching the RealSense driver's own frame tree (bag /tf_static root head_link) to the description; head camera mount on the body is unmeasured
+# Informational only (not published by robot_state_publisher; publishing them here would duplicate
+# the RealSense TF authority). Values from the bag /tf_static, rounded.
+observed_bag_tf_static:
+  head_depth_frame: {parent: head_link, xyz: [0.0, 0.0, 0.0], rpy_deg: [0.0, 0.0, 0.0], source: bag_tf_static}
+  head_color_frame: {parent: head_link, xyz: [-0.0003, -0.0591, 0.0], rpy_deg: [0.04, -0.15, 0.15], source: bag_tf_static}
+  head_color_optical_frame: {parent: head_color_frame, xyz: [0.0, 0.0, 0.0], rpy_deg: [-90.0, 0.0, -90.0], source: bag_tf_static}
+  head_depth_optical_frame: {parent: head_depth_frame, xyz: [0.0, 0.0, 0.0], rpy_deg: [-90.0, 0.0, -90.0], source: bag_tf_static}
+  imu_link_dynamic: {parent: world, note: 'bag /tf (Xsens filter) orientation only, translation 0; not odometry; remapped off /tf in replay', source: bag_tf}

@@ -60,6 +60,10 @@
   <xacro:mount name="cam_head_link"/>
   <xacro:mount name="cam_head_color_optical_frame"/>
   <xacro:mount name="cam_head_depth_optical_frame"/>
+  <!-- Real profile only: attaches the RealSense driver's own tree (root head_link) to cam_head_link. -->
+  <xacro:if value="${'head_link' in frames}">
+    <xacro:mount name="head_link"/>
+  </xacro:if>
 
   <!-- MJCF front lidar cylinder (r 0.076, half-length 0.08) as lidar_link visual helper. -->
   <link name="lidar_housing">

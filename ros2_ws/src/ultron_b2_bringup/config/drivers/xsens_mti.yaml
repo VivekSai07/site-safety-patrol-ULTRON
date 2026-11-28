@@ -1,0 +1,34 @@
+# xsens_mti_ros2_driver parameters (Xsens MTi on the B2 payload, live mode). WRITTEN, NEVER RUN.
+# Parameter names follow the Xsens MTi ROS 2 driver param/xsens_mti_node.yaml; verify against the
+# pinned driver version before use. bag = docs/b2_ros_stack/BAG_FACTS.md.
+/**:
+  ros__parameters:
+    scan_for_devices: true       # TO_VERIFY: pin `port`/`baudrate` once the device path is known
+    port: ''
+    baudrate: 0
+    frame_id: imu_link           # bag frame_id
+    output_data_rate: 100        # bag: 99.8 Hz
+    pub_imu: true                # -> imu/data, remapped to sensors/imu/data
+    pub_quaternion: true
+    pub_euler: true
+    pub_acceleration: true
+    pub_angular_velocity: true
+    pub_mag: true
+    pub_free_acceleration: false
+    pub_temperature: false
+    pub_pressure: false
+    pub_gnss: false
+    pub_twist: false
+    pub_positionLLA: false
+    pub_velocity: false
+    pub_dq: false
+    pub_dv: false
+    pub_sampletime: false
+    # The bag's /tf world->imu_link (orientation only) must not reach the stack's TF tree:
+    # base_link->imu_link belongs to robot_state_publisher.
+    pub_transform: false
+    # Bag covariances are all zero (unknown). Consumers set their own; device values TO_VERIFY.
+    linear_acceleration_stddev: [0.0, 0.0, 0.0]
+    angular_velocity_stddev: [0.0, 0.0, 0.0]
+    orientation_stddev: [0.0, 0.0, 0.0]
+    magnetic_field_stddev: [0.0, 0.0, 0.0]

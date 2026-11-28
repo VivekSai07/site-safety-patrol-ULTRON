@@ -1,0 +1,23 @@
+# cloud_filter parameters for the REAL B2 lidar (replay/live). All thresholds PROPOSED; geometry in lidar_link.
+# Provenance: docs/b2_ros_stack/BAG_FACTS.md and the Agent B self-return analysis (VALIDATION.md, Agent B).
+/**:
+  ros__parameters:
+    expected_frame: lidar_link
+    input_reliability: reliable   # bag player / rslidar_sdk offer reliable; best-effort input lost ~all 1 MB clouds here
+    range_min: 0.30          # bag min range 0.22 m; near-body returns are handled by the self box
+    range_max: 40.0          # bag max 40.7 m, p95 11.1 m
+    z_min: -1.5              # floor ~0.75 m below the lidar; keep floor for odometry
+    z_max: 3.0
+    self_box_enabled: true
+    # Persistent (>=50 % of scans) above-floor returns within 1.5 m of the lidar occupy
+    # x -0.15..0.10, y -0.25..0.30, z -0.25..-0.10 m (5 cm voxels, every 4th scan of the bag).
+    # Box = that envelope + margin, extended down to -0.60 m (intermittent returns, floor at -0.75 m).
+    # Robot body extent relative to lidar_link is TO_VERIFY (no base_link in the bag).
+    self_box_min: [-0.25, -0.35, -0.60]
+    self_box_max: [0.20, 0.35, 0.05]
+    voxel_size: 0.10         # PROPOSED; see VALIDATION.md Agent B for the 0.05/0.10 point counts
+    deskew: false            # downstream LO (MOLA/KISS) deskews itself from the `time` field
+    deskew_reference: end
+    imu_time_offset_s: 0.0   # bag: IMU header stamps lead receive time by ~31 ms; lidar/IMU sync TO_VERIFY
+    imu_to_cloud_rpy: [0.0, 0.0, 0.0]   # imu_link -> lidar_link rotation TO_VERIFY (both roughly z-up in the bag)
+    stats_period_s: 10.0

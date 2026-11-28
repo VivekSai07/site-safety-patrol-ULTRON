@@ -1,0 +1,29 @@
+# rslidar_sdk config for the B2 RoboSense Helios-32 (live mode). WRITTEN, NEVER RUN against hardware.
+# Format: rslidar_sdk config/config.yaml (RoboSense-LiDAR/rslidar_sdk, ROS 2 build). Loaded via the node
+# parameter `config_path`. Build rslidar_sdk with `-DPOINT_TYPE=XYZIRT` so clouds carry
+# x,y,z,intensity (f32), ring (u16), timestamp (f64), as recorded on /scan_cloud.
+# Provenance per value: bag = docs/b2_ros_stack/BAG_FACTS.md; TO_VERIFY = not established by the bag.
+common:
+  msg_source: 1                  # 1 = online lidar (MSOP/DIFOP over UDP)
+  send_packet_ros: true          # bag recorded /rslidar_packets as well (rate/bandwidth TO_VERIFY on Orin)
+  send_point_cloud_ros: true
+lidar:
+  - driver:
+      lidar_type: RSHELIOS       # bag: MSOP id 55 AA 05 5A, 32 rings, 0.2 deg at 10 Hz; 5515 vs 1615 TO_VERIFY
+      msop_port: 6699            # TO_VERIFY (RoboSense default)
+      difop_port: 7788           # TO_VERIFY (RoboSense default)
+      host_address: 0.0.0.0      # TO_VERIFY (Orin NIC on the lidar subnet)
+      group_address: 0.0.0.0
+      start_angle: 0
+      end_angle: 360
+      min_distance: 0.2          # bag: min range 0.22 m
+      max_distance: 150          # TO_VERIFY (Helios datasheet range); preprocess crops to 40 m
+      use_lidar_clock: false     # TO_VERIFY: bag stamps are host-epoch; lidar PTP/GPS sync unknown
+      dense_points: true         # bag: is_dense true, no NaN points
+      ts_first_point: true       # bag: header stamp = first point time (+-0.2 ms)
+      wait_for_difop: true
+    ros:
+      ros_frame_id: lidar_link   # bag frame_id
+      ros_recv_packet_topic: /rslidar_packets
+      ros_send_packet_topic: /rslidar_packets      # remapped to sensors/lidar/packets by drivers.launch.py
+      ros_send_point_cloud_topic: /scan_cloud      # remapped to sensors/lidar/points by drivers.launch.py

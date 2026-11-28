@@ -4,7 +4,7 @@ package_name = 'ultron_b2_tools'
 
 setup(
     name=package_name,
-    version='0.0.1',
+    version='0.1.0',
     packages=[package_name],
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
@@ -14,7 +14,10 @@ setup(
     zip_safe=True,
     maintainer='ULTRON team',
     maintainer_email='ultron@example.invalid',
-    description='STUB owned by Agent B',
+    description='Bag inspection and stream measurement tools for the ULTRON B2 stack',
     license='Apache-2.0',
-    entry_points={'console_scripts': []},
+    entry_points={'console_scripts': [
+        'stream_probe = ultron_b2_tools.stream_probe:main',
+        'bag_inspect = ultron_b2_tools.bag_inspect:main',
+    ]},
 )

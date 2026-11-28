@@ -13,6 +13,8 @@
 #                    ROS_LOCALHOST_ONLY=1, which is always set) | none
 #   ULTRON_DEV_IMAGE image tag (default ultron-b2-dev:humble)
 #   ULTRON_DEV_ARGS  extra `docker run` arguments
+#   ULTRON_BAG_DIR   rosbag2 directory to mount READ-ONLY at the same absolute path (replay); the bag
+#                    is never copied into the repo
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,6 +45,12 @@ mounts=(-v "$repo:$repo")
 # Git worktrees keep their object store elsewhere; mount it read-only so `git rev-parse` works.
 common="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
 if [[ -n "$common" && "$common" != "$repo/.git" && -d "$common" ]]; then mounts+=(-v "$common:$common:ro"); fi
+
+if [[ -n "${ULTRON_BAG_DIR:-}" ]]; then
+  bag_dir="$(cd "$ULTRON_BAG_DIR" && pwd)" || { echo "dev.sh: ULTRON_BAG_DIR not found" >&2; exit 1; }
+  case "$bag_dir/" in "$repo"/*) echo "dev.sh: ULTRON_BAG_DIR must be outside the repo" >&2; exit 1 ;; esac
+  mounts+=(-v "$bag_dir:$bag_dir:ro")
+fi
 
 tty=()
 if [[ -t 0 && -t 1 ]]; then tty=(-it); fi
