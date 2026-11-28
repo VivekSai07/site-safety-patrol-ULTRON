@@ -23,6 +23,8 @@
   <exec_depend>ultron_b2_localization</exec_depend>
   <exec_depend>ultron_b2_navigation</exec_depend>  <!-- nav sub-launch (Agent D) -->
   <exec_depend>ultron_b2_control</exec_depend>     <!-- control sub-launch (Agent D) -->
+  <exec_depend>ultron_b2_perception</exec_depend>
+  <exec_depend>ultron_b2_mission</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>xacro</exec_depend>
   <exec_depend>rmw_cyclonedds_cpp</exec_depend>

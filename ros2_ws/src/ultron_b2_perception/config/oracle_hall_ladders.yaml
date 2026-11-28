@@ -1,0 +1,15 @@
+# ORACLE ground truth for the ULTRON lidar test hall (src/ultron/autonomy/hall_scene.py, build_hall()).
+# SIMULATION ONLY. Used by ladder_detector backend oracle_sim (projection) to render ORACLE boxes from the
+# EVALUATION_ONLY ground-truth pose. Never estimator input, never on TF, never learned perception.
+# Frame: simulator world (ultron_sim_world). Keep in sync with hall_scene.py.
+schema: ultron.oracle_ladders/v1
+source: SIMULATION_GROUND_TRUTH_ORACLE
+frame: ultron_sim_world
+ladders:
+  - {name: ladder_01, type: LAYHER_A_FRAME_STEPLADDER, position: [4.0, 4.0], yaw: 0.0}
+  - {name: ladder_02, type: LAYHER_A_FRAME_STEPLADDER, position: [8.0, 6.3], yaw: 0.5235988}
+  - {name: ladder_03, type: COMBINATION_LADDER_A_FRAME, position: [6.2, 1.9], yaw: 1.5707963}
+  - {name: ladder_04, type: LEANING_COMBINATION_LADDER, position: [6.0, 9.15], yaw: 0.0}
+  - {name: ladder_05, type: LEANING_COMBINATION_LADDER, position: [0.85, 5.0], yaw: -1.5707963}
+  - {name: ladder_06, type: TRESTLE, position: [2.6, 7.4], yaw: 0.2617994}
+  - {name: ladder_07, type: TRESTLE, position: [10.6, 6.2], yaw: 1.5707963}

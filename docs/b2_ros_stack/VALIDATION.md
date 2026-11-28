@@ -339,7 +339,27 @@ Limitations / TO_VERIFY:
 - Teleop launch (joy/keyboard) was not exercised with devices (no input devices in the container).
 
 ## Agent E — Mission, exploration, ladder search
-_No results yet._
+Revision: branch `om/b2-ros-stack-e`, code at `22b2ca7` (base `fb9f092`; C/D/F not landed).
+Environment: host without ROS; ROS tests in `ultron-b2-dev:humble` via `ros2_ws/scripts/dev.sh` (domain 71,
+`ROS_LOCALHOST_ONLY=1`). No hardware, robot network or bag touched. **Simulation/mock results only. Oracle
+detections are simulation ground truth (labelled ORACLE), not perception evidence. No verdicts produced;
+`AUTOMATED_PASS` policy unchanged (pre-screening only).**
+
+| Check | Command | Result |
+|---|---|---|
+| Build | `colcon build --symlink-install --parallel-workers 4 --packages-up-to ultron_b2_mission ultron_b2_perception ultron_b2_bringup` | PASS |
+| colcon test (perception, mission, bringup) | `colcon test --packages-select ultron_b2_perception ultron_b2_mission ultron_b2_bringup && colcon test-result --all` | PASS 125 tests, 0 failures, 1 skipped (full-sim e2e, UNRUN) |
+| State machine: inhibit (mission hold, `ops/hold`, operator enable lost/stale, localization lost/stale, map mismatch) in PATROL/EXPLORE/DETECT/APPROACH/SETTLE/CAPTURE/RETURN_BASE ⇒ goal cancelled, no goals sent, late results ignored, resume with reason; loc loss timeout ⇒ AWAIT_OPERATOR; hold timeout; resume refused while causes active; abort | `ultron_b2_mission/test/test_mission_core.py` | PASS 48 (pure Python, fake nav/capture) |
+| Unreachable view poses ⇒ ladder `LADDER_UNREACHABLE` (not inspected); walled-in ladder; return-base failure ⇒ AWAIT_OPERATOR | `test_mission_core.py` | PASS |
+| Frontiers bounded by zone/keepout; unreachable frontiers reported separately; coverage gaps (explorable unknown vs unreachable, ladder gaps); view-planner rejection reasons; line of sight | `ultron_b2_mission/test/test_planning.py` | PASS 9 |
+| Tracker: stationary keeps ID, NEW, AMBIGUOUS not merged, MISSING | `ultron_b2_perception/test/test_tracker.py` | PASS 7 |
+| Stale TF at image stamp dropped (real `tf2_ros.Buffer`); oracle projection/occlusion labelled ORACLE; yolo/owlv2 without weights ⇒ UNAVAILABLE | `ultron_b2_perception/test/test_detection_localization.py` | PASS 7 |
+| Mission e2e vs **mock** NavigateToView server (real `mission_manager` + `capture_coordinator` processes, fake map/localization/candidates/images): operator-enable drop during an INSPECT_VIEW goal cancels it, HOLD + `ops/hold` true, no new goals; re-enable resumes; 2 ladders captured, evidence + `events.jsonl` + registry rows written; no Twist publishers | `ultron_b2_mission/test/test_mission_e2e_mock.py` | PASS (mock nav teleports; not navigation evidence) |
+| `mission.launch.py`: placeholder outside `mode:=mission`; sim ⇒ oracle_sim detector; live ⇒ never oracle; `sim.launch.py mode:=mission` graph starts the 5 nodes under `/ultron/sim`, no `[ERROR]`/Traceback | `ultron_b2_bringup/test/test_mission_launch.py` | PASS 6 |
+| Existing bringup launch tests (`mode:=mapping` stubs, replay excludes mission) | `test_sim_launch.py`, `test_launch_structure.py`, `test_preflight.py`, `test_tf_authority.py` | PASS (no regression) |
+| Repo fast suite | `PYTHONPATH=src python3 -m unittest discover -s tests` (host) | 414 run, 74 skipped, 2 errors — identical to base `fb9f092` (host lacks `reportlab`/dashboard deps) |
+| **Full-sim mission e2e** (C localization+map, D nav server + twist_mux, F RGB-D sim) | `ULTRON_E2E_SIM=1 python3 -m pytest ros2_ws/src/ultron_b2_mission/test/test_mission_sim_e2e.py` | **UNRUN** — C/D/F not landed |
+| Learned detector (yolo/owlv2) | — | **UNRUN** — no weights in repo |
 
 ## Agent F — Sim parity, visualization, integration
 _No results yet._
