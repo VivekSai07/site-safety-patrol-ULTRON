@@ -166,6 +166,17 @@ Unit tests: `tests/test_pipeline_online.py`. A gated reader proves the survey ke
 collecting the next ladder while the first is being read. The other tests cover reject before
 read, reopen, off-thread view goals, and candidate explained or dismissed.
 
+**Reflections in glass (demo-room photos, phone camera, 2026-11-28).** The room's glass wall
+mirrors its ladders. The object check now counts "a reflection or mirror image in a window or
+glass" as none. Qwen3-VL 8B on six hand-cut crops:
+- the three reflected A-frames were answered none ("Reflection of ladder in glass window");
+- the real A-frame, the wooden ladder lying on the carpet and the stepladder were all answered
+  ladder.
+
+A rejected reflection keeps collecting its later sightings as a rejected object, so it costs one
+check, not one per pass. This is the third line of defence. The fence (objects beyond the glass
+are dropped) and depth checks come first. Not yet seen through the B2's own camera and depth.
+
 ## Not verified
 
 - Never run on the robot or with Nav2. The driving rules (gate, operator first, pause lease, crash
