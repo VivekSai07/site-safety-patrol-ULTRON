@@ -251,3 +251,69 @@ class DriveTest(Workspace):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RealDashboardTest(Workspace):
+    """The pipeline's navigator and exploration lease against the real dashboard app, with a stand-in
+    bridge that confirms states and finishes goals: the two sides of the contract agree."""
+
+    def setUp(self):
+        super().setUp()
+        try:
+            from fastapi.testclient import TestClient
+            from ultron.dashboard.app import create_app
+        except ImportError:
+            self.skipTest("dashboard extra not installed")
+        import threading
+        self.t = 1000.0
+        self.client = TestClient(create_app(":memory:", allow_goals=True, clock=lambda: self.t))
+        self.lock = threading.Lock()
+        self.goal_log = []
+
+    def bridge(self):
+        state = self.client.get("/api/exploration").json()
+        follow = {"STARTING": "EXPLORING", "PAUSING": "PAUSED", "RESUMING": "EXPLORING", "FINISHING": "MAPPED"}
+        if state["state"] in follow:
+            self.client.post("/api/exploration/status", json={"seq": state["seq"], "state": follow[state["state"]]})
+        goal = self.client.get("/api/goal").json()
+        if goal and goal["status"] in ("SENT", "ACCEPTED"):
+            nxt = "ACCEPTED" if goal["status"] == "SENT" else "SUCCEEDED"
+            self.client.post("/api/goal/status", json={"seq": goal["seq"], "status": nxt})
+            self.goal_log.append((goal["by"], nxt))
+
+    def call(self, method, path, body=None):
+        with self.lock:  # the navigator polls from its own thread
+            self.bridge()
+            response = self.client.request(method, path, json=body)
+            try:
+                return response.status_code, response.json()
+            except ValueError:
+                return response.status_code, None
+
+    def test_explore_pause_collect_resume_round_trip(self):
+        self.call("POST", "/api/exploration", {"action": "start"})
+        self.call("GET", "/api/exploration")
+        self.assertEqual(self.call("GET", "/api/exploration")[1]["state"], "EXPLORING")
+        now = [0.0]
+        navigator = DashboardNavigator(self.call, timeout=5, poll=0, sleep=lambda s: None)
+        inspection = Inspection(self.objects, self.keyframes, FormVlm(), self.store, self.survey,
+                                min_sightings=1, mission="PATROL-1", by_section=False)
+        online = OnlinePatrol(self.survey, inspection, self.store, navigator=navigator,
+                              exploration=Exploration(self.call), leave_seconds=100.0, stall_seconds=100.0,
+                              log=lambda *_: None, clock=lambda: now[0])
+        for stamp in range(40):
+            online.step(frame(f"ladder-0-{stamp}", facing(A, 0, 3.0), float(stamp), depth=3.0))
+            if online.goal:
+                online.goal[0].result()
+            now[0] += 1.0
+            if any(e["kind"] == "exploration_resumed" for e in self.store.events(limit=None)):
+                break
+        online.finish()
+        self.call("GET", "/api/exploration")
+        kinds = [e["kind"] for e in self.store.events(limit=None)]
+        self.assertIn("exploration_paused", kinds)
+        self.assertIn("exploration_resumed", kinds)
+        self.assertNotIn("error", kinds)
+        self.assertIn(("pipeline", "SUCCEEDED"), self.goal_log)
+        self.assertEqual(self.call("GET", "/api/exploration")[1]["state"], "EXPLORING")
+        self.assertEqual(self.objects.get("LAD-001").status, "INSPECTED")
