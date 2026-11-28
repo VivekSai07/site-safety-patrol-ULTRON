@@ -93,3 +93,78 @@ Each run is one folder, `<YYYYmmdd-HHMMSS>/`, holding `bag/` and `recording.json
 recorded, git commit, how it stopped). Use it in the pipeline with `--source bag:b2-bags/<time>/bag`.
 
 If a recorder is ever left running: `pkill -INT -f "ros2 bag record"` (on the robot).
+
+## 6. Run the pipeline on the robot itself (no GPU machine, no tunnel)
+
+The B2 carries a Jetson Orin. The survey (detector, depth, object map, ids across patrols, moved
+objects) runs there; the relay feeds it over localhost. Reading the inspection sheets needs a
+vision model: with internet on the robot, set `OPENAI_API_KEY`; without it, read them afterwards on
+a laptop (6e).
+
+Tested in a stand-in container (ROS 2 Humble, Python 3.10, **network off**, the hall bag played as
+live topics, `scripts/b2_standin/`): 5 objects, 5 found, nothing extra announced, 226 of 232 frames
+processed (on an RTX 5090, so the Orin's speed is still unmeasured). Not yet run on the Jetson.
+
+### 6a. Five-minute check (on the robot, read-only)
+
+```bash
+cat /etc/nv_tegra_release; free -h; df -h ~     # which Orin / JetPack, memory, disk
+python3 -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+ping -c1 -W2 pypi.org && echo internet
+```
+
+### 6b. Install once (needs internet on the robot, or copy the wheels over)
+
+```bash
+cd ~/ultron
+python3 -m venv --system-site-packages ~/ultron-venv      # keeps ROS's rclpy visible
+~/ultron-venv/bin/pip install -U pip                       # Ubuntu 22.04's pip 22 silently skips the CLIP package
+# PyTorch: NVIDIA's wheel for this JetPack (PyPI's torch has no Jetson GPU support), unless 6a showed it works
+~/ultron-venv/bin/pip install -e '.[protocol,bags,detector]'
+```
+
+From the laptop, copy the detector weights and its text encoder (both are downloaded on first use,
+which fails offline): `scp yoloe-11l-seg.pt mobileclip_blt.ts unitree@192.168.123.222:~/ultron/`.
+Use **yoloe-11l**: on the hall bag, 11m announced a ghost ladder and 11s called the hose cabinet an
+extinguisher. On the workstation 11l takes 13 ms a frame; the pipeline needs 4 frames a second.
+
+### 6c. Run (two tmux windows on the robot, in `~/ultron`)
+
+```bash
+# window 1: the pipeline (PYTHONUNBUFFERED shows its progress at once)
+source /opt/ros/humble/setup.bash
+export PYTHONPATH=src:$PYTHONPATH PYTHONUNBUFFERED=1 OPENAI_API_KEY=...   # any value if offline
+~/ultron-venv/bin/python -m ultron.pipeline survey --source relay:5600 --detector yolo:yoloe-11l-seg.pt \
+    --interval 0 --sites ~/ultron-runs/sites --site ctrl-hall --map-id hall-start-A --data ~/ultron-runs/patrol-1
+# window 2: the relay, once window 1 says "Waiting for the relay"
+source /opt/ros/humble/setup.bash
+PYTHONPATH=src:$PYTHONPATH python3 scripts/ros_relay.py --to 127.0.0.1:5600 --rate 8 [--record ~/ultron-bags]
+```
+
+Ctrl-C the relay to end the survey; the pipeline then settles the map (merges, moved objects) and
+exits. List what it found:
+
+```bash
+~/ultron-venv/bin/python -m ultron.pipeline status --sites ~/ultron-runs/sites --site ctrl-hall \
+    --map-id hall-start-A --data ~/ultron-runs/patrol-1
+```
+
+The object map is kept per site and map id under `~/ultron-runs/sites`, shared by every patrol with
+the same `--map-id`; `--data` holds this patrol's events. Without SLAM the pose is lidar odometry from the start point: start every patrol of
+a site from the same marked spot and pass the same `--map-id`, so patrols share one object map.
+
+### 6d. Dashboard
+
+Run `python -m ultron.dashboard --port 8010` on the robot and add
+`--dashboard http://127.0.0.1:8010` to the survey; open `http://192.168.123.222:8010` on the laptop.
+
+### 6e. Reading the sheets later (no internet on the robot)
+
+```bash
+rsync -a unitree@192.168.123.222:~/ultron-runs/ ./ultron-runs/
+python -m ultron.pipeline inspect --navigator passive --sites ./ultron-runs/sites --site ctrl-hall \
+    --map-id hall-start-A --data ./ultron-runs/patrol-1        # with OPENAI_API_KEY set
+```
+
+This first lets the vision model confirm each object, then reads every sheet from the saved
+keyframes. Tested on the stand-in's output: 5 confirmed, 5 inspected.

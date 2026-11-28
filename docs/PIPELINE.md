@@ -50,6 +50,11 @@ Tested by replaying the hall recording as ROS topics in a container on the works
 model, both ladders on the dashboard, the other objects in its event list. Not tested: the real
 robot, a TF pose from running localisation, and any navigator other than `passive`.
 
+Also tested with relay and pipeline together on a stand-in for the robot computer (ROS 2 Humble,
+Python 3.10, network off; `scripts/b2_standin/`, steps in [RECORD_ON_B2.md](../RECORD_ON_B2.md) §6):
+5 objects, 5 found; a second patrol on the same map id kept the 5 ids, lined up by 0.22 m and
+marked nothing moved; the sheets were read afterwards from the saved keyframes on another machine.
+
 ## Run the stages separately
 
 ```bash

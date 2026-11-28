@@ -15,7 +15,11 @@ sim = ["mujoco>=3.3,<4", "numpy>=1.24", "Pillow>=9"]
 protocol = ["Pillow>=9", "numpy>=1.24"]
 # Recorded B2 bags without ROS, lidar odometry for them, and the open-vocabulary detector (GPU).
 bags = ["rosbags>=0.10", "kiss-icp>=1.2"]
-detector = ["ultralytics>=8.3"]
+# YOLOE's text prompts need OpenAI CLIP and its tracker needs lap; ultralytics would pip-install
+# both at first use, which fails on a robot without internet. Install with pip >= 23 (Ubuntu 22.04's
+# pip 22 reports success but installs nothing for the CLIP package).
+detector = ["ultralytics>=8.3", "lap>=0.5.12",
+            "clip @ git+https://github.com/ultralytics/CLIP.git@7ffa84b3bfa40c42ecc1c77147a855e69cb2dd40"]
 # 2D SLAM simulation; ROS 2 Humble rclpy comes from the system (see scripts/setup-ros-venv.sh).
 autonomy = ["mujoco>=3.3,<4", "numpy>=1.24", "Pillow>=9", "PyYAML>=5.4"]
 rerun = ["rerun-sdk==0.32.0", "numpy>=1.24", "Pillow>=9"]
