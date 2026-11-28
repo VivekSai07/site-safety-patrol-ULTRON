@@ -7,6 +7,7 @@ sensors/rig.json (camera intrinsics, the head mount on base_link, the colour cam
 the head). Poses are the simulator's truth, so they are in one frame for every patrol of a field:
 the pipeline sees them as poses in a saved map.
 
+`depth=noisy` reads sensors/depth_noisy/ (the D457's noise added, where the simulator provides it).
 `error=DEG/DX/DY` moves every pose by a fixed rotation about the world origin and shift, as a
 robot localised in a wrongly aligned map, or started from an unknown place, would report it.
 """
@@ -69,7 +70,7 @@ def _misplace(pose, error):
     return c * x - s * y + dx, s * x + c * y + dy, yaw + angle
 
 
-def frames(path, rate=2.0, error=None):
+def frames(path, rate=2.0, error=None, depth_folder="depth"):
     """Colour frames at about `rate` per second, with depth registered to colour and the camera's pose."""
     path = Path(path)
     rig = _rig(path)
@@ -90,7 +91,7 @@ def frames(path, rate=2.0, error=None):
             last = stamp
             k = record["k"]
             image = Image.open(path / "sensors" / "color" / f"{k:06d}.jpg").convert("RGB")
-            depth = np.asarray(Image.open(path / "sensors" / "depth" / f"{k:06d}.png"), dtype=np.float32) / 1000
+            depth = np.asarray(Image.open(path / "sensors" / depth_folder / f"{k:06d}.png"), dtype=np.float32) / 1000
             registered = register_depth(depth, _k(depth_info), _k(color), (color["width"], color["height"]),
                                         np.eye(3), translation)
             pose = camera_pose(record["base_render"], rig)

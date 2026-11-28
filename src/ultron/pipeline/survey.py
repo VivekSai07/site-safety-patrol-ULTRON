@@ -23,6 +23,11 @@ PART_OF_BOX = 0.7       # a box of one kind lying this much inside a better one 
 WIDE = 0.5              # metres: objects larger than this look different from every side
 EMPTY_VIEWS = 3         # views from places this far apart (below) that saw a stored object's place empty
 EMPTY_SPREAD = 0.3      # metres
+# The depth camera's error grows with the square of the range. With the D457's noise (as fitted
+# to the real camera, simulated yard) sightings up to 12.5 m land inside the object's footprint;
+# from 15 m on 0.25-0.9 m off (90th percentile), more than footprints are matched within. Such
+# sightings split objects, and their frames are useless for inspection: they are not used.
+MAX_RANGE = 12.0        # metres
 ANNOUNCE = 3            # sightings before an object is announced: single boxes are often false hits or parts
 
 
@@ -93,6 +98,8 @@ class Survey:
         # Detections the tracker already knows go first, so a newcomer cannot take their object.
         for detection in sorted(detections, key=lambda d: d.track not in self._tracks):
             sighting = lift(frame, detection, self.calibration)
+            if sighting.distance and not sighting.approximate and sighting.distance > MAX_RANGE:
+                continue
             low, high = KINDS[detection.kind].size
             # A box cut off by the image edge shows only part of the object: it may be any size or larger.
             cut_off = detection.box[1] <= EDGE or detection.box[3] >= 1000 - EDGE

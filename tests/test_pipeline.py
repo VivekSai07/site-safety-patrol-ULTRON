@@ -336,6 +336,19 @@ class SurveyTest(Workspace):
         self.assertEqual([(o.id, o.sightings) for o in self.objects.all()], [("LAD-001", 3), ("LAD-002", 3)])
         self.assertLess(math.dist(self.objects.get("LAD-001").position, self.objects.get("LAD-002").position), 1.5)
 
+    def test_an_object_seen_only_from_far_away_is_not_placed(self):
+        """Beyond MAX_RANGE the depth camera's error is larger than the margin footprints are matched
+        with: such sightings would split objects. A ladder seen from 14 m makes nothing; from 6 m it does."""
+        class OneLadder:
+            def detect(self, frame):
+                return [Detection("ladder", [450, 400, 550, 623], 0.9)]  # 3 m tall at 14 m, 1.3 m at 6 m
+        survey = Survey(OneLadder(), self.objects, self.keyframes, self.store, CALIBRATION, interval=0)
+        for stamp in range(4):
+            survey.feed(frame("far", (0.0, 0.0, 0.0), float(stamp), depth=14.0))
+        self.assertEqual(self.objects.all(), [])
+        survey.feed(frame("near", (0.0, 0.0, 0.0), 10.0, depth=6.0))
+        self.assertEqual([o.id for o in self.objects.all()], ["LAD-001"])
+
     def test_overlapping_boxes_of_one_kind_are_one_detection(self):
         class Stutter:
             def detect(self, frame):

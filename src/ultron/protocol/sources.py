@@ -240,7 +240,8 @@ def open_source(spec, pace=0.0):
         path, *options = rest.split(",")
         settings = dict(option.split("=", 1) for option in options)
         error = tuple(float(v) for v in settings["error"].split("/")) if "error" in settings else None
-        return sim.frames(path, float(settings.get("rate", 2.0)), error)
+        depth = {"noisy": "depth_noisy"}.get(settings.get("depth"), "depth")
+        return sim.frames(path, float(settings.get("rate", 2.0)), error, depth)
     if kind == "relay":
         return relay(rest or 5600)
     if kind == "cv":

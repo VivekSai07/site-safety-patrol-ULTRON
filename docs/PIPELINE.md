@@ -187,7 +187,7 @@ with the A-frame L49 moved 2 m. Read by `protocol/sim.py`; the poses are the sim
 three are in one map frame:
 
 ```bash
-python -m ultron.pipeline survey --source sim:PATROL,rate=5 --calibration sim:PATROL --detector yolo \
+python -m ultron.pipeline survey --source sim:PATROL,rate=5,depth=noisy --calibration sim:PATROL --detector yolo \
     --interval 0 --map-id s3h --site yard        # error=DEG/DX/DY on the source misplaces every pose
 ```
 
@@ -215,8 +215,13 @@ What the open yard forced (the hall recording had none of it):
   0.74-0.79 m above it). Masks that take in an object's shadow otherwise put it on the floor
   in front, and a stored height band that reaches below the floor made the empty floor where a
   moved ladder stood look occupied.
-- The simulated depth has no noise; the real D457's error grows with the square of the range
-  (tens of centimetres at 8 m). Half of the yard sightings are beyond 10 m.
+- **Sightings beyond 12 m are not used.** With the D457's noise (`depth=noisy`, fitted by the
+  simulator to the real camera: 6 mm at 2 m, 97 mm at 8 m) ladders seen up to 12.5 m still land
+  inside their footprint (90th percentile); from 15 m on they lie 0.25-0.9 m off, a ladder 40 m
+  away became a stray object and one seen from 20 m was split. Half the yard's sightings were that
+  far. With the limit, noisy and noise-free depth give the same result: A keeps the 14 ladders it
+  passes within 12 m, each inside its footprint; B and C as above. The figures above (23 objects,
+  7 added by B) are from before the limit.
 
 ## Tuning itself: the vision model supervises the detector
 

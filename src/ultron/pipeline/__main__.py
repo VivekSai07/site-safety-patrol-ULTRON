@@ -209,7 +209,7 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
 
     survey = commands.add_parser("survey", parents=[common], help="stage 1: build the object map")
-    survey.add_argument("--source", required=True, help="relay[:PORT] | bag:PATH | sim:PATH[,rate=..][,error=DEG/DX/DY] | folder:PATH | cv:TARGET | ros2:/topic[,pose=..][,cloud=..] | unitree")
+    survey.add_argument("--source", required=True, help="relay[:PORT] | bag:PATH | sim:PATH[,rate=..][,depth=noisy][,error=DEG/DX/DY] | folder:PATH | cv:TARGET | ros2:/topic[,pose=..][,cloud=..] | unitree")
     survey.add_argument("--pace", type=float, default=0.0)
     survey.set_defaults(action=command_survey)
 
