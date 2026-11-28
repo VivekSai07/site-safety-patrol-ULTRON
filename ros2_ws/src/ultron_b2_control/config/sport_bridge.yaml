@@ -1,0 +1,20 @@
+# b2_sport_bridge parameters. ALL LIMITS PROPOSED; real values TO_VERIFY against the B2 sport-mode
+# envelope with the operator. hardware_enable is false by default and is overridden only by the launch.
+/**/b2_sport_bridge:
+  ros__parameters:
+    hardware_enable: false
+    target: mock              # mock | robot (robot additionally needs domain 0, /ultron/live and the hw token)
+    expected_domain_id: -1    # -1 = derive: mock => any non-zero localhost domain; robot => 0
+    move_rate_hz: 20.0
+    watchdog_s: 0.3
+    max_vx: 0.6
+    min_vx: -0.3
+    max_vy: 0.3
+    max_wz: 0.8
+    max_ax: 1.0               # m/s^2
+    max_ay: 1.0
+    max_awz: 2.0              # rad/s^2
+    response_timeout_s: 1.0   # missing responses only reported (diagnostics); error codes disarm
+    request_topic: /api/sport/request
+    response_topic: /api/sport/response
+    state_topic: /sportmodestate

@@ -3,10 +3,15 @@ import time
 
 from _graph import node_list, ros_env, start, stop
 
+NAV = {'controller_server', 'local_costmap/local_costmap', 'planner_server', 'global_costmap/global_costmap',
+       'behavior_server', 'bt_navigator', 'velocity_smoother', 'lifecycle_manager_navigation',
+       'zone_mask_server', 'nav_contract_server'}   # Agent D; Nav2 stays unconfigured (no map->base_link TF here)
+CONTROL_NODES = {'twist_mux', 'active_source_monitor', 'collision_monitor', 'lifecycle_manager_control',
+                 'motion_gate', 'sim_driver'}                                           # Agent D
 EXPECTED_SIM = {'robot_state_publisher', 'tf_authority_check', 'drivers_placeholder', 'preprocess_placeholder',
-                'state_estimation_placeholder', 'slam_placeholder', 'nav_placeholder', 'control_placeholder',
-                'mission_placeholder', 'viz_placeholder', 'record_placeholder'}
-CONTROL = {'nav_placeholder', 'control_placeholder', 'mission_placeholder'}
+                'state_estimation_placeholder', 'slam_placeholder', 'mission_placeholder', 'viz_placeholder',
+                'record_placeholder'} | NAV | CONTROL_NODES
+CONTROL = NAV | CONTROL_NODES | {'mission_placeholder'}
 
 
 def _launch(run_mode, domain, *args, wait_s=6.0, expect=None):
@@ -21,7 +26,9 @@ def _launch(run_mode, domain, *args, wait_s=6.0, expect=None):
 
 
 def _stack_nodes(nodes, namespace):
-    return {n[len(namespace) + 1:] for n in nodes if n.startswith(namespace + '/')}
+    # tf2_ros C++ listeners add anonymous helper nodes (transform_listener_impl_<addr>): not stack nodes.
+    return {n[len(namespace) + 1:] for n in nodes if n.startswith(namespace + '/')
+            and not n[len(namespace) + 1:].startswith('transform_listener_impl_')}
 
 
 def test_sim_mapping_starts_all_stubs_under_namespace():

@@ -1,11 +1,36 @@
-"""Sub-launch `control` -- STUB owned by Agent D.
+"""Sub-launch `control` (Agent D): twist_mux -> collision_monitor -> motion_gate (sole cmd_vel publisher)
+-> sim_driver (sim) | b2_sport_bridge (live; hardware_enable from the stack, default false).
 
-Responsibility: twist_mux -> collision_monitor -> motion_gate (sole cmd_vel publisher) -> sim_driver | b2_sport_bridge.
-Receives the sub-launch contract args (ultron_b2_bringup.launch_common.SUB_ARGS) and runs inside the
-mode namespace. Replace the placeholder with the real nodes; keep relative topic names.
+Runs inside the mode namespace pushed by the parent. Optional parent launch arguments: map_meta,
+teleop_requires_localization (default true, fail-closed).
 """
-from ultron_b2_bringup.launch_common import placeholder_launch
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+
+from ultron_b2_bringup.launch_common import SUB_ARGS
+from ultron_b2_bringup.modes import MODES
+
+
+def _include(context):
+    cfg = context.launch_configurations
+    run_mode = cfg.get('run_mode') or 'sim'
+    ns = cfg.get('namespace') or MODES[run_mode]['namespace']
+    live = run_mode == 'live'
+    src = PythonLaunchDescriptionSource(
+        get_package_share_directory('ultron_b2_control') + '/launch/control.launch.py')
+    return [IncludeLaunchDescription(src, launch_arguments={
+        'namespace': ns, 'push_namespace': 'false',
+        'driver': 'bridge' if live else 'sim',
+        'hardware_enable': 'true' if live and cfg.get('hardware_enable') == 'true' else 'false',
+        'bridge_target': 'robot' if live else 'mock',
+        'teleop_requires_localization': cfg.get('teleop_requires_localization', 'true') or 'true',
+        'map_meta': cfg.get('map_meta', ''),
+        'use_sim_time': cfg.get('use_sim_time', ''),
+    }.items())]
 
 
 def generate_launch_description():
-    return placeholder_launch('control', owner='D')
+    return LaunchDescription([DeclareLaunchArgument(k, default_value='') for k in SUB_ARGS]
+                             + [OpaqueFunction(function=_include)])

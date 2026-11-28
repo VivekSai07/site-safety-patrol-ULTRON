@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ULTRON B2 ROS 2 CI: deps check, colcon build, colcon test, repo unittest suite.
 # Run inside the dev image:  ros2_ws/scripts/dev.sh scripts/ci.sh
-# Never uses ROS_DOMAIN_ID 0; tests use localhost-only domains 71-74.
+# Never uses ROS_DOMAIN_ID 0; tests use localhost-only domains 71-74 (bringup) and 80-81 (control graph/bridge).
 set -euo pipefail
 ws="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repo="$(cd "$ws/.." && pwd)"
