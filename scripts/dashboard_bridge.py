@@ -128,7 +128,7 @@ class DashboardBridge(Node):
         self.explorer = Explorer(p['explore_command'], self.publish_resume, self.resume_pub.get_subscription_count,
                                  self.report_exploration, self.get_explore_status if ExploreStatus else None,
                                  ready_wait_s=p['explore_ready_wait_s'],
-                                 interrupted=lambda: not self.explore_jobs.empty())
+                                 interrupted=lambda: not self.explore_jobs.empty(), nav_ready=self.nav.server_is_ready)
         self.explore_jobs = queue.Queue()
         self.exploration = {'seq': 0, 'state': 'IDLE'}  # newest dashboard state seen
         self.explore_seq = None  # newest request handled; None until the first connect (nothing is replayed)
@@ -158,6 +158,7 @@ class DashboardBridge(Node):
                 self.set_mission(mission['id'] if mission and mission['status'] == 'RUNNING' else None)
                 with self.lock:  # unlike goals, the fence and obstacles are state: take them as they are now
                     self.fence, self.fence_dirty = live.get('fence'), True
+                    self.cancelled.clear()  # a restarted dashboard numbers its goals from 1 again
                 self.obstacles = self.dash.obstacles()
                 if live.get('exploration'):
                     self.explore_jobs.put(('connect', live['exploration']))
@@ -192,6 +193,8 @@ class DashboardBridge(Node):
         if self.active and self.active[0] in cancelled:  # the dashboard ended it (a pause ended): stop it
             self.get_logger().info(f'goal {self.active[0]}: cancelled by the dashboard')
             self.active[1].cancel_goal_async()  # its CANCELED result is reported as usual
+            with self.lock:
+                self.cancelled.discard(self.active[0])  # once is enough
         if self.sent_at and self.sent_at[1] < time.monotonic() - self.p['nav_accept_timeout_s']:
             seq = self.sent_at[0]
             self.sent_at = None

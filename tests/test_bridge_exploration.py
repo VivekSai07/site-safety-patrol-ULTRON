@@ -139,6 +139,14 @@ class ExplorerProcessTest(unittest.TestCase):
         self.assertIn('no sign of life', self.reports[-1][2])
         self.assertFalse(e.running())
 
+    def test_explorer_waiting_for_nav2_is_not_exploring(self):
+        # explore_lite listens on explore/resume before it waits (for ever) for the Nav2 action server
+        e = self.make(ready_wait_s=0.4, nav_ready=lambda: False)
+        e.handle('start', 1)
+        self.assertEqual(self.reports[-1][1], 'FAILED')
+        self.assertIn('no Nav2', self.reports[-1][2])
+        self.assertFalse(e.running())
+
     def test_pause_nobody_hears_stops_the_explorer(self):
         e = self.make()
         e.handle('start', 1)
