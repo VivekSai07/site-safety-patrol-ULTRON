@@ -2,7 +2,9 @@
 import math
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock
 
 try:
     import numpy as np
@@ -14,6 +16,8 @@ except ImportError:  # pragma: no cover
 if np is not None:
     from ultron.autonomy.config import load_sim_slam_config
     from ultron.autonomy.localization_state import LocalizationState
+    from ultron.autonomy.live_grid import LiveMapMatcher
+    from ultron.autonomy.nav2_adapter import Nav2Adapter
     from ultron.autonomy.navigation_contract import (NAV2_STATUS, GoalTracker, MapFootprint, MotionGate,
                                                      check_goal, decision_to_goal, make_goal)
 
@@ -48,6 +52,59 @@ class NavigationContractTest(unittest.TestCase):
     def goal(self, x=1.5, y=1.5, now=10.0, **kw):
         return make_goal(x, y, 0.0, mission_id='M1', map_id=kw.pop('map_id', 'map-A'), map_version=kw.pop('version', 1),
                          params=self.params, reason='test', now=now, **kw)
+
+    def live_grid(self, cells):
+        orientation = SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0)
+        origin = SimpleNamespace(position=SimpleNamespace(x=0.0, y=0.0), orientation=orientation)
+        info = SimpleNamespace(height=cells.shape[0], width=cells.shape[1], resolution=0.1, origin=origin)
+        return SimpleNamespace(header=SimpleNamespace(frame_id='map'), info=info, data=cells.ravel())
+
+    def test_live_target_rechecks_the_latest_occupancy(self):
+        cells = np.zeros((40, 60), dtype=int)
+        goal = self.goal()
+        backend = SimpleNamespace(footprint=MapFootprint.from_grid(self.live_grid(cells)),
+                                  config=SimpleNamespace(navigation=self.params), grid_stamp_ns=9_500_000_000,
+                                  grid_history=[9_000_000_000, 9_500_000_000])
+        displayed = 9_000_000_000
+        self.assertTrue(Nav2Adapter._live_target(backend, goal, 10.0, displayed)[0])
+        cells[15, 15] = 100
+        backend.footprint = MapFootprint.from_grid(self.live_grid(cells))
+        self.assertIn('OCCUPIED', Nav2Adapter._live_target(backend, goal, 10.0, displayed)[1])
+        cells[15, 15] = -1
+        backend.footprint = MapFootprint.from_grid(self.live_grid(cells))
+        self.assertIn('UNKNOWN', Nav2Adapter._live_target(backend, goal, 10.0, displayed)[1])
+        self.assertIn('REVISION_UNAVAILABLE', Nav2Adapter._live_target(backend, goal, 10.0, 11_000_000_000)[1])
+        self.assertIn('REVISION_UNAVAILABLE', Nav2Adapter._live_target(backend, goal, 10.0, 9_100_000_000)[1])
+        self.assertIn('REVISION_STALE', Nav2Adapter._live_target(backend, goal, 10.0, 7_000_000_000)[1])
+
+    def test_live_scan_match_needs_support_and_counts_free_space_mismatches(self):
+        cells = np.full((20, 20), -1)
+        cells[5, 5] = 100
+        cells[10, 10] = 0
+        matcher = LiveMapMatcher(self.live_grid(cells), tolerance=0.12)
+        matched = [0.55, 0.55]
+        unknown = [1.55, 1.55]
+        free = [1.05, 1.05]
+        self.assertEqual(matcher.score((0, 0, 0), [matched, unknown, unknown]), 0.0)
+        self.assertEqual(matcher.score((0, 0, 0), [matched, matched, unknown]), 1.0)
+        self.assertAlmostEqual(matcher.score((0, 0, 0), [matched, matched, free]), 2.0 / 3.0)
+
+    def test_active_live_goal_is_canceled_if_latest_footprint_becomes_occupied(self):
+        cells = np.zeros((40, 60), dtype=int)
+        tracker = Mock(status='ACTIVE', goal=self.goal())
+        backend = SimpleNamespace(
+            footprint=MapFootprint.from_grid(self.live_grid(cells)),
+            config=SimpleNamespace(navigation=self.params), grid_stamp_ns=9_500_000_000, grid_history=[9_500_000_000],
+            live_map=True, tracker=tracker, now=lambda: 10.0, operator_allowed=lambda _: True,
+            _pose=lambda: (0.0, 0.0, 0.0), speed=0.0, yaw_rate=0.0, gate={'inhibited': False}, cancel=Mock(),
+        )
+        backend._live_target = lambda *args: Nav2Adapter._live_target(backend, *args)
+        Nav2Adapter.tick(backend)
+        backend.cancel.assert_not_called()
+        cells[15, 15] = 100
+        backend.footprint = MapFootprint.from_grid(self.live_grid(cells))
+        Nav2Adapter.tick(backend)
+        self.assertIn('TARGET_FOOTPRINT_OCCUPIED', backend.cancel.call_args.args[0])
 
     def check(self, goal, now=10.0, **kw):
         args = dict(map_id='map-A', map_version=1, localization=valid_state(now), now=now, operator_enabled=True,

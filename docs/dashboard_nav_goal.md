@@ -22,10 +22,40 @@ scripts/sim-slam.sh map runs/sim-hall-live-map --dashboard-url http://127.0.0.1:
 ```
 
 Open `http://127.0.0.1:8000`. The mapper saves a versioned map at the end of
-the survey. The live preview has no navigation authority. Checked goals use
-the saved map workflow below. Navigation during mapping would require the
-goal checker and Nav2 to consume the same occupancy revision and a policy for
-revalidating goals when loop closure shifts the map.
+the survey. This preview is read-only.
+
+## Navigate while mapping
+
+Start the dashboard with `--goals`, build and source the action overlay as
+described below, and start the simulator in live navigation mode. This launch
+starts SLAM Toolbox in mapping mode. Nav2's global costmap, the dashboard and
+the goal checker all subscribe to the same `/map` stream.
+
+```bash
+scripts/sim-slam.sh nav runs/live-navigation --live-map --serve-dashboard \
+  --dashboard-url http://127.0.0.1:8000
+```
+
+Create a mission and publish the simulation operator heartbeat as shown
+below. In the dashboard, choose **Set goal** and click and drag on a mapped
+free area. The browser submits the mapping session ID, the displayed grid
+stamp and the goal coordinates. The goal checker uses its latest grid and
+refuses a source grid more than 2.5 simulated seconds old or a revision it
+has not received. It rechecks the target footprint while Nav2 runs and
+requests cancellation if the map becomes stale or the target is no longer
+known and clear. A localization drop also inhibits motion through the gate.
+
+The simulation test starts with an empty map and supplies the operator
+heartbeat automatically.
+
+```bash
+scripts/sim-slam.sh nav runs/live-navigation-check --live-map \
+  --dashboard-url http://127.0.0.1:8000
+```
+
+This test exercises navigation through the dashboard HTTP API and ROS 2.
+The simulator provides the recorded ground truth used to score arrival.
+[Measured results](SAHIL_VALIDATION.md#dashboard-navigation-on-the-live-slam-grid)
 
 ## Navigate on a checked map
 

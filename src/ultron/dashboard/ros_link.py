@@ -70,12 +70,15 @@ class Dashboard:
     def live(self):
         return self._send('GET', '/api/live')
 
-    def post_map(self, png, resolution, origin_x, origin_y, map_id=None, map_version=None, source=None):
+    def post_map(self, png, resolution, origin_x, origin_y, map_id=None, map_version=None, source=None,
+                 grid_stamp_ns=None):
         query = dict(resolution=resolution, origin_x=origin_x, origin_y=origin_y)
         if map_id is not None:
             query.update(map_id=map_id, map_version=map_version)
         if source is not None:
             query['source'] = source
+        if grid_stamp_ns is not None:
+            query['grid_stamp_ns'] = grid_stamp_ns
         self._send('POST', '/api/map?' + urlencode(query), png, 'image/png')
 
     def post_pose(self, mission_id, time_s, x, y, yaw, state=''):

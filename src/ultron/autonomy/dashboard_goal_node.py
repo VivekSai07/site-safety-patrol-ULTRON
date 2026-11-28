@@ -50,7 +50,7 @@ class DashboardGoalServer:
                              frame_id=request.pose.header.frame_id)
         except ValueError as error:
             return self.finish(handle, 'REJECTED', str(error))
-        result = self.nav.submit(goal)
+        result = self.nav.submit(goal, displayed_grid=request.grid_stamp_ns)
         if result is not None:
             return self.finish(handle, result.status, result.reason)
 

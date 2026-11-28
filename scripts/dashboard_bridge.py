@@ -25,6 +25,7 @@ from std_msgs.msg import String
 from ultron.autonomy.config import load_sim_slam_config
 from ultron.autonomy.dashboard_goal_node import DASHBOARD_ACTION
 from ultron.autonomy.localization_state import accept_pose
+from ultron.autonomy.live_grid import TOPIC, grid_stamp_ns
 from ultron.autonomy.motion_gate_node import state_from_json
 from ultron.autonomy.run_navigation import NAV_MAP_TOPIC
 from ultron.autonomy.sim_bridge import check_isolation
@@ -61,6 +62,7 @@ class DashboardBridge(Node):
     def __init__(self, config, map_meta, url):
         super().__init__('ultron_dashboard_bridge', parameter_overrides=[Parameter('use_sim_time', value=True)])
         self.live_map = map_meta is None
+        self.live_navigation = bool(map_meta and map_meta.get('live_map'))
         self.map_id = None if self.live_map else map_meta['map_id']
         self.map_version = None if self.live_map else int(map_meta['map_version'])
         self.config = config
@@ -82,12 +84,12 @@ class DashboardBridge(Node):
             from tf2_ros import Buffer, TransformListener
             self.tf = Buffer(node=self)
             self.tf_listener = TransformListener(self.tf, self)
-            self.create_subscription(OccupancyGrid, '/map', self.on_map, latched)
+            self.create_subscription(OccupancyGrid, TOPIC, self.on_map, latched)
         else:
             from ultron_nav_interfaces.action import NavigateDashboard
             self.goal_type = NavigateDashboard
             self.nav = ActionClient(self, NavigateDashboard, DASHBOARD_ACTION)
-            self.create_subscription(OccupancyGrid, NAV_MAP_TOPIC, self.on_map, latched)
+            self.create_subscription(OccupancyGrid, TOPIC if self.live_navigation else NAV_MAP_TOPIC, self.on_map, latched)
             self.create_subscription(String, config.topics['localization_state'], self.on_localization, latched)
         steady = Clock(clock_type=ClockType.STEADY_TIME)
         self.create_timer(0.5, self.flush_map, clock=steady)
@@ -155,6 +157,7 @@ class DashboardBridge(Node):
         msg.mission_id = mission or 'DASHBOARD'
         msg.map_id = goal.get('map_id') or ''
         msg.map_version = goal.get('map_version') or 0
+        msg.grid_stamp_ns = goal.get('grid_stamp_ns') or 0
         msg.pose.header.frame_id = goal['frame_id']
         msg.pose.header.stamp = self.get_clock().now().to_msg()
         pose = msg.pose.pose
@@ -219,9 +222,10 @@ class DashboardBridge(Node):
             self.get_logger().warning('Dashboard cannot display a rotated map origin')
             return
         png = grid_png(info.width, info.height, msg.data)
+        source = 'live_slam' if self.live_map else 'live_navigation' if self.live_navigation else None
         self.outbox.put('map', self.dash.post_map, png, info.resolution, info.origin.position.x,
-                        info.origin.position.y, self.map_id, self.map_version,
-                        'live_slam' if self.live_map else None)
+                        info.origin.position.y, self.map_id, self.map_version, source,
+                        grid_stamp_ns(msg) if self.live_navigation else None)
 
     def on_localization(self, msg):
         try:
@@ -280,7 +284,7 @@ def main():
     meta = None
     if args.map is not None:
         meta = json.loads((args.map / 'map_meta.json').read_text())
-        if 'sim_run' not in meta:
+        if 'sim_run' not in meta and not meta.get('live_map'):
             parser.error('Load a map produced by the simulation mapping workflow')
     config = load_sim_slam_config()
     check_isolation(config)

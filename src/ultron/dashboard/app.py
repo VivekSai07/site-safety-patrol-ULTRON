@@ -158,11 +158,14 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
     # Occupancy map (robot side -> browsers): a PNG of the ROS OccupancyGrid, top row = largest y
     @app.post('/api/map', status_code=204)
     async def set_map(request: Request, resolution: float, origin_x: float, origin_y: float,
-                      map_id: str | None = None, map_version: int | None = None, source: str | None = None):
+                      map_id: str | None = None, map_version: int | None = None, source: str | None = None,
+                      grid_stamp_ns: int | None = None):
         if request.headers.get('content-type') != 'image/png':
             raise HTTPException(415, 'send the map as image/png')
         if not 0 < resolution <= 10:
             raise HTTPException(400, 'resolution must be metres per pixel, 0 < r <= 10')
+        if source == 'live_navigation' and (not map_id or not map_version or not grid_stamp_ns):
+            raise HTTPException(400, 'live navigation grids require map identity and a grid timestamp')
         data = await request.body()
         if not data or len(data) > MAX_IMAGE_BYTES or not data.startswith(b'\x89PNG'):
             raise HTTPException(400, 'expected a PNG under 5 MB')
@@ -179,6 +182,8 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
             live['map']['source'] = source
         elif map_id is not None and map_version is not None:
             live['map'].update(map_id=map_id, map_version=map_version)
+        if source == 'live_navigation':
+            live['map'].update(source=source, grid_stamp_ns=grid_stamp_ns)
         live['map_images'].append((seq, data))
         bus.publish('map', map_meta())
 
@@ -205,6 +210,8 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
         grid = live['map'] or {}
         if body.map_id is None and body.map_version is None and 'map_id' in grid:
             goal.update(map_id=grid['map_id'], map_version=grid['map_version'])
+        if body.grid_stamp_ns is None and grid.get('source') == 'live_navigation':
+            goal['grid_stamp_ns'] = grid['grid_stamp_ns']
         live['goal'] = {'seq': seq, 'request_id': uuid.uuid4().hex, **goal, 'status': 'SENT', 'detail': ''}
         bus.publish('goal', dict(live['goal']))
         return live['goal']
