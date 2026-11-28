@@ -106,7 +106,7 @@ class MissionCore:
         self.capture_failed = {}
         self.target = None                   # dict(key, cand, views, view_index, captured, refs, settled)
         self.frontier_blacklist = []
-        self.frontier_visits = []            # goal (x, y) reached for frontier goals
+        self.frontier_visits = []            # frontier centroids reached by their associated goals
         self.explore_failures = 0
         self.survey_exhausted = False
         self.last_unreachable_frontiers = []
@@ -318,10 +318,11 @@ class MissionCore:
                 if g.get('route'):
                     self.route_index += 1
                 else:
-                    self.frontier_visits.append((g['x'], g['y']))
-                    if sum(math.hypot(g['x'] - vx, g['y'] - vy) < 0.5
+                    centroid = g['frontier_centroid']
+                    self.frontier_visits.append(centroid)
+                    if sum(math.hypot(centroid[0] - vx, centroid[1] - vy) < 0.5
                            for vx, vy in self.frontier_visits) >= self.cfg.max_frontier_visits:
-                        self.frontier_blacklist.append((g['x'], g['y']))
+                        self.frontier_blacklist.append(centroid)
                         self._event('FRONTIER_UNRESOLVED', 'Frontier reached repeatedly without being observed',
                                     target=[g['x'], g['y']])
                 self._goto(DETECT, 'Survey goal reached')
@@ -331,7 +332,7 @@ class MissionCore:
                     self.route_skipped.append(self.route_index)
                     self.route_index += 1
                 else:
-                    self.frontier_blacklist.append((g['x'], g['y']))
+                    self.frontier_blacklist.append(g['frontier_centroid'])
                 if self.explore_failures >= self.cfg.max_explore_failures:
                     self.survey_exhausted = True
                     self._event('SURVEY_EXHAUSTED', 'Too many consecutive survey goal failures')
@@ -371,7 +372,7 @@ class MissionCore:
         return self.inputs.grid.reachable_from(self.inputs.robot[:2], self.cfg.clearance_m)
 
     def _survey_goal(self, reach):
-        """Next survey goal per mode, or None. Returns (x, y, yaw, is_route)."""
+        """Next survey goal, with its frontier centroid (None for route waypoints), or None."""
         if self.survey_exhausted:
             return None
         use_route = self.cfg.mode == MODE_SURVEY_ROUTE or (self.cfg.mode == MODE_PATROL and self.route)
@@ -382,7 +383,7 @@ class MissionCore:
             self.last_unreachable_frontiers = unreachable
             if reachable:
                 f = reachable[0]
-                return f.goal[0], f.goal[1], f.goal[2], False
+                return f.goal[0], f.goal[1], f.goal[2], False, f.centroid
             if self.cfg.mode == MODE_PATROL or not self.route:
                 return None
         while self.route_index < len(self.route):
@@ -390,7 +391,7 @@ class MissionCore:
             if self.zone.contains(*wp):
                 nxt = self.route[self.route_index + 1] if self.route_index + 1 < len(self.route) else None
                 yaw = math.atan2(nxt[1] - wp[1], nxt[0] - wp[0]) if nxt is not None else self.inputs.robot[2]
-                return float(wp[0]), float(wp[1]), yaw, True
+                return float(wp[0]), float(wp[1]), yaw, True, None
             self.route_skipped.append(self.route_index)
             self._event('ROUTE_WAYPOINT_SKIPPED', 'Waypoint outside patrol zone', index=self.route_index)
             self.route_index += 1
@@ -451,10 +452,11 @@ class MissionCore:
             self._goto(APPROACH, d['reason'])
             self._send_view_goal()
         elif d['action'] == 'SURVEY':
-            x, y, yaw, is_route = d['goal']
+            x, y, yaw, is_route, centroid = d['goal']
             self._goto(EXPLORE, d['reason'])
             self._send_nav('EXPLORE', x, y, yaw, 'SURVEY_ROUTE' if is_route else 'FRONTIER')
             self.active_goal['route'] = is_route
+            self.active_goal['frontier_centroid'] = centroid
         elif d['action'] == 'AWAIT_OPERATOR':
             self._await_operator(d['reason'])
         else:

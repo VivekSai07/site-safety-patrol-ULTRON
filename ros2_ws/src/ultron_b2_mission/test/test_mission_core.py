@@ -111,6 +111,25 @@ def test_full_mission_captures_ladders_and_returns_to_base():
         assert s in states
 
 
+@pytest.mark.parametrize('status', ['FAILED', 'REACHED'])
+def test_frontier_blacklisting_uses_centroid_not_distant_goal(status):
+    grid = room(unknown_rect=(6.0, 0.1, 9.9, 7.9))
+    cfg = MissionConfig(mode=mc.MODE_EXPLORE, clearance_m=1.2, max_frontier_visits=1)
+    h = Harness(grid, cfg=cfg, robot=(2.0, 2.0, 0.0))
+    h.auto = False
+    h.start()
+    h.step()
+    goal = h.core.active_goal
+    assert goal is not None and goal['kind'] == 'EXPLORE'
+    assert math.dist((goal['x'], goal['y']), goal['frontier_centroid']) > 0.75
+    h.core.on_nav_result(goal['goal_id'], status, 'test', settled=status == 'REACHED')
+    reachable, unreachable = mc.find_frontiers(grid, h.core.zone, h.inp.robot[:2],
+                                                clearance_m=cfg.clearance_m,
+                                                blacklist=h.core.frontier_blacklist)
+    assert not reachable
+    assert unreachable and all(f.blacklisted for f in unreachable)
+
+
 INHIBITS = {
     'ops_hold': lambda inp: setattr(inp, 'external_hold', True),
     'operator_enable_false': lambda inp: setattr(inp, 'operator_enabled', False),
