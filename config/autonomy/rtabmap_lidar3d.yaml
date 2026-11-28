@@ -1,0 +1,46 @@
+# MuJoCo hall: 6-DoF ICP odometry, graph-based SLAM and a 2D projection for Nav2.
+icp_odometry:
+  ros__parameters:
+    use_sim_time: true
+    frame_id: base_link
+    odom_frame_id: odom
+    publish_tf: true
+    qos: 1
+    deskewing: false
+    scan_range_max: 12.0
+    "Reg/Force3DoF": "false"
+    "Icp/VoxelSize": "0.08"
+    "Icp/MaxCorrespondenceDistance": "0.30"
+    "Icp/Iterations": "15"
+    "OdomF2M/ScanMaxSize": "15000"
+
+rtabmap:
+  ros__parameters:
+    use_sim_time: true
+    frame_id: base_link
+    map_frame_id: map
+    subscribe_depth: false
+    subscribe_rgb: false
+    subscribe_scan_cloud: true
+    approx_sync: false
+    qos_scan: 1
+    qos_odom: 1
+    "Reg/Strategy": "1"
+    "Reg/Force3DoF": "false"
+    "Icp/VoxelSize": "0.08"
+    "Icp/MaxCorrespondenceDistance": "0.30"
+    "RGBD/ProximityBySpace": "true"
+    "RGBD/NeighborLinkRefining": "true"
+    "RGBD/CreateOccupancyGrid": "true"
+    "RGBD/LinearUpdate": "0"
+    "RGBD/AngularUpdate": "0"
+    "Rtabmap/DetectionRate": "2"
+    "Grid/Sensor": "0"
+    "Grid/3D": "true"
+    "Grid/RayTracing": "true"
+    "Grid/CellSize": "0.05"
+    "Grid/RangeMax": "10.0"
+    "Grid/NormalsSegmentation": "false"
+    # The standing base_link origin is 0.65 m above the simulated floor.
+    "Grid/MaxGroundHeight": "-0.45"
+    "Grid/MaxObstacleHeight": "0.9"

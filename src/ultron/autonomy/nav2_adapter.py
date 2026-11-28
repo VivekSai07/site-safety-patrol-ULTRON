@@ -13,6 +13,7 @@ from .localization_state import accept_pose
 from .live_grid import TOPIC, grid_is_fresh, grid_stamp_ns
 from .motion_gate_node import state_from_json
 from .navigation_contract import GoalTracker, MapFootprint, check_goal
+from .rtabmap_sim import ODOM as RTABMAP_ODOM
 
 ACTION = '/navigate_to_pose'
 
@@ -47,7 +48,8 @@ class Nav2Adapter:
         node.create_subscription(String, t['localization_state'], self._on_state, latched)
         node.create_subscription(String, t['gate_status'], self._on_gate, latched)
         node.create_subscription(Bool, t['operator_enable'], self._on_operator, qos)
-        node.create_subscription(Odometry, t['odom'], self._on_odom, qos)
+        odom_topic = RTABMAP_ODOM if meta.get('slam_backend') == 'rtabmap_3d' else t['odom']
+        node.create_subscription(Odometry, odom_topic, self._on_odom, qos)
         if self.live_map:
             node.create_subscription(OccupancyGrid, TOPIC, self._on_grid, latched)
 

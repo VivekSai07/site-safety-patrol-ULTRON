@@ -53,7 +53,7 @@ def _quat(yaw):
 
 class SimBridge:
     def __init__(self, config, route=None, rate=1.0, out=None, scenario=None, people='static',
-                 distortion=False, odom_scale=1.0, lidar_profile_path=None):
+                 distortion=False, odom_scale=1.0, lidar_profile_path=None, external_odom_tf=False):
         import rclpy
         from rclpy.node import Node
         from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
@@ -69,6 +69,7 @@ class SimBridge:
                         String=String)
         self.rclpy = rclpy
         self.config, self.rate, self.out = config, float(rate), out
+        self.external_odom_tf = external_odom_tf
         if not 0 < self.rate <= 10:
             raise ValueError('rate must be in (0, 10]')
         lidar_profile = config.lidar
@@ -187,6 +188,7 @@ class SimBridge:
                               'angle_increment': g.angle_increment, 'bins': g.bins,
                               'z_band_base_link': [g.z_min, g.z_max]},
             'ground_truth': 'EVALUATION_ONLY: ground_truth.csv / topic; never on TF or estimator input',
+            'external_odom_tf': self.external_odom_tf,
         }
         (self.out / 'run_meta.json').write_text(json.dumps(meta, indent=2))
 
@@ -306,7 +308,8 @@ class SimBridge:
     def _publish_state(self, stamp):
         f = self.config.frames
         x, y, yaw = self.odom.x, self.odom.y, self.odom.yaw
-        self.tf.sendTransform(self._transform(f['odom'], f['base'], (x, y, 0.0), yaw, stamp))
+        if not self.external_odom_tf:
+            self.tf.sendTransform(self._transform(f['odom'], f['base'], (x, y, 0.0), yaw, stamp))
         odom = self.msg['Odometry']()
         odom.header.stamp, odom.header.frame_id, odom.child_frame_id = stamp, f['odom'], f['base']
         odom.pose.pose.position.x, odom.pose.pose.position.y = x, y
@@ -422,6 +425,7 @@ def main(argv=None):
     parser.add_argument('--odom-scale', type=float, default=1.0, help='Multiply all odometry error terms')
     parser.add_argument('--lidar-profile', type=Path, help='Alternative lidar profile YAML')
     parser.add_argument('--control-hz', type=float, help='Override control/odometry rate (default from config)')
+    parser.add_argument('--external-odom-tf', action='store_true', help='Leave odom-to-base TF to an external estimator')
     args = parser.parse_args(argv)
     config = load_sim_slam_config(args.config)
     if args.control_hz:
@@ -437,7 +441,8 @@ def main(argv=None):
     rclpy.init()
     try:
         bridge = SimBridge(config, route, args.rate, args.out, scenario, args.people, args.motion_distortion,
-                           args.odom_scale, str(args.lidar_profile) if args.lidar_profile else None)
+                           args.odom_scale, str(args.lidar_profile) if args.lidar_profile else None,
+                           external_odom_tf=args.external_odom_tf)
         bridge.run(args.duration)
         bridge.node.destroy_node()
     except KeyboardInterrupt:

@@ -46,6 +46,7 @@ STACK_MODULES = {'ultron.autonomy.sim_bridge', 'ultron.autonomy.slam_logger', 'u
                  'ultron.autonomy.latency_probe', 'ultron.autonomy.tf_filter', 'ultron.autonomy.motion_gate_node',
                  'ultron.autonomy.dashboard_goal_node', 'ultron.autonomy.sdk_velocity_node'}
 STACK_EXECUTABLES = ('slam_toolbox/async_slam_toolbox_node', 'slam_toolbox/localization_slam_toolbox_node',
+                     'rtabmap_odom/icp_odometry', 'rtabmap_slam/rtabmap',
                      'nav2_controller/controller_server', 'nav2_planner/planner_server', 'nav2_bt_navigator/bt_navigator',
                      'nav2_behaviors/behavior_server', 'nav2_map_server/map_server')
 

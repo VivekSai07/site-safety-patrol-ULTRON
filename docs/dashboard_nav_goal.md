@@ -57,6 +57,27 @@ This test exercises navigation through the dashboard HTTP API and ROS 2.
 The simulator provides the recorded ground truth used to score arrival.
 [Measured results](SAHIL_VALIDATION.md#dashboard-navigation-on-the-live-slam-grid)
 
+### Use the 3D LiDAR backend in MuJoCo
+
+On the `sahil/3d-slam-nav2` branch, install ROS Humble's
+`ros-humble-rtabmap-ros` package and build the action overlay described
+below. Start a fresh loopback dashboard with `--goals`.
+
+```bash
+scripts/sim-slam.sh nav runs/live-3d-navigation-check --live-map-3d \
+  --dashboard-url http://127.0.0.1:8000
+```
+
+This case uses ICP odometry from the simulated 3D LiDAR. RTAB-Map publishes
+the 3D cloud and its 2D occupancy projection. The dashboard, goal checker
+and Nav2 use the projection for single-floor navigation. For manual control,
+add `--serve-dashboard`, then create a mission and publish the simulator
+operator heartbeat as below. The 3D mode defaults to 0.6× simulation speed
+and a 0.28 m/s desired controller speed in the simulated hall.
+
+The automated run saves its checked results in `nav_cases.json`, a
+`cloud_map.ply` snapshot and the RTAB-Map database. [3D navigation results](SAHIL_VALIDATION.md#3d-lidar-slam-with-dashboard-navigation-in-mujoco)
+
 ## Navigate on a checked map
 
 The dashboard uploads a saved occupancy map and the simulator's current valid

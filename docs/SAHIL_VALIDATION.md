@@ -337,3 +337,38 @@ independent pose accuracy, performance across a large loop closure, or
 physical B2 operation.
 
 [Launch instructions](dashboard_nav_goal.md#navigate-while-mapping)
+
+## 3D LiDAR SLAM with dashboard navigation in MuJoCo
+
+Branch `sahil/3d-slam-nav2` adds an online 3D experiment with ROS 2 Humble,
+RTAB-Map 0.23.13 and Nav2 1.1.20. The MuJoCo bridge supplies full simulated
+LiDAR clouds and the LiDAR mounting transform. RTAB-Map's ICP odometry
+supplies `odom -> base_link`, and its 6-DoF graph supplies `map -> odom`.
+The 3D mapping node publishes a point cloud and projects occupancy onto
+`/map` for single-floor dashboard navigation and Nav2. The motion gate
+continues to use the scan-to-map localization monitor and operator
+heartbeat. The simulator's known pose is used only to score arrival and
+stopping. [RTAB-Map ROS 2](https://github.com/introlab/rtabmap_ros/blob/ros2/README.md)
+
+The first 1× run frequently exceeded the pose monitor's timing allowance on
+this host. The 3D mode therefore defaults to 0.6×. In the first moving
+dropout test the motion gate inhibited output and Nav2 canceled, but the
+kinematic base needed 1.30 simulated seconds to stop. For the next run the
+desired 3D-mode controller speed was reduced from 0.40 to 0.28 m/s. The
+existing 1.20 s stop criterion was retained.
+
+The final run `runs/live-nav3d-05` passed at 0.6× with the 0.28 m/s controller setting.
+
+| Check | Result |
+|---|---|
+| Live data path | ROS reported RTAB-Map as the sole `/map` publisher, ICP as the navigation odometry publisher, and Nav2's global costmap as a live grid subscriber. The dashboard displayed RTAB-Map's projection and the scan-checked pose. |
+| Dashboard goal while mapping | The dashboard submitted a goal from the 12.6 s grid. The checker used the 13.1 s grid, and mapping continued to at least 19.1 s while Nav2 reached the goal. |
+| Arrival | Simulated ground-truth error was 0.034 m and 0.102 rad. |
+| Invalid goals | Future and stale grid submissions and an out-of-map goal were rejected before motion. An earlier attempt to return to the starting footprint was also rejected because that footprint still contained unknown cells. |
+| Sensor loss during motion | A 3.0 s simulated LiDAR blackout triggered localization inhibition in 0.48 simulated seconds. The dashboard received Nav2's cancellation confirmation. Kinematic motion stopped in 1.02 simulated seconds, within the 1.20 s criterion. |
+| 3D output | The snapshot contains 42,122 points and spans 1.60 m vertically. The run saved `cloud_map.ply`, `rtabmap.db` and `nav_cases.json`. |
+
+The test covers a single-floor kinematic MuJoCo run and dashboard HTTP goal
+submission. It does not establish 3D loop-closure reliability, localization
+recovery across outages, or physical robot performance.
+[Launch instructions](dashboard_nav_goal.md#use-the-3d-lidar-backend-in-mujoco)

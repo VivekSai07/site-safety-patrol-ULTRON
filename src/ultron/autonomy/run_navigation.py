@@ -1,4 +1,4 @@
-"""Nav2 bring-up (N1) and failure cases (N2) on a saved map. SIMULATION ONLY.
+"""Nav2 bring-up and failure cases on saved or live SLAM maps. SIMULATION ONLY.
 
 Starts slam_toolbox (localization), the LocalizationState monitor, Nav2 (map_server, planner,
 controller, behaviors, BT navigator + lifecycle manager), the motion gate and the bridge in
@@ -10,6 +10,7 @@ Usage: python -m ultron.autonomy.run_navigation OUT --map MAPPING_RUN [--cases c
 import argparse
 import json
 import math
+import os
 from pathlib import Path
 import sys
 import time
@@ -19,6 +20,8 @@ from .config import CONFIG_DIR, load_sim_slam_config
 from .eval_slam import compose
 from .live_grid import TOPIC as LIVE_MAP_TOPIC
 from .navigation_contract import make_goal
+from .rtabmap_sim import LINEAR_SPEED_M_S as RTABMAP_SPEED
+from .rtabmap_sim import CLOUD_MAP as RTABMAP_CLOUD, ODOM as RTABMAP_ODOM, PARAMS as RTABMAP_PARAMS
 from .run_localization import LOC_PARAMS, inverse
 from .run_mapping import SLAM_PARAMS, ensure_no_running_stack, sha256, spawn, stop, terminate_cleanly
 from .sim_bridge import check_isolation
@@ -39,8 +42,9 @@ class Runner:
         import rclpy
         from rclpy.node import Node
         from rclpy.parameter import Parameter
-        from rclpy.qos import QoSProfile, ReliabilityPolicy
+        from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
         from geometry_msgs.msg import PoseStamped
+        from sensor_msgs.msg import PointCloud2
         from std_msgs.msg import Bool, String
         from .nav2_adapter import Nav2Adapter
         self.rclpy, self.config, self.out = rclpy, config, out
@@ -48,6 +52,12 @@ class Runner:
         self.nav = Nav2Adapter(self.node, config, map_dir)
         meta = json.loads((Path(map_dir) / 'map_meta.json').read_text())
         self.origin = tuple(meta['sim_run']['start_pose_world'])       # map frame origin in the world
+        self.rtabmap_3d = meta.get('slam_backend') == 'rtabmap_3d'
+        self.cloud_map = None
+        if self.rtabmap_3d:
+            cloud_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                                   durability=DurabilityPolicy.TRANSIENT_LOCAL)
+            self.node.create_subscription(PointCloud2, RTABMAP_CLOUD, self._on_cloud_map, cloud_qos)
         self.Bool, self.String = Bool, String
         qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
         self.operator_pub = self.node.create_publisher(Bool, config.topics['operator_enable'], qos)
@@ -59,6 +69,10 @@ class Runner:
             self.node.create_timer(0.2, self._publish_operator)
         self.node.create_timer(0.05, self.nav.tick)
         self.results = []
+
+    def _on_cloud_map(self, msg):
+        if msg.header.frame_id == 'map' and msg.width and msg.height:
+            self.cloud_map = msg
 
     def _on_truth(self, msg):
         q = msg.pose.orientation
@@ -362,7 +376,7 @@ class Runner:
         error = math.dist((tx, ty), target[:2])
         yaw_error = abs(math.remainder(tyaw - target[2], math.tau))
         after = dashboard.live()['grid']
-        return {
+        record = {
             'future_grid': future, 'stale_grid': stale, 'outside': outside, 'goal': result, 'target_world': target,
             'displayed_grid_stamp_ns': displayed['grid_stamp_ns'],
             'grid_stamp_before_submission_ns': forwarded_from, 'grid_stamp_after_goal_ns': after['grid_stamp_ns'],
@@ -379,6 +393,65 @@ class Runner:
                 'mapping_continued_during_goal': after['grid_stamp_ns'] > forwarded_from,
             },
         }
+        if self.rtabmap_3d:
+            self.check_3d_sensor_loss(record, send, wait, terminal)
+            self.record_3d_evidence(record)
+        return record
+
+    def check_3d_sensor_loss(self, record, send, wait, terminal):
+        nearby = [(1.6, 4.3), (1.6, 3.9), (1.6, 2.35), (2.5, 3.0), (1.3, 3.8)]
+        clearance = self.config.navigation['target_clearance_m']
+        current = self.true_pose()[:2]
+        target = next(((*xy, math.pi / 2) for xy in nearby if math.dist(xy, current) >= 0.7
+                       and self.nav.footprint.check(*self.to_map((*xy, 0.0))[:2], clearance)[0]), None)
+        if target is None:
+            record['checks']['sensor_loss_cancels_active_goal'] = False
+            record['sensor_loss'] = {'reason': 'No second test goal has known clearance on the live grid'}
+            return
+        request = send(target)
+        dispatched = wait(request, terminal | {'ACCEPTED'})
+        from_stamp = self.now()
+        moving = dispatched['status'] == 'ACCEPTED' and self.spin(
+            until=lambda: self.moved_after(from_stamp) >= 0.15, wall_limit=20.0)
+        if not moving:
+            record['checks']['sensor_loss_cancels_active_goal'] = False
+            record['sensor_loss'] = {'goal': dispatched, 'reason': 'Second goal did not start moving'}
+            return
+        gate_before, injected_at = len(self.gate_log), self.now()
+        self.control(fault='lidar_blackout', duration_s=3.0)
+        canceled = wait(request, terminal)
+        self.spin(2.0)
+        inhibit = next((g for g in self.gate_log[gate_before:]
+                        if g.get('inhibited') and 'LOCALIZATION' in (g.get('reason') or '')), None)
+        stop_after = self.last_motion_time(injected_at) - injected_at
+        record['sensor_loss'] = {'goal': canceled, 'inhibit': inhibit, 'injected_at': injected_at,
+                                 'stop_after_s': round(stop_after, 3)}
+        record['checks']['sensor_loss_cancels_active_goal'] = canceled['status'] == 'CANCELED' and inhibit is not None
+        record['checks']['sensor_loss_stop_in_budget'] = stop_after <= ACCEPT['stop_within_s']
+
+    def record_3d_evidence(self, record):
+        import numpy as np
+        from .real_bag import cloud_xyz
+
+        def publishers(topic):
+            return sorted({info.node_name for info in self.node.get_publishers_info_by_topic(topic)})
+
+        sources = {topic: publishers(topic) for topic in (LIVE_MAP_TOPIC, RTABMAP_ODOM, RTABMAP_CLOUD)}
+        record['publishers'] = sources
+        xyz = cloud_xyz(self.cloud_map) if self.cloud_map is not None else np.empty((0, 3))
+        height_span = float(np.ptp(xyz[:, 2])) if len(xyz) else 0.0
+        record.update(cloud_points=len(xyz), cloud_height_span_m=height_span)
+        record['checks'].update(
+            rtabmap_is_live_grid_source=sources[LIVE_MAP_TOPIC] == ['rtabmap'],
+            icp_is_navigation_odometry_source=sources[RTABMAP_ODOM] == ['icp_odometry'],
+            nonplanar_map_cloud=sources[RTABMAP_CLOUD] == ['rtabmap'] and len(xyz) > 100 and height_span > 0.5,
+        )
+        if len(xyz):
+            header = ('ply\nformat binary_little_endian 1.0\n'
+                      f'element vertex {len(xyz)}\nproperty float x\nproperty float y\nproperty float z\nend_header\n')
+            with (self.out / 'cloud_map.ply').open('wb') as handle:
+                handle.write(header.encode('ascii'))
+                handle.write(xyz.astype('<f4').tobytes())
 
 
 def main(argv=None):
@@ -387,12 +460,18 @@ def main(argv=None):
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument('--map', type=Path)
     source.add_argument('--live-map', action='store_true')
+    source.add_argument('--live-map-3d', action='store_true', help='Use online RTAB-Map LiDAR SLAM and its 2D projection')
     parser.add_argument('--cases')
-    parser.add_argument('--rate', type=float, default=1.0)
+    parser.add_argument('--rate', type=float, help='Simulation speed (default 1.0, or 0.6 for live 3D mapping)')
     parser.add_argument('--dashboard-url', help='Local dashboard URL for dashboard goals')
     parser.add_argument('--serve-dashboard', action='store_true', help='Wait for interactive dashboard goals')
     parser.add_argument('--sdk-stand-in', action='store_true', help='Log motion gate output as stand-in SDK calls')
     args = parser.parse_args(argv)
+    args.live_map = args.live_map or args.live_map_3d
+    if args.rate is None:
+        args.rate = 0.6 if args.live_map_3d else 1.0
+    if args.live_map_3d:
+        os.environ.setdefault('OMP_NUM_THREADS', '4')
     default_cases = 'dashboard' if args.live_map else ','.join(ALL_CASES)
     requested_cases = default_cases if args.cases is None else args.cases
     cases = [] if args.serve_dashboard else [c for c in requested_cases.split(',') if c]
@@ -419,20 +498,30 @@ def main(argv=None):
     if args.live_map:
         meta = {'map_id': f'ultron-live-{uuid.uuid4().hex[:12]}', 'map_version': 1, 'live_map': True,
                 'frame_id': 'map', 'provenance': 'ONLINE_SLAM_SIMULATION',
+                'slam_backend': 'rtabmap_3d' if args.live_map_3d else 'slam_toolbox_2d',
                 'sim_run': {'start_pose_world': START_WORLD}}
         (out / 'map_meta.json').write_text(json.dumps(meta, indent=2) + '\n')
     py = sys.executable
     procs = {}
     ros = lambda *a: ['ros2', 'run', *a]
     remap_cmd = ['-r', f'cmd_vel:={config.topics["nav_cmd_raw"]}']
-    remap_odom = ['-r', f'odom:={config.topics["odom"]}']
+    odom_topic = RTABMAP_ODOM if args.live_map_3d else config.topics['odom']
+    remap_odom = ['-r', f'odom:={odom_topic}']
     try:
-        slam_node = 'async_slam_toolbox_node' if args.live_map else 'localization_slam_toolbox_node'
-        slam_args = ['--ros-args', '--params-file', str(SLAM_PARAMS if args.live_map else LOC_PARAMS),
-                     '-r', '__node:=slam_toolbox']
-        if not args.live_map:
-            slam_args += ['-p', f'map_file_name:={map_dir / "map"}', '-p', 'map_start_pose:=[0.0,0.0,0.0]']
-        procs['slam'] = spawn(ros('slam_toolbox', slam_node) + slam_args, out / 'slam_toolbox.log')
+        if args.live_map_3d:
+            remappings = ['--ros-args', '--params-file', str(RTABMAP_PARAMS), *remap_odom,
+                          '-r', f'scan_cloud:={config.topics["points"]}']
+            procs['icp'] = spawn(ros('rtabmap_odom', 'icp_odometry') + remappings, out / 'icp_odometry.log')
+            procs['slam'] = spawn(ros('rtabmap_slam', 'rtabmap') + remappings + [
+                '-p', f'database_path:={out / "rtabmap.db"}',
+                '-r', f'grid_map:={LIVE_MAP_TOPIC}', '-r', f'cloud_map:={RTABMAP_CLOUD}'], out / 'rtabmap.log')
+        else:
+            slam_node = 'async_slam_toolbox_node' if args.live_map else 'localization_slam_toolbox_node'
+            slam_args = ['--ros-args', '--params-file', str(SLAM_PARAMS if args.live_map else LOC_PARAMS),
+                         '-r', '__node:=slam_toolbox']
+            if not args.live_map:
+                slam_args += ['-p', f'map_file_name:={map_dir / "map"}', '-p', 'map_start_pose:=[0.0,0.0,0.0]']
+            procs['slam'] = spawn(ros('slam_toolbox', slam_node) + slam_args, out / 'slam_toolbox.log')
         procs['monitor'] = spawn([py, '-m', 'ultron.autonomy.localization_monitor', '--map', str(map_dir), '--out', str(out)],
                                  out / 'monitor.log')
         procs['gate'] = spawn([py, '-m', 'ultron.autonomy.motion_gate_node', '--map', str(map_dir),
@@ -448,14 +537,19 @@ def main(argv=None):
             extra = (remap_cmd if name in ('controller_server', 'behavior_server') else []) + remap_odom
             if args.live_map and name == 'planner_server':
                 extra += ['-r', f'{NAV_MAP_TOPIC}:={LIVE_MAP_TOPIC}']
+            if args.live_map_3d and name == 'controller_server':
+                extra += ['-p', f'FollowPath.desired_linear_vel:={RTABMAP_SPEED}']
             procs[name] = spawn(ros(package, name) + ['--ros-args', '--params-file', str(NAV2_PARAMS), *extra],
                                 out / f'{name}.log')
         procs['lifecycle'] = spawn(ros('nav2_lifecycle_manager', 'lifecycle_manager') + [
             '--ros-args', '-r', '__node:=lifecycle_manager_navigation', '-p', 'use_sim_time:=true', '-p', 'autostart:=true',
             '-p', 'node_names:=' + json.dumps(lifecycle_nodes).replace('"', "'")], out / 'lifecycle.log')
         time.sleep(5.0)
-        procs['bridge'] = spawn([py, '-m', 'ultron.autonomy.sim_bridge', '--rate', str(args.rate), '--duration', '3000',
-                                 '--out', str(out / 'sim')], out / 'bridge.log')
+        bridge_args = [py, '-m', 'ultron.autonomy.sim_bridge', '--rate', str(args.rate), '--duration', '3000',
+                       '--out', str(out / 'sim')]
+        if args.live_map_3d:
+            bridge_args.append('--external-odom-tf')
+        procs['bridge'] = spawn(bridge_args, out / 'bridge.log')
         if args.sdk_stand_in:
             procs['sdk'] = spawn([py, '-m', 'ultron.autonomy.sdk_velocity_node',
                                   '--stand-in-log', str(out / 'sdk_stand_in.jsonl')], out / 'sdk.log')
@@ -497,6 +591,9 @@ def main(argv=None):
                        'accept': ACCEPT, 'nav2_params_sha256': sha256(NAV2_PARAMS),
                        'cases': runner.results, 'gate_log': runner.gate_log,
                        'verdict': 'PASS' if all(r['verdict'] == 'PASS' for r in runner.results) else 'FAIL'}
+            if args.live_map_3d:
+                summary['rtabmap'] = {'params_sha256': sha256(RTABMAP_PARAMS), 'simulation_rate': args.rate,
+                                     'controller_desired_linear_m_s': RTABMAP_SPEED}
             (out / 'nav_cases.json').write_text(json.dumps(summary, indent=2, default=str))
             print(json.dumps({r['case']: r['verdict'] for r in runner.results}, indent=1))
             print('navigation verdict:', summary['verdict'])
@@ -506,7 +603,8 @@ def main(argv=None):
             rclpy.shutdown()
     finally:
         for name in ('dashboard_bridge', 'dashboard_goal', 'sdk', 'bridge', 'lifecycle', 'bt_navigator',
-                     'behavior_server', 'controller_server', 'planner_server', 'map_server', 'gate', 'monitor', 'slam'):
+                     'behavior_server', 'controller_server', 'planner_server', 'map_server', 'gate', 'monitor',
+                     'slam', 'icp'):
             if name in procs:
                 stop(procs[name])
 

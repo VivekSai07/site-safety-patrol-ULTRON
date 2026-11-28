@@ -13,6 +13,7 @@ import numpy as np
 
 from .localization_state import LocalizationMonitor, MapMatcher, TransformHistory
 from .live_grid import TOPIC, LiveMapMatcher, grid_is_fresh, grid_stamp_ns
+from .rtabmap_sim import ODOM as RTABMAP_ODOM
 
 SCORE_DELAY_S = 0.15  # let the SLAM backend apply a scan before scoring the pose at its stamp
 
@@ -64,7 +65,8 @@ class MonitorNode:
         self.String = String
         self.pub = self.node.create_publisher(String, config.topics['localization_state'], latched)
         self.node.create_subscription(LaserScan, config.topics['scan'], lambda m: self.pending_scans.append(m), qos)
-        self.node.create_subscription(Odometry, config.topics['odom'], lambda m: self.pending_odom.append(m.header.stamp), qos)
+        odom_topic = RTABMAP_ODOM if meta.get('slam_backend') == 'rtabmap_3d' else config.topics['odom']
+        self.node.create_subscription(Odometry, odom_topic, lambda m: self.pending_odom.append(m.header.stamp), qos)
         if self.live_map:
             self.node.create_subscription(OccupancyGrid, TOPIC, self._on_grid, latched)
         self.pending_scans, self.pending_odom = [], []
