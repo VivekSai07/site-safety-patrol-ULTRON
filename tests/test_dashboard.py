@@ -450,5 +450,91 @@ class NavigationTest(unittest.TestCase):
         self.assertEqual(client.get('/api/goal').json()['seq'], 2)
 
 
+@unittest.skipUnless(HAVE_DASHBOARD, 'dashboard extras not installed (pip install -e .[dashboard])')
+class RouteHistoryTest(unittest.TestCase):
+    """Each patrol keeps its route and the occupancy map it drove on, for the history page."""
+
+    png = NavigationTest.png
+
+    def setUp(self):
+        self.client = TestClient(create_app(':memory:'))
+
+    def start(self, mission_id='PATROL-01'):
+        return self.client.post('/api/missions', json={'mission_id': mission_id, 'site_id': 'site-a'})
+
+    def pose(self, t, x, y, yaw=0.0, mission_id='PATROL-01'):
+        self.client.post(f'/api/missions/{mission_id}/pose', json={'time': t, 'x': x, 'y': y, 'yaw': yaw})
+
+    def send_map(self, origin_x=-1):
+        return self.client.post(f'/api/map?resolution=0.05&origin_x={origin_x}&origin_y=0', content=self.png(),
+                                headers={'content-type': 'image/png'})
+
+    def test_route_keeps_moves_and_turns_and_drops_standing_still(self):
+        self.start()
+        self.pose(0.0, 1.0, 1.0)
+        self.pose(0.5, 1.01, 1.0)       # 1 cm: dropped
+        self.pose(1.0, 1.1, 1.0)        # 10 cm: kept
+        self.pose(1.5, 1.1, 1.0, 0.05)  # small turn: dropped
+        self.pose(2.0, 1.1, 1.0, 0.3)   # 0.3 rad turn on the spot: kept
+        self.pose(2.5, 1.1, 1.0, 0.3)   # standing still: dropped
+        route = self.client.get('/api/missions/PATROL-01/route').json()
+        self.assertEqual(route['poses'], [[0.0, 1.0, 1.0, 0.0], [1.0, 1.1, 1.0, 0.0], [2.0, 1.1, 1.0, 0.3]])
+        self.assertIsNone(route['grid'])
+        # the live trail still gets every pose
+        self.assertEqual(len(self.client.get('/api/live').json()['trail']), 6)
+
+    def test_turn_across_plus_minus_pi_is_small(self):
+        self.start()
+        self.pose(0.0, 0, 0, 3.13)
+        self.pose(1.0, 0, 0, -3.13)  # 0.02 rad apart, not 6.26
+        self.assertEqual(len(self.client.get('/api/missions/PATROL-01/route').json()['poses']), 1)
+
+    def test_map_sent_before_or_during_the_mission_is_kept_with_it(self):
+        self.send_map(origin_x=-1)       # bridge started before the patrol
+        self.start('PATROL-01')
+        self.assertEqual(self.client.get('/api/missions/PATROL-01/route').json()['grid']['origin'], [-1, 0])
+        self.send_map(origin_x=-2)       # SLAM grew the map during the patrol: newest one wins
+        grid = self.client.get('/api/missions/PATROL-01/route').json()['grid']
+        self.assertEqual((grid['origin'], grid['width'], grid['height'], grid['resolution']), ([-2, 0], 40, 20, 0.05))
+        self.assertEqual(self.client.get('/api/missions/PATROL-01/map.png').content, self.png())
+        # a finished patrol keeps its map when the next patrol's map arrives
+        self.client.post('/api/missions/PATROL-01/end', json={'status': 'MISSION_COMPLETE'})
+        self.start('PATROL-02')
+        self.send_map(origin_x=-3)
+        self.assertEqual(self.client.get('/api/missions/PATROL-01/route').json()['grid']['origin'], [-2, 0])
+        self.assertEqual(self.client.get('/api/missions/PATROL-02/route').json()['grid']['origin'], [-3, 0])
+
+    def test_routes_are_kept_per_mission(self):
+        self.start('PATROL-01')
+        self.start('PATROL-02')
+        self.pose(0, 1, 1, mission_id='PATROL-01')
+        self.pose(0, 5, 5, mission_id='PATROL-02')
+        self.assertEqual(self.client.get('/api/missions/PATROL-01/route').json()['poses'], [[0, 1, 1, 0]])
+        self.assertEqual(self.client.get('/api/missions/PATROL-02/route').json()['poses'], [[0, 5, 5, 0]])
+
+    def test_patrol_without_route_or_map(self):
+        self.start()
+        self.assertEqual(self.client.get('/api/missions/PATROL-01/route').json(), {'poses': [], 'grid': None})
+        self.assertEqual(self.client.get('/api/missions/PATROL-01/map.png').status_code, 404)
+        self.assertEqual(self.client.get('/api/missions/NOPE/route').status_code, 404)
+
+    def test_older_database_gains_route_tables_and_keeps_its_rows(self):
+        import sqlite3
+        import tempfile
+        from ultron.dashboard import store as store_module
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'old.sqlite'
+            old_schema = store_module.SCHEMA.split('CREATE TABLE IF NOT EXISTS poses')[0]
+            db = sqlite3.connect(path)
+            db.executescript(old_schema)
+            db.execute("INSERT INTO missions VALUES ('OLD-1','site-a','',0,'2026-11-01T10:00:00+00:00',NULL,'MISSION_COMPLETE',NULL,NULL)")
+            db.commit()
+            db.close()
+            store = Store(path)
+            self.assertEqual([m['id'] for m in store.missions()], ['OLD-1'])
+            self.assertEqual((store.route('OLD-1'), store.mission_map('OLD-1')), ([], None))
+            store.db.close()
+
+
 if __name__ == '__main__':
     unittest.main()

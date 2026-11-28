@@ -3,6 +3,7 @@ import asyncio
 import contextlib
 import csv
 import io
+import math
 from collections import deque
 from pathlib import Path
 
@@ -20,6 +21,18 @@ from .store import Duplicate, Store
 STATIC = Path(__file__).parent / 'static'
 MAX_IMAGE_BYTES = 5_000_000
 TRAIL_POINTS = 2000
+# A pose is saved to the mission's route only once the robot has moved or turned this much since the
+# last saved one, so a robot standing still for minutes adds nothing. Display choices, not hardware.
+ROUTE_MIN_STEP_M = 0.05
+ROUTE_MIN_TURN_RAD = 0.1
+
+
+def route_point_due(last, pose):
+    """True when `pose` differs enough from the last saved route point (None = nothing saved yet)."""
+    if last is None:
+        return True
+    turn = abs(math.remainder(pose['yaw'] - last['yaw'], math.tau))
+    return math.hypot(pose['x'] - last['x'], pose['y'] - last['y']) >= ROUTE_MIN_STEP_M or turn >= ROUTE_MIN_TURN_RAD
 
 
 def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_config=None, channels=None,
@@ -28,7 +41,7 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
     store, bus = Store(db_path), Bus()
     media = Path(media_dir)
     notifier = Notifier(store, bus, notify_config or load_config(), channels)
-    live = {'pose': {}, 'trail': {}, 'frames': {}, 'map': None, 'goal': None}
+    live = {'pose': {}, 'trail': {}, 'frames': {}, 'map': None, 'goal': None, 'route_last': {}}
 
     @contextlib.asynccontextmanager
     async def lifespan(_app):
@@ -92,6 +105,8 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
             mission = store.start_mission(body)
         except Duplicate:
             raise HTTPException(409, f'mission {body.mission_id} already exists')
+        if live['map'] is not None:  # the bridge may have sent the map before the mission started
+            store.save_mission_map(mission['id'], live['map'])
         bus.publish('mission', mission)
         return mission
 
@@ -136,6 +151,9 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
         pose = body.model_dump()
         live['pose'][mission_id] = pose
         live['trail'].setdefault(mission_id, deque(maxlen=TRAIL_POINTS)).append([round(body.x, 2), round(body.y, 2)])
+        if route_point_due(live['route_last'].get(mission_id), pose):
+            store.add_pose(mission_id, body.time, body.x, body.y, body.yaw)
+            live['route_last'][mission_id] = pose
         bus.publish('pose', {'mission_id': mission_id, **pose})
 
     @app.post('/api/missions/{mission_id}/frames/{camera}', status_code=204)
@@ -173,6 +191,9 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
         seq = (live['map'] or {}).get('seq', 0) + 1
         live['map'] = {'seq': seq, 'resolution': resolution, 'origin': [origin_x, origin_y],
                        'width': width, 'height': height, 'png': data}
+        for mission in store.missions():  # every running patrol keeps the newest map it drove on
+            if mission['status'] == 'RUNNING':
+                store.save_mission_map(mission['id'], live['map'])
         bus.publish('map', map_meta())
 
     @app.get('/api/map')
@@ -184,6 +205,22 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
         if live['map'] is None:
             raise HTTPException(404, 'no map yet')
         return Response(live['map']['png'], media_type='image/png', headers={'Cache-Control': 'no-store'})
+
+    # Route history: where a finished (or running) patrol went, on the map it used
+    @app.get('/api/missions/{mission_id}/route')
+    async def get_route(mission_id: str):
+        require_mission(mission_id)
+        grid = store.mission_map(mission_id)
+        return {'poses': store.route(mission_id),
+                'grid': None if grid is None else {k: v for k, v in grid.items() if k != 'png'}}
+
+    @app.get('/api/missions/{mission_id}/map.png')
+    async def get_mission_map_png(mission_id: str):
+        require_mission(mission_id)
+        grid = store.mission_map(mission_id)
+        if grid is None:
+            raise HTTPException(404, 'no occupancy map was recorded for this mission')
+        return Response(grid['png'], media_type='image/png')
 
     # Navigation goal (browser -> robot side). One current goal; a new one replaces it, like RViz.
     @app.post('/api/goal', status_code=201)

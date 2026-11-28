@@ -19,7 +19,15 @@ CREATE TABLE IF NOT EXISTS alerts (
   id INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT NOT NULL, asset_id TEXT, kind TEXT NOT NULL,
   severity TEXT NOT NULL, created TEXT NOT NULL, payload TEXT NOT NULL,
   acked_by TEXT, acked_at TEXT, escalated_at TEXT);
+CREATE TABLE IF NOT EXISTS poses (
+  mission_id TEXT NOT NULL, time REAL NOT NULL, x REAL NOT NULL, y REAL NOT NULL, yaw REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS poses_by_mission ON poses (mission_id);
+CREATE TABLE IF NOT EXISTS mission_maps (
+  mission_id TEXT PRIMARY KEY, resolution REAL NOT NULL, origin_x REAL NOT NULL, origin_y REAL NOT NULL,
+  width INTEGER NOT NULL, height INTEGER NOT NULL, png BLOB NOT NULL);
 '''
+# poses and mission_maps are additive tables: CREATE IF NOT EXISTS adds them to an older database
+# without touching its existing rows, so no migration step is needed.
 
 
 def now():
@@ -93,6 +101,32 @@ class Store:
         for row in rows:
             row['data'] = json.loads(row.pop('payload') or '{}')
         return rows
+
+    # Route: the robot's thinned-out poses and the occupancy map it drove on, kept per mission
+    def add_pose(self, mission_id, time, x, y, yaw):
+        self._run('INSERT INTO poses VALUES (?,?,?,?,?)', (mission_id, time, x, y, yaw))
+
+    def route(self, mission_id):
+        """[[time, x, y, yaw], ...] in the order received."""
+        with self.lock:
+            rows = self.db.execute('SELECT time, x, y, yaw FROM poses WHERE mission_id=? ORDER BY rowid',
+                                   (mission_id,)).fetchall()
+        return [list(r) for r in rows]
+
+    def save_mission_map(self, mission_id, grid):
+        """Keep the latest grid for this mission; a newer map from the same mission replaces it."""
+        self._run('INSERT OR REPLACE INTO mission_maps VALUES (?,?,?,?,?,?,?)',
+                  (mission_id, grid['resolution'], grid['origin'][0], grid['origin'][1],
+                   grid['width'], grid['height'], grid['png']))
+
+    def mission_map(self, mission_id):
+        """{'resolution', 'origin', 'width', 'height', 'png'} or None."""
+        rows = self._all('SELECT * FROM mission_maps WHERE mission_id=?', (mission_id,))
+        if not rows:
+            return None
+        r = rows[0]
+        return {'resolution': r['resolution'], 'origin': [r['origin_x'], r['origin_y']],
+                'width': r['width'], 'height': r['height'], 'png': r['png']}
 
     # Inspections
     def add_inspection(self, inspection):
