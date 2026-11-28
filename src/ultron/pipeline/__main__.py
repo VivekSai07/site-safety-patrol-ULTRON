@@ -176,6 +176,14 @@ def command_calibrate(args):
     print(f"{len(frames)} frames; saved {calibrate.save(report, args.data)}")
 
 
+def command_export(args):
+    """Bake this workspace's prompts into the detector and export it (TensorRT FP16 by default)."""
+    from .detect import export
+    weights = args.detector.partition(":")[2] or "yoloe-11l-seg.pt"
+    print(f"saved {export(weights, load_prompts(args.data), args.format, not args.fp32)}; "
+          f"use it as --detector yolo:<that file>")
+
+
 def command_status(args):
     for site_object in ObjectMap(object_folder(args)).all():
         result = site_object.result
@@ -247,6 +255,12 @@ def main(argv=None):
     tune.set_defaults(action=command_calibrate)
 
     commands.add_parser("status", parents=[common], help="list the object map").set_defaults(action=command_status)
+
+    bake = commands.add_parser("export", parents=[common],
+                               help="bake the prompts into the detector for TensorRT (build it on the robot)")
+    bake.add_argument("--format", choices=["engine", "onnx"], default="engine")
+    bake.add_argument("--fp32", action="store_true", help="full precision instead of FP16")
+    bake.set_defaults(action=command_export)
 
     args = parser.parse_args(argv)
     try:

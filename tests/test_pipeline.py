@@ -15,7 +15,7 @@ except ImportError:
 from ultron.pipeline import checklists
 from ultron.pipeline.catalog import KINDS
 from ultron.pipeline.coverage import missing_views
-from ultron.pipeline.detect import ReplayDetector, VlmDetector
+from ultron.pipeline.detect import ReplayDetector, VlmDetector, YoloDetector
 from ultron.pipeline.inspection import Inspection
 from ultron.pipeline.keyframes import KeyframeStore, view_name
 from ultron.pipeline.lift import ASSUMED_RANGE, CELL, lift
@@ -1252,6 +1252,25 @@ class DetectorTest(unittest.TestCase):
                                     {"kind": "first_aid_kit", "box": [5, 5, 5, 5], "confidence": 0.9}, "junk"]}
         found = VlmDetector(Vlm()).detect(frame("a"))
         self.assertEqual([(d.kind, d.score) for d in found], [("ladder", 0.9)])
+
+    def exported(self, names):
+        """A YoloDetector around an exported model whose classes are `names` (no ultralytics needed)."""
+        detector = YoloDetector.__new__(YoloDetector)
+        detector.exported, detector.model = True, unittest.mock.Mock(names=dict(enumerate(names)))
+        return detector
+
+    def test_an_exported_detector_maps_its_baked_prompts_back_to_kinds(self):
+        prompts = {"ladder": {"prompt": "ladder", "min_score": 0.3},
+                   "fire_extinguisher": {"prompt": "red fire extinguisher", "min_score": 0.5}}
+        detector = self.exported(["red fire extinguisher", "ladder"])
+        detector.use(prompts)
+        self.assertEqual((detector.kinds, detector.lowest), (["fire_extinguisher", "ladder"], 0.3))
+
+    def test_an_exported_detector_refuses_prompts_it_was_not_made_for(self):
+        detector = self.exported(["ladder", "fire extinguisher"])
+        with self.assertRaisesRegex(ValueError, "export it again"):
+            detector.use({"ladder": {"prompt": "ladder", "min_score": 0.3},
+                          "fire_extinguisher": {"prompt": "red fire extinguisher", "min_score": 0.5}})
 
     def test_replay_detector(self):
         detector = ReplayDetector({"a": [{"kind": "ladder", "box": CENTRE}]})

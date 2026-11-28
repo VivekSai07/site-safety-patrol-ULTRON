@@ -51,16 +51,35 @@ class YoloDetector:
     """
 
     def __init__(self, weights="yoloe-11l-seg.pt", device=None, track=True, prompts=None):
-        """`prompts` is {kind: {"prompt": text, "min_score": number}}; default from the catalog."""
-        from ultralytics import YOLOE
-        self.model = YOLOE(weights)
+        """`prompts` is {kind: {"prompt": text, "min_score": number}}; default from the catalog.
+
+        `weights` may also be a model exported by `export` (a TensorRT `.engine` or `.onnx`): its
+        prompts are fixed inside it, so it serves only the prompts it was exported with.
+        """
+        self.exported = Path(str(weights)).suffix in EXPORTED
+        if self.exported:
+            from ultralytics import YOLO
+            self.model = YOLO(weights, task="segment")
+        else:
+            from ultralytics import YOLOE
+            self.model = YOLOE(weights)
         self.device, self.track = device, track
         self.use(prompts or DEFAULT_PROMPTS)
 
     def use(self, prompts):
         """Switch the detector to another set of prompts (calibration tries several)."""
+        self.thresholds = {kind: prompts[kind]["min_score"] for kind in prompts}
+        if self.exported:
+            # Class i of the exported model is the prompt text it was exported with.
+            by_text = {prompts[kind]["prompt"]: kind for kind in prompts}
+            baked = [self.model.names[i] for i in sorted(self.model.names)]
+            missing = [text for text in baked if text not in by_text]
+            if missing:
+                raise ValueError(f"exported detector was made for other prompts ({missing}): export it again")
+            self.kinds = [by_text[text] for text in baked]
+            self.lowest = min(self.thresholds[kind] for kind in self.kinds)
+            return
         self.kinds = list(prompts)
-        self.thresholds = {kind: prompts[kind]["min_score"] for kind in self.kinds}
         texts = [prompts[kind]["prompt"] for kind in self.kinds]
         self.model.set_classes(texts, self.model.get_text_pe(texts))
         self.lowest = min(self.thresholds.values())
@@ -87,6 +106,22 @@ class YoloDetector:
                     points = [[round(1000 * x / width), round(1000 * y / height)] for x, y in outline.tolist()]
                 found.append(Detection(kind, thousandths, score, None if track is None else int(track), points))
         return found
+
+
+EXPORTED = (".engine", ".onnx")
+
+
+def export(weights, prompts, format="engine", half=True, imgsz=640):
+    """Bake the prompts into the model and export it (TensorRT engine by default, FP16).
+
+    An engine only runs on the GPU and TensorRT version it was built with: build it on the robot.
+    Returns the exported file's path.
+    """
+    from ultralytics import YOLOE
+    model = YOLOE(weights)
+    texts = [prompts[kind]["prompt"] for kind in prompts]
+    model.set_classes(texts, model.get_text_pe(texts))
+    return model.export(format=format, half=half, imgsz=imgsz)
 
 
 def load_prompts(workspace):

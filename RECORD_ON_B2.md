@@ -115,6 +115,20 @@ which fails offline): `scp yoloe-11l-seg.pt mobileclip_blt.ts icom@192.168.123.2
 Use **yoloe-11l**: on the hall bag, 11m announced a ghost ladder and 11s called the hose cabinet an
 extinguisher. On the workstation 11l takes 13 ms a frame; the pipeline needs 4 frames a second.
 
+Faster on the Orin: build a TensorRT FP16 engine **on the robot** (an engine only runs on the GPU
+and TensorRT version that built it; JetPack's TensorRT is visible through the venv's system site
+packages). The prompts are baked in, so export after any `calibrate`:
+
+```bash
+~/ultron-venv/bin/python -m ultron.pipeline export --detector yolo:yoloe-11l-seg.pt --data ~/ultron-runs/patrol-1
+# then run the survey with --detector yolo:yoloe-11l-seg.engine
+```
+
+On the hall bag the engine gave the same 5 objects, all confirmed, positions within 5 cm of
+PyTorch. Workstation timing: model 1.6 ms, whole detector step (tracker, masks) 13 → 7 ms; the
+rest is CPU work the engine does not speed up. With JetPack's TensorRT 10 FP16 builds directly;
+TensorRT 11 would also need NVIDIA ModelOpt.
+
 ### 6c. Run (two tmux windows on the robot, in `~/ultron`)
 
 ```bash
