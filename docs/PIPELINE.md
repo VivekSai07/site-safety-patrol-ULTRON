@@ -66,6 +66,12 @@ python -m ultron.pipeline inspect --navigator dashboard --camera ros2:/IMAGE,pos
 Workspace (`--data`, default `runs/pipeline`): `objects.json`, `keyframes.json`, `keyframes/*.jpg`,
 `ladders/<id>/` (Kontrollblatt sheets and evidence), `objects/<id>/` (other checklists), `events.jsonl`.
 
+With a map id (`--map-id ID`, or `--map DIR` of a saved `ultron.autonomy` map, keyed `ID-vVERSION`)
+`objects.json` and the keyframes live in `--sites/<site>/<map id>/` (default `runs/sites`) and are
+shared by every patrol on that map; events and ladder sheets stay in `--data`. Give a map id only
+when poses are in that map's frame (localisation): lidar odometry starts a new frame each run, and a
+survey on a shared map warns (`localisation_suspect`) when its frames say their pose is odometry.
+
 ## Modules
 
 | File | Does | State |
@@ -74,7 +80,9 @@ Workspace (`--data`, default `runs/pipeline`): `objects.json`, `keyframes.json`,
 | `types.py` | Records passed between modules | works |
 | `detect.py` | `YoloDetector` (open-vocabulary YOLOE with tracking and masks), `VlmDetector` (vision model returns boxes), `ReplayDetector` | YOLO works on the real recording; VLM detector tested with fakes only |
 | `lift.py` | Detection → map position from lidar, depth image or assumed range | depth path run on the real recording; **assumes the camera looks along the robot's +x from its origin** |
-| `objects.py` | Object map: associate sightings by track and position, merge fragments, stable ids, saved every change | works on the real recording |
+| `objects.py` | Object map: associate sightings by track, then by floor footprint (radius without one), merge fragments, stable ids, saved every change | works on the real recording |
+| `anchor.py` | Lines a patrol up with the objects stored by earlier ones on the same map; gross-error guard | replay of the real recording with injected pose errors; synthetic |
+| `moved.py` | Looks through a stored object's footprint with the depth image: still there, hidden, or gone | real recording (no false "moved"; planted empty spots found); synthetic |
 | `keyframes.py` | Bounded keyframe store per object × view range × viewing direction; selection for the reader | works; quality score is a simple heuristic |
 | `coverage.py` | Missing views → goal poses around the object | works; no occlusion or part visibility |
 | `navigate.py` | `Passive`, `Operator`, `DashboardNavigator` (dashboard `/api/goal` → bridge → Nav2) | tested against the dashboard app; **never run with Nav2** |
@@ -93,8 +101,11 @@ form and rules, the ladder store and the dashboard publisher.
 - **Navigator**: `go_to(ViewRequest) -> bool`, True once the robot stands at `x, y, yaw` (map frame).
 - **Occupancy**: `is_free(x, y) -> bool`, passed to `Inspection`; nothing provides it yet.
 - **Camera**: `camera() -> Frame` with `pose` and `points` or `depth` filled.
-- **Events** (`events.jsonl`, also live to subscribers): `object_found`, `look`, `view_requested`,
-  `view_failed`, `inspecting`, `protocol` (ladder done), `checklist` (other object done), `error`.
+- **Events** (`events.jsonl`, also live to subscribers): `object_found` (once seen 3 times in this
+  patrol and not a likely fragment), `object_merged`, `object_moved`, `object_back`,
+  `localisation_anchored`, `localisation_suspect`, `look`, `view_requested`, `view_failed`,
+  `inspecting`, `protocol` (ladder done), `checklist` (other object done), `error`. The dashboard
+  hears about an object only after `object_found`; fragments never reach it.
 
 ## Work packages
 
@@ -141,6 +152,17 @@ What it took, in the order the recording forced it:
   extinguisher; at 0.36 m tall it cannot be one.
 - **Merging fragments**: an object seen far less often than a same-kind neighbour within reach is
   folded into it (half-ladder boxes, a cabinet seen twice at slightly different ranges).
+- **Footprints, not points**: the measured point of a 1.5 m ladder is its visible face, which moved
+  0.7 m between a side and a front view and split it. Each sighting now projects the depth pixels in
+  its mask onto a 10 cm floor grid (gated to the kind's extent around the measured range, and per
+  image column to the nearest surface, so the wall seen between rungs is dropped); objects keep the
+  cells seen twice and a sighting joins the footprint it touches within 0.4 m. Measured on the
+  recording: the two passes of one wall box lie up to 0.32 m apart, the two ladders 1.6 m apart edge
+  to edge. The survey ends with the five objects at 4, 6, 8, 12 and 16 frames per second (radius
+  matching ended with six at four of those rates); remaining part boxes are merged before anyone
+  hears of them. Positions are the footprint's middle.
+- **Pose error between passes**: one wall box measured on the two passes of the loop lies 0.3-0.6 m
+  apart (the extinguisher 0.2 m). This is the noise floor for lining up later patrols.
 
 Limits of this evidence: one recording, one hall. Thresholds and size ranges are fitted to it. The
 two ladders stand 3 m apart; two ladders side by side rely on tracking and on being seen in one
@@ -197,7 +219,13 @@ planner, Om's detection evaluation, and non-ladder objects on the dashboard.
 
 - Form reading has run on real frames only from two to three metres, with one small model. How
   well any model reads the fine rows and the sticker from a real close-up is unknown.
-- The hose cabinet still leaves a second, weaker object 0.8 m from the real one (7 sightings).
+- A second patrol from a different start, a real localised (`map`) pose, and a real object moved
+  between patrols: only synthetic tests and replays of the one recording (same start; injected pose
+  errors; fake objects planted on open floor). Pose errors of 0.7-1 m are flagged as gross: stored
+  landmarks are known only to 0.3-0.6 m, so the guard cannot tell them apart and changes nothing.
+- Displacements over 2 m (beyond the reach in which an unmatched sighting is taken for a stored
+  object) are not caught by the guard: such an object is created anew.
+- Two ladders closer than about 0.4 m edge to edge and never seen in one frame become one object.
 - Nav2 goals, the live ROS 2 source and the Unitree source have not been exercised.
 - Viewing directions are map bearings in 45° steps; the pipeline does not know a ladder's front.
 - An object seen only without range gets an assumed range of 2.5 m and is marked approximate.
@@ -205,4 +233,5 @@ planner, Om's detection evaluation, and non-ladder objects on the dashboard.
 - The dashboard is optional: without `--dashboard` nothing is posted and nothing from
   `ultron.dashboard` is imported.
 
-Tests: `PYTHONPATH=src python -m unittest tests.test_pipeline`
+Tests: `PYTHONPATH=src python -m unittest tests.test_pipeline`; the footprint, site-map, anchoring and
+moved-object tests render simple scenes (depth image plus masks) in `tests/test_pipeline.py`.
