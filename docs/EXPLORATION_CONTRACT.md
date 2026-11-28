@@ -154,5 +154,7 @@ followed exactly:
   exploration while no explorer runs gets FAILED (`press Start again`). The explorer runs in its own
   process group under `setpriv --pdeathsig TERM`, so it dies with the bridge even when the bridge is killed.
 - **Obstacles** are repeated at 1 Hz with a fresh stamp (an obstacle layer drops stale observations).
-- `pipeline/navigate.py` still posts goals without `by`, so they count as operator goals until it sends
-  `"by": "pipeline"`.
+- Pipeline side, as read on `pipeline/online` at `a002ce5`: `navigate.py` sends `"by": "pipeline"`, reads a
+  409 naming the operator as *preempted* and any other 409 as *busy*, and a FAILED goal whose detail has
+  `not available` as *no navigation*; the bridge reports exactly `navigation not available` both when no
+  Nav2 is found in 3 s and when a goal gets no answer in 5 s.

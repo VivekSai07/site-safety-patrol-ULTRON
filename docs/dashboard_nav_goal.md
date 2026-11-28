@@ -128,5 +128,5 @@ print(wait(goal['seq']))
 - `scripts/b2_standin/explore_check.sh`: the bridge against `fake_nav2.py` (stand-in NavigateToPose
   server and `/map`) and `fake_explore.py` (stand-in explorer) in a Jazzy container with the network off:
   manual goals, start / pause / pipeline goal / resume / finish, operator takeover, lease expiry, fence and
-  obstacle topics, explorer crash, bridge restart, Nav2 absent.
+  obstacle topics, explorer crash, bridge restart, Nav2 absent; with and without `explore_lite_msgs`.
 - **Not yet checked:** real Nav2 with SLAM, real explore_lite, ROS Humble, and the B2's real base frame name.

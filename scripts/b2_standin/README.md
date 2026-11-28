@@ -29,3 +29,6 @@ pip install --target /tmp/pydeps312 --python-version 3.12 --platform manylinux20
 docker run --rm --network none -v "$PWD":/repo:ro -v /tmp/pydeps312:/pydeps:ro sitegen-ros:jazzy-4 \
     bash /repo/scripts/b2_standin/explore_check.sh
 ```
+
+Add `-e STATUS=1` to build `stub_explore_lite_msgs/` first (needs colcon in the image), so the bridge and
+the fake explorer take the `explore/status` path; without it, the path where the msgs package is missing.
