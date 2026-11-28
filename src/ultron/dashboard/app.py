@@ -14,11 +14,22 @@ from PIL import Image
 
 from . import checklist, protocol_pdf
 from .bus import Bus, sse_stream
-from .models import Event, Goal, GoalUpdate, Inspection, MissionEnd, MissionStart, Pose, safe_id
+from .models import (EXPLORATION_ACTIVE, Event, ExplorationAction, ExplorationRequest, ExplorationState,
+                     ExplorationUpdate, Goal, GoalUpdate, Inspection, MissionEnd, MissionStart, Pose, safe_id)
 from .notify import Notifier, load_config
-from .store import Duplicate, Store
+from .store import Duplicate, Store, now
 
 STATIC = Path(__file__).parent / 'static'
+# Pages and their scripts change between versions of the dashboard: browsers must revalidate them
+# (a cheap If-None-Match round trip) instead of running a cached old script against a new page.
+NO_CACHE = {'Cache-Control': 'no-cache'}
+
+
+class RevalidatedStatic(StaticFiles):
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers.update(NO_CACHE)
+        return response
 MAX_IMAGE_BYTES = 5_000_000
 TRAIL_POINTS = 2000
 # A pose is saved to the mission's route only once the robot has moved or turned this much since the
@@ -41,7 +52,8 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
     store, bus = Store(db_path), Bus()
     media = Path(media_dir)
     notifier = Notifier(store, bus, notify_config or load_config(), channels)
-    live = {'pose': {}, 'trail': {}, 'frames': {}, 'map': None, 'goal': None, 'route_last': {}}
+    live = {'pose': {}, 'trail': {}, 'frames': {}, 'map': None, 'goal': None, 'route_last': {},
+            'exploration': {'seq': 0, 'state': ExplorationState.IDLE.value, 'detail': '', 'by': '', 'since': now()}}
 
     @contextlib.asynccontextmanager
     async def lifespan(_app):
@@ -58,7 +70,7 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
 
     app = FastAPI(title='ULTRON ladder patrol dashboard', lifespan=lifespan)
     app.state.store, app.state.bus, app.state.notifier, app.state.live = store, bus, notifier, live
-    app.mount('/static', StaticFiles(directory=STATIC), name='static')
+    app.mount('/static', RevalidatedStatic(directory=STATIC), name='static')
 
     def require_mission(mission_id):
         mission = store.mission(mission_id)
@@ -88,15 +100,15 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
     # Pages
     @app.get('/', include_in_schema=False)
     async def live_page():
-        return FileResponse(STATIC / 'index.html')
+        return FileResponse(STATIC / 'index.html', headers=NO_CACHE)
 
     @app.get('/history', include_in_schema=False)
     async def history_page():
-        return FileResponse(STATIC / 'history.html')
+        return FileResponse(STATIC / 'history.html', headers=NO_CACHE)
 
     @app.get('/ladder', include_in_schema=False)
     async def ladder_page():
-        return FileResponse(STATIC / 'ladder.html')
+        return FileResponse(STATIC / 'ladder.html', headers=NO_CACHE)
 
     # Missions
     @app.post('/api/missions', status_code=201)
@@ -135,7 +147,8 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
         missions = store.missions()
         running = [m for m in missions if m['status'] == 'RUNNING']
         mission = (running or missions or [None])[0]
-        nav = {'grid': map_meta(), 'goal': live['goal'], 'goals_enabled': allow_goals}
+        nav = {'grid': map_meta(), 'goal': live['goal'], 'goals_enabled': allow_goals,
+               'exploration': live['exploration']}
         if mission is None:
             return {'mission': None, **nav}
         mid = mission['id']
@@ -227,6 +240,8 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
     async def set_goal(body: Goal):
         if not allow_goals:
             raise HTTPException(403, 'goals are disabled; start the dashboard with --goals')
+        if exploring():  # the explorer drives the same Nav2 action, and pausing it cancels every goal
+            raise HTTPException(409, 'the robot is exploring; finish mapping before setting a goal')
         seq = (live['goal'] or {}).get('seq', 0) + 1
         live['goal'] = {'seq': seq, **body.model_dump(), 'status': 'SENT', 'detail': ''}
         bus.publish('goal', live['goal'])
@@ -244,6 +259,45 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
         goal.update(status=body.status.value, detail=body.detail[:200])
         bus.publish('goal', goal)
         return goal
+
+    # Exploration (browser -> bridge -> m-explore-ros2): the operator starts mapping whenever they want
+    # and can finish it at any time; the explorer also ends it itself when no frontiers are left.
+    def exploring():
+        return ExplorationState(live['exploration']['state']) in EXPLORATION_ACTIVE
+
+    def goal_underway():
+        return live['goal'] is not None and live['goal']['status'] in ('SENT', 'ACCEPTED')
+
+    def set_exploration(seq, state, detail='', by=''):
+        live['exploration'] = {'seq': seq, 'state': state.value, 'detail': detail[:200], 'by': by, 'since': now()}
+        bus.publish('exploration', live['exploration'])
+        return live['exploration']
+
+    @app.post('/api/exploration', status_code=201)
+    async def request_exploration(body: ExplorationRequest):
+        if not allow_goals:
+            raise HTTPException(403, 'robot control is off; start the dashboard in live mode')
+        current = ExplorationState(live['exploration']['state'])
+        seq = live['exploration']['seq'] + 1
+        if body.action == ExplorationAction.START:
+            if current in EXPLORATION_ACTIVE:
+                raise HTTPException(409, f'exploration is already {current.value}')
+            if goal_underway():
+                raise HTTPException(409, 'a navigation goal is underway; wait for it or set no new one')
+            return set_exploration(seq, ExplorationState.STARTING, by='operator')
+        if current not in (ExplorationState.STARTING, ExplorationState.EXPLORING):
+            raise HTTPException(409, f'nothing to finish: exploration is {current.value}')
+        return set_exploration(seq, ExplorationState.FINISHING, by='operator')
+
+    @app.get('/api/exploration')
+    async def get_exploration():
+        return live['exploration']
+
+    @app.post('/api/exploration/status')
+    async def exploration_status(body: ExplorationUpdate):
+        if body.seq != live['exploration']['seq']:
+            raise HTTPException(409, 'that request is no longer the current one')
+        return set_exploration(body.seq, body.state, body.detail, body.by or live['exploration']['by'])
 
     @app.post('/api/events', status_code=201)
     async def add_event(body: Event):
