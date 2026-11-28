@@ -20,7 +20,7 @@ def safety_assets():
         dict(key="fa_01", kind="firstaid", position=[1.2, 8.4, 0.]),
         dict(key="es_01", kind="escape_sign", position=[0.4, 1.6, 0.]),
         dict(key="person_ok", kind="person", position=[10.5, 5.2, 0.], helmet=True, vest=True),
-        dict(key="person_nohelm", kind="person", position=[4.5, 5.0, 0.], helmet=False, vest=False),
+        dict(key="person_nohelm", kind="person", position=[7.8, 4.8, 0.], helmet=False, vest=False),
     ]
 
 
@@ -103,15 +103,18 @@ def make_scene(ladders,clear_clutter=False,safety_assets=None):
             box(body, f"{key}_plate", [0, 0, 2.3], [.22, .012, .11], ".06 .55 .25 1")
         elif kind == 'person':
             # Vest must contrast with the arms to read as a vest: blue workwear arms,
-            # hi-vis orange torso only when vest=True.
+            # hi-vis orange torso only when vest=True. Round primitives keep the figure
+            # human-readable from any approach azimuth (box torsos look like slabs side-on).
             shirt = ".25 .35 .6 1"
             torso = ".95 .5 .05 1" if asset.get('vest') else shirt
             for side, tag in ((-1, 'leg_l'), (1, 'leg_r')):
-                box(body, f"{key}_{tag}", [side * .08, 0, .42], [.055, .07, .42], ".2 .22 .3 1")
-            box(body, f"{key}_torso", [0, 0, 1.14], [.17, .1, .3], torso)
+                ET.SubElement(body, "geom", name=f"{key}_{tag}", type="capsule",
+                              fromto=f"{side * .09} 0 .84 {side * .09} 0 .05", size=".06", rgba=".2 .22 .3 1")
+            ET.SubElement(body, "geom", name=f"{key}_torso", type="cylinder",
+                          pos="0 0 1.14", size=".155 .3", rgba=torso)
             for side, tag in ((-1, 'arm_l'), (1, 'arm_r')):
                 ET.SubElement(body, "geom", name=f"{key}_{tag}", type="capsule",
-                              fromto=f"{side * .2} 0 1.38 {side * .3} 0 .92", size=".045", rgba=shirt)
+                              fromto=f"{side * .21} 0 1.38 {side * .3} 0 .92", size=".045", rgba=shirt)
             ET.SubElement(body, "geom", name=f"{key}_head", type="sphere",
                           pos="0 0 1.56", size=".1", rgba=".87 .72 .6 1")
             if asset.get('helmet'):
