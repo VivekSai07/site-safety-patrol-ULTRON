@@ -1,5 +1,7 @@
 # ULTRON · Site Safety Patrol
 
+**API prompts:** [Versioned ladder and site-safety prompt packs, schemas and request-building adapter](docs/API_PROMPTS.md).
+
 **A lightweight Unitree B2 MuJoCo simulation for the nesseler challenge.** A robot model patrols a bounded construction scene, discovers ladders, approaches for evidence, requests one second look, and remembers ladder identities across patrols. Actual simulated RGB/depth frames become a traceable inspection report. Rerun export and ROS 2 Humble/RViz replay consume the same recording.
 
 ![ULTRON B2 patrol preview](docs/images/ultron-patrol.gif)
