@@ -1,0 +1,81 @@
+# Use while slam_toolbox runs (scripts/sim-slam.sh map ...): fixed frame map, map display on.
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 20
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/Map
+      Name: SLAM map
+      Enabled: true
+      Topic:
+        Value: /map
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Alpha: 0.7
+      Color Scheme: map
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Lidar points
+      Enabled: true
+      Topic:
+        Value: /ultron/sim/lidar/points
+        Reliability Policy: Reliable
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: AxisColor
+      Axis: Z
+      Decay Time: 0
+    - Class: rviz_default_plugins/LaserScan
+      Name: 2D scan
+      Enabled: true
+      Topic:
+        Value: /ultron/sim/scan
+        Reliability Policy: Reliable
+      Style: Points
+      Size (Pixels): 4
+      Color Transformer: FlatColor
+      Color: 255; 40; 40
+    - Class: rviz_default_plugins/Odometry
+      Name: Simulated odometry
+      Enabled: true
+      Topic:
+        Value: /ultron/sim/odom
+        Reliability Policy: Reliable
+      # Covariance off: z/roll/pitch are reported as 1e6 ("not measured", planar robot),
+      # which RViz would draw as huge yellow shapes over the whole view.
+      Covariance:
+        Value: false
+      Keep: 100
+      Position Tolerance: 0.25
+      Angle Tolerance: 0.2
+      Shape:
+        Value: Arrow
+        Color: 255; 170; 0
+        Alpha: 1
+        Shaft Length: 0.3
+        Shaft Radius: 0.03
+        Head Length: 0.1
+        Head Radius: 0.06
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Names: true
+  Global Options:
+    Fixed Frame: map
+    Background Color: 30; 33; 40
+    Frame Rate: 20
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Scale: 50
+      X: 4
+      Y: 0
+Window Geometry:
+  Width: 1400
+  Height: 900

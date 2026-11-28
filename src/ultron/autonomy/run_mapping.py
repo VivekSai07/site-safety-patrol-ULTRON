@@ -1,0 +1,293 @@
+"""One-command simulated mapping run: bridge + slam_toolbox + logger (+ bag), then save,
+serialize and evaluate. SIMULATION ONLY; run inside scripts/sim-slam.sh.
+
+Output folder (new):
+  sim/                bridge run metadata, ground_truth.csv (evaluation only), odometry.csv
+  estimate.csv        SLAM map->base_link at odometry stamps
+  map.pgm/.yaml       occupancy grid (nav2 map_saver)
+  map.posegraph/.data serialized slam_toolbox pose graph (for reload / localization)
+  map_meta.json       map ID/version, provenance, config hashes
+  eval.json           evaluation against simulator ground truth
+  bag/                optional rosbag2 (scan, odom, tf, clock, ground truth; no point clouds)
+"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+import uuid
+
+from .config import CONFIG_DIR, load_sim_slam_config
+from .sim_bridge import check_isolation
+
+SLAM_PARAMS = CONFIG_DIR / 'slam_toolbox_mapping.yaml'
+DEFAULT_ROUTE = CONFIG_DIR / 'routes' / 'hall_survey_loop.yaml'
+BAG_TOPICS = ['/clock', '/tf', '/tf_static', '/ultron/sim/scan', '/ultron/sim/odom',
+              '/ultron/sim/ground_truth/pose', '/ultron/sim/bridge_status']
+
+
+def sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def terminate_cleanly():
+    """Turn SIGTERM (e.g. from `timeout`) into KeyboardInterrupt so `finally` blocks stop children;
+    otherwise slam_toolbox and helper nodes (own process groups) were left running."""
+    def handler(*_):
+        raise KeyboardInterrupt('SIGTERM')
+    signal.signal(signal.SIGTERM, handler)
+
+
+STACK_MODULES = {'ultron.autonomy.sim_bridge', 'ultron.autonomy.slam_logger', 'ultron.autonomy.localization_monitor',
+                 'ultron.autonomy.latency_probe', 'ultron.autonomy.tf_filter', 'ultron.autonomy.motion_gate_node'}
+STACK_EXECUTABLES = ('slam_toolbox/async_slam_toolbox_node', 'slam_toolbox/localization_slam_toolbox_node',
+                     'nav2_controller/controller_server', 'nav2_planner/planner_server', 'nav2_bt_navigator/bt_navigator',
+                     'nav2_behaviors/behavior_server', 'nav2_map_server/map_server')
+
+
+def _ancestors():
+    pids, pid = set(), os.getpid()
+    while pid > 1:
+        pids.add(pid)
+        try:
+            stat = Path(f'/proc/{pid}/stat').read_text()
+            pid = int(stat[stat.rindex(')') + 2:].split()[1])
+        except (OSError, ValueError):
+            break
+    return pids
+
+
+def ensure_no_running_stack():
+    """Refuse to start while another simulation stack runs: two slam_toolbox instances in one
+    ROS domain both publish map->odom and silently corrupt each other's results. Matches exact
+    argv tokens (python -m module / executable path), not free text, and skips our own ancestors."""
+    own, found = _ancestors(), []
+    for entry in os.listdir('/proc'):
+        if not entry.isdigit() or int(entry) in own:
+            continue
+        try:
+            argv = Path(f'/proc/{entry}/cmdline').read_bytes().decode(errors='replace').split('\0')
+        except OSError:
+            continue
+        if any(a in STACK_MODULES for a in argv) or any(a.endswith(e) for a in argv[:1] for e in STACK_EXECUTABLES):
+            found.append(f'{entry}: {" ".join(argv)[:100]}')
+    if found:
+        raise SystemExit('Another simulation stack is running; stop it first:\n  ' + '\n  '.join(found))
+
+
+def spawn(cmd, log):
+    return subprocess.Popen(cmd, stdout=log.open('w'), stderr=subprocess.STDOUT, start_new_session=True)
+
+
+def stop(proc, timeout=15):
+    if proc.poll() is None:
+        os.killpg(proc.pid, signal.SIGINT)
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+    return proc.returncode
+
+
+def call_service(node, srv_type, name, request, timeout=60.0):
+    import rclpy
+    client = node.create_client(srv_type, name)
+    if not client.wait_for_service(timeout_sec=15.0):
+        raise RuntimeError(f'Service {name} unavailable')
+    future = client.call_async(request)
+    rclpy.spin_until_future_complete(node, future, timeout_sec=timeout)
+    if not future.done():
+        raise RuntimeError(f'Service {name} timed out')
+    return future.result()
+
+
+def save_outputs(out):
+    import rclpy
+    from rclpy.node import Node
+    from slam_toolbox.srv import SaveMap, SerializePoseGraph
+    from std_msgs.msg import String
+    rclpy.init()
+    node = Node('ultron_map_saver_client')
+    try:
+        request = SaveMap.Request()
+        request.name = String(data=str((out / 'map').resolve()))
+        saved = call_service(node, SaveMap, '/slam_toolbox/save_map', request)
+        request = SerializePoseGraph.Request()
+        request.filename = str((out / 'map').resolve())
+        serialized = call_service(node, SerializePoseGraph, '/slam_toolbox/serialize_map', request)
+        return int(saved.result), int(serialized.result)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+UNKNOWN_PIXEL = 205      # map_saver trinary value for unknown cells: occupancy (255-205)/255 = 0.196
+SAFE_FREE_THRESH = 0.196
+
+
+def fix_free_threshold(yaml_path):
+    """map_saver writes free_thresh 0.25, which makes nav2_map_server load unknown (205 -> 0.196)
+    as FREE (measured: 3,259 unknown cells became free). 0.196 keeps them unknown (-1)."""
+    lines = Path(yaml_path).read_text().splitlines()
+    changed = False
+    for i, line in enumerate(lines):
+        if line.startswith('free_thresh:'):
+            if float(line.split(':', 1)[1]) > SAFE_FREE_THRESH:
+                lines[i] = f'free_thresh: {SAFE_FREE_THRESH}'
+                changed = True
+    Path(yaml_path).write_text('\n'.join(lines) + '\n')
+    return changed
+
+
+def add_bridge_options(parser):
+    parser.add_argument('--seed', type=int, help='Override the simulation noise seed')
+    parser.add_argument('--people', choices=['static', 'walking', 'none'], default='static')
+    parser.add_argument('--motion-distortion', action='store_true')
+    parser.add_argument('--odom-scale', type=float, default=1.0)
+    parser.add_argument('--lidar-profile', type=Path)
+    parser.add_argument('--control-hz', type=float)
+
+
+def bridge_options(args):
+    opts = ['--people', args.people, '--odom-scale', str(args.odom_scale)]
+    if args.seed is not None:
+        opts += ['--seed', str(args.seed)]
+    if args.motion_distortion:
+        opts.append('--motion-distortion')
+    if args.lidar_profile:
+        opts += ['--lidar-profile', str(args.lidar_profile.resolve())]
+    if args.control_hz:
+        opts += ['--control-hz', str(args.control_hz)]
+    return opts
+
+
+def run_bridge(cmd, log, sampler):
+    """Run the bridge in its own process group (sampled for CPU/RAM) and wait for it."""
+    proc = subprocess.Popen(cmd, stdout=log.open('w'), stderr=subprocess.STDOUT, start_new_session=True)
+    sampler.add('bridge', proc.pid)
+    try:
+        return proc.wait()
+    except BaseException:
+        stop(proc)
+        raise
+
+
+def latency_summary(path):
+    import csv
+    values = sorted(float(r['latency_s']) for r in csv.DictReader(Path(path).open())) if Path(path).exists() else []
+    if not values:
+        return None
+    return {'scans': len(values), 'median_s': values[len(values) // 2],
+            'p95_s': values[int(0.95 * (len(values) - 1))], 'max_s': values[-1],
+            'definition': 'sim-time from scan stamp to first map->odom update carrying it (scan-to-TF update)'}
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description='Simulated 2D lidar mapping run with slam_toolbox')
+    parser.add_argument('out', type=Path, help='New output folder')
+    parser.add_argument('--route', type=Path, default=DEFAULT_ROUTE)
+    parser.add_argument('--rate', type=float, default=1.0)
+    parser.add_argument('--record', action='store_true', help='Record a small rosbag for replay')
+    add_bridge_options(parser)
+    parser.add_argument('--no-eval', action='store_true')
+    parser.add_argument('--replay', type=Path, metavar='RUN',
+                        help='Instead of simulating, replay RUN/bag (scan, odom, tf without map) into a new SLAM instance')
+    args = parser.parse_args(argv)
+    config = load_sim_slam_config()
+    check_isolation(config)
+    terminate_cleanly()
+    ensure_no_running_stack()
+    out = args.out
+    out.mkdir(parents=True, exist_ok=False)
+    py = sys.executable
+    procs = {}
+    from .latency_probe import ResourceSampler
+    sampler = ResourceSampler({})
+    sampler.start()
+    try:
+        procs['slam'] = spawn(['ros2', 'run', 'slam_toolbox', 'async_slam_toolbox_node', '--ros-args',
+                               '--params-file', str(SLAM_PARAMS), '-r', '__node:=slam_toolbox'], out / 'slam_toolbox.log')
+        procs['logger'] = spawn([py, '-m', 'ultron.autonomy.slam_logger', str(out / 'estimate.csv')], out / 'logger.log')
+        procs['latency'] = spawn([py, '-m', 'ultron.autonomy.latency_probe', str(out / 'latency.csv'),
+                                  '--slam-params', str(SLAM_PARAMS)], out / 'latency.log')
+        sampler.add('slam_toolbox', procs['slam'].pid)
+        sampler.add('slam_logger', procs['logger'].pid)
+        if args.record:
+            procs['bag'] = spawn(['ros2', 'bag', 'record', '-o', str(out / 'bag'), '--use-sim-time', *BAG_TOPICS],
+                                 out / 'bag.log')
+        time.sleep(4.0)  # let subscribers come up before the first scan
+        for name, proc in procs.items():
+            if proc.poll() is not None:
+                raise RuntimeError(f'{name} exited early; see {out}/{name}.log')
+        if args.replay:
+            import shutil
+            shutil.copytree(args.replay / 'sim', out / 'sim')  # same evaluation logs / provenance
+            procs['tf_filter'] = spawn([py, '-m', 'ultron.autonomy.tf_filter'], out / 'tf_filter.log')
+            time.sleep(2.0)
+            print(f'mapping: replaying {args.replay / "bag"} ...', flush=True)
+            play = subprocess.run(['ros2', 'bag', 'play', str(args.replay / 'bag'), '--rate', str(args.rate),
+                                   '--topics', '/clock', '/tf', '/tf_static', '/ultron/sim/scan', '/ultron/sim/odom',
+                                   '--remap', '/tf:=/ultron/sim/replay/tf'],
+                                  stdout=(out / 'bag_play.log').open('w'), stderr=subprocess.STDOUT)
+            if play.returncode != 0:
+                raise RuntimeError(f'bag play failed ({play.returncode}); see {out}/bag_play.log')
+        else:
+            print('mapping: route running ...', flush=True)
+            code = run_bridge([py, '-m', 'ultron.autonomy.sim_bridge', '--route', str(args.route),
+                               '--rate', str(args.rate), '--out', str(out / 'sim'), *bridge_options(args)],
+                              out / 'bridge.log', sampler)
+            if code != 0:
+                raise RuntimeError(f'bridge failed ({code}); see {out}/bridge.log')
+        time.sleep(2.0)  # let slam_toolbox finish queued scans and publish the map
+        saved, serialized = save_outputs(out)
+        print(f'mapping: save_map result {saved}, serialize result {serialized}', flush=True)
+    finally:
+        try:
+            resources = sampler.stop()
+        finally:
+            for name in ('bag', 'tf_filter', 'latency', 'logger', 'slam'):
+                if name in procs:
+                    stop(procs[name])
+        (out / 'resources.json').write_text(json.dumps({'processes': resources, 'cpu_count': os.cpu_count(),
+                                                        'latency': latency_summary(out / 'latency.csv'),
+                                                        'rate': args.rate}, indent=2))
+    free_thresh_fixed = fix_free_threshold(out / 'map.yaml') if (out / 'map.yaml').exists() else False
+    files = {name: sha256(out / name) for name in ('map.pgm', 'map.yaml', 'map.posegraph', 'map.data')
+             if (out / name).exists()}
+    sim_meta = json.loads((out / 'sim' / 'run_meta.json').read_text())
+    meta = {
+        'schema': 'ultron.map_meta/v1', 'map_id': f'ultron-hall-{uuid.uuid4().hex[:12]}', 'map_version': 1,
+        'frame_id': config.frames['map'], 'units': 'metres, radians (REP-103)',
+        'provenance': ('SLAM_TOOLBOX_ESTIMATE_FROM_REPLAYED_SIMULATION_BAG' if args.replay
+                       else 'SLAM_TOOLBOX_ESTIMATE_FROM_SIMULATED_LIDAR_AND_ODOMETRY'),
+        'replay_of': str(args.replay) if args.replay else None,
+        'estimator_inputs': [config.topics['scan'], config.topics['odom'], '/tf (odom->base_link, base_link->lidar_link)'],
+        'ground_truth_used_by_estimator': False,
+        'backend': {'name': 'slam_toolbox', 'version': '2.6.10', 'mode': 'online_async',
+                    'params_sha256': sha256(SLAM_PARAMS)},
+        'map_origin_note': 'map frame origin = robot start pose (odom origin) for this run',
+        'scene': sim_meta['scene'], 'sim_run': sim_meta, 'files_sha256': files,
+        'save_map_result': saved, 'serialize_result': serialized,
+        'free_thresh_rewritten_to_keep_unknown': free_thresh_fixed,
+    }
+    (out / 'map_meta.json').write_text(json.dumps(meta, indent=2))
+    if not files.get('map.yaml') or not files.get('map.posegraph'):
+        raise SystemExit(f'Map files missing in {out}; see slam_toolbox.log')
+    if not args.no_eval:
+        from .eval_slam import evaluate, overlay_png
+        result = evaluate(out)
+        (out / 'eval.json').write_text(json.dumps(result, indent=2))
+        overlay_png(out, out / 'overlay.png')
+        print(json.dumps({'verdict': result['verdict'], 'checks': result['checks'],
+                          'slam': result['slam_start_anchored'], 'odometry_only': result['odometry_only'],
+                          'map': {k: result['map'][k] for k in ('precision', 'recall_all', 'recall_walls', 'occupied_cells')}},
+                         indent=2))
+
+
+if __name__ == '__main__':
+    main()

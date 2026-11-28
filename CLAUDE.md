@@ -1,5 +1,7 @@
 # ULTRON Claude guidance
 
+On branch `sahil`, follow the dedicated [Sahil agent handoff](docs/SAHIL_HANDOFF.md) after AGENTS.md. Implement the autonomy workstream and deliver its runbook/validation evidence; stack choice is open.
+
 Follow [AGENTS.md](AGENTS.md), the shared instruction source, then [README.md](README.md) and [docs/SOURCE_REVIEW.md](docs/SOURCE_REVIEW.md).
 
 The user authorized this team-side B2 simulation repo. Do not create organizer approval steps. New code lives in `src/ultron`; the earlier text-only demo remains as reference.

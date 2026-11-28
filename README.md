@@ -3,6 +3,9 @@
 **API prompts:** [Versioned ladder and site-safety prompt packs, schemas and request-building adapter](docs/API_PROMPTS.md).
 
 **A lightweight Unitree B2 MuJoCo simulation for the nesseler challenge.** The existing demo has a robot model patrol a bounded construction scene, discover ladders, approach for evidence, request one second look, and remember ladder identities across patrols. Actual simulated RGB/depth frames become a traceable inspection report. Rerun export and ROS 2 Humble/RViz replay consume the same recording. The label-first baseline has a rendered synthetic capture-to-draft probe with manual fixture transcription, plus bounded browser-control checks; real OCR and real-world operation remain unverified. See the [baseline and source overview](docs/LABEL_FIRST_BASELINE.md).
+**Sahil autonomy workstream:** start with the [agent handoff and deliverables](docs/SAHIL_HANDOFF.md).
+
+**Real-robot pipeline:** [survey a recording or stream into an object map, then inspect each object](docs/PIPELINE.md).
 
 ![ULTRON B2 patrol preview](docs/images/ultron-patrol.gif)
 

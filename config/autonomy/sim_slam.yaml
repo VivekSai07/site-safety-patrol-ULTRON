@@ -1,0 +1,79 @@
+# ULTRON 2D SLAM simulation configuration. SIMULATION ONLY: no hardware topics or
+# command paths. Simulation-chosen values; not physical robot settings.
+schema: ultron.sim_slam/v1
+lidar_profile: lidar_helios32.yaml
+ros:
+  domain_id: 71
+  localhost_only: true
+  use_sim_time: true
+frames:
+  map: map
+  odom: odom
+  base: base_link
+  lidar: lidar_link
+topics:
+  clock: /clock
+  points: /ultron/sim/lidar/points
+  scan: /ultron/sim/scan
+  odom: /ultron/sim/odom
+  ground_truth: /ultron/sim/ground_truth/pose
+  cmd_vel: /ultron/sim/cmd_vel
+  localization_state: /ultron/sim/localization_state
+  status: /ultron/sim/bridge_status
+  nav_cmd_raw: /ultron/sim/nav/cmd_vel_raw
+  operator_enable: /ultron/sim/operator_enable
+  gate_status: /ultron/sim/motion_gate_status
+  sim_control: /ultron/sim/sim_control
+self_filter:
+  # Crop box in base_link removing returns from the robot's own body and legs,
+  # as a real driver/filter would. Simulation choice; measure on the robot.
+  min_xyz_m: [-0.55, -0.38, -0.75]
+  max_xyz_m: [0.50, 0.38, 0.60]
+scan_projection:
+  # Points between these heights in base_link are flattened into the 2D scan.
+  z_min_m: -0.45
+  z_max_m: 0.60
+  angle_increment_deg: 0.5
+  range_min_m: 0.3
+  range_max_m: 30.0
+odometry:
+  # Simulated leg-odometry drift applied to true kinematic motion. Noise terms are
+  # fractional (see src/ultron/autonomy/odometry.py); no drift while stationary.
+  rate_hz: 50.0
+  linear_scale_error: 0.03
+  yaw_rate_bias_rad_s: 0.004
+  linear_noise_std: 0.02
+  angular_noise_std: 0.02
+  seed: 7
+driver:
+  max_linear_m_s: 0.6
+  max_angular_rad_s: 0.8
+  max_linear_accel_m_s2: 0.5
+  max_angular_accel_rad_s2: 1.0
+  command_timeout_s: 0.5
+  footprint_radius_m: 0.55
+localization:
+  # LocalizationState rules (simulation choices, fixed before Phase 4 evaluation).
+  # Match score = fraction of scan endpoints within match_tolerance_m of an occupied map cell.
+  scan_age_limit_s: 0.5         # no scan newer than this -> STALE
+  pose_age_limit_s: 0.5         # no map->base_link transform at the latest scan -> STALE
+  match_tolerance_m: 0.15
+  score_valid_min: 0.70         # below -> DEGRADED
+  score_lost_max: 0.40          # this low for lost_consecutive scans -> LOST
+  valid_consecutive: 5          # good scans needed before VALID (INITIALIZING/DEGRADED)
+  recover_consecutive: 10       # good scans needed to leave LOST or STALE
+  lost_consecutive: 5
+  degraded_timeout_s: 3.0       # DEGRADED longer than this -> LOST
+  jump_threshold_m: 0.5         # pose jump between scans -> DEGRADED (no silent relocalization)
+  jump_threshold_rad: 0.35
+navigation:
+  # Nav2 adapter and motion gate (simulation choices, fixed before Nav phase evaluation).
+  operator_enable_max_age_s: 1.0   # operator enable must be re-asserted at least this often
+  command_max_age_s: 0.3           # Nav2 command older than this is not forwarded
+  goal_xy_tolerance_m: 0.25
+  goal_yaw_tolerance_rad: 0.35
+  default_timeout_s: 90.0
+  settle_time_s: 0.8               # REACHED + still for this long + VALID -> capture ready
+  settle_speed_m_s: 0.02
+  settle_yaw_rate_rad_s: 0.03
+  target_clearance_m: 0.55         # goal footprint must be free and known in the saved map

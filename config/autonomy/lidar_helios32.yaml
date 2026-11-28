@@ -1,0 +1,26 @@
+# Simulated RoboSense Helios-32 profile for ULTRON's MuJoCo lidar. SIMULATION ONLY.
+# Every physical value carries its source: datasheet | organizer | measured | assumed.
+# "assumed" values are placeholders until replaced by the organizer-supplied spec or
+# measurements on the robot; they are never hardware settings.
+schema: ultron.lidar_profile/v1
+name: robosense_helios32_sim
+# RoboSense sells Helios-32 variants with different vertical FOV (e.g. 5515: ~70 deg,
+# 1615: ~31 deg). Variant not yet confirmed against the organizer documentation.
+variant: {value: UNCONFIRMED, source: assumed}
+channels: {value: 32, source: datasheet}
+# Channel elevation angles. Uniform spacing over the FOV is a placeholder: the real
+# sensor's channel table is non-uniform. Replace with the supplied table when available.
+vertical_fov_deg: {value: [-55.0, 15.0], source: assumed}
+vertical_distribution: {value: uniform, source: assumed}
+horizontal_fov_deg: {value: 360.0, source: datasheet}
+horizontal_resolution_deg: {value: 0.2, source: assumed}
+scan_rate_hz: {value: 10.0, source: assumed}
+range_min_m: {value: 0.2, source: assumed}
+range_max_m: {value: 100.0, source: assumed}
+range_noise_std_m: {value: 0.015, source: assumed}
+dropout_probability: {value: 0.005, source: assumed}
+# base_link -> lidar_link. Team photos show the lidar upright at the front of the body,
+# below the depth camera and floodlight, where the B2 MJCF has a front cylinder
+# (centre x=0.342, z=0.159). Offsets are not yet measured on the robot.
+mount_xyz_m: {value: [0.342, 0.0, 0.18], source: assumed}
+mount_rpy_rad: {value: [0.0, 0.0, 0.0], source: assumed}

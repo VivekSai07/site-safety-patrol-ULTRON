@@ -1,0 +1,11 @@
+# Phase 4: lidar blackout (no scans or clouds) for 3 s while moving. SIMULATION ONLY.
+schema: ultron.sim_scenario/v1
+scene: ultron_lidar_hall_v1
+start_pose: [1.6, 1.5, 1.5707963]
+steps:
+  - route: [[1.6, 2.8], [2.5, 2.8], [2.5, 5.5]]
+    final_yaw: 0.0
+  - fault: lidar_blackout
+    duration_s: 3.0
+  - route: [[5.5, 5.5], [5.5, 7.8], [9.6, 7.8], [9.6, 2.8], [10.3, 2.6], [10.3, 0.8], [2.6, 0.8], [1.6, 1.5]]
+    final_yaw: 1.5707963
