@@ -1,9 +1,46 @@
 # ULTRON simulation architecture
 
+## Prioritized label-first baseline (synthetic HTTP probe)
+
+The next prioritized baseline is operator-selected, label-first evidence
+capture in simulation: position the simulated B2 with bounded keyboard/button
+inputs, capture an overview and readable identity/inspection-label views, and
+produce an evidence-linked Nesseller ladder-checklist draft for qualified
+human completion. A high-level source overview and the other five supplied
+forms are summarized in [LABEL_FIRST_BASELINE.md](LABEL_FIRST_BASELINE.md).
+This is a direction for the target workflow. A simulation-only teleoperation
+module, source-specific draft schema and local adaptive-draft path are present
+locally. The source-specific catalog is excluded from distribution and may be
+used locally only with verified local-use rights. An independently authored
+minimal synthetic public example and an `ULTRON_FORM_SCHEMA` override for a
+compatible local schema are available. The example is not the official
+form or a complete mapping. A rendered synthetic capture-to-draft probe used
+HTTP and manual fixture transcription with the earlier local catalog; it does
+not validate the new public example or override. Bounded browser controls
+and focus were subsequently checked in simulation;
+automatic label detection/reading and a completed official inspection are
+not established. See [validation](VALIDATION.md).
+
+The host-local teleop UI has no user authentication. Localhost does not
+protect it from other local users; use a trusted host and non-sensitive data.
+
+Autonomous acquisition, navigation and other inspections are later work.
+Keep the existing autonomous-style MuJoCo demo as historical/current
+simulation behavior, distinct from the label-first workflow. Simulated
+kinematic positioning is not walking; fixture/oracle findings are not real
+perception or inspection. No hardware connection, command or motion is
+authorized.
+
 ## Requested scope and choices
 The user requested a lightweight MuJoCo/RViz POC for Unitree B2, Rerun visualization and fuller use of DimOS-style spatial memory. This revision supersedes the first text-only spike. It is a team-side simulation artifact, not the real-hardware deliverable. Author choices: primitive B2 model, deterministic oracle perception, grid A*, SQLite registry, portable telemetry, optional viewer adapters. The requested simulation scope authorizes this implementation directly.
 
-A full Unitree DDS simulator would require a locomotion controller; its low-level bridge does not provide the high-level walking/navigation service. Installing full DimOS would bring substantial dependencies and does not establish B2 support. The implementation therefore isolates these future adapters and runs a small B2 mission workflow without DDS or an LLM.
+The organizer's Unitree DDS simulator runs low-level dynamics, but its bridge
+does not provide a high-level walking/navigation service; simulated walking
+would require an appropriate controller. The separate headless DDS smoke test
+observed LowState messages without stand or walking; see
+[ORGANIZER_B2_SIM.md](ORGANIZER_B2_SIM.md). Installing full DimOS would bring
+substantial dependencies and does not establish B2 support. The legacy
+mission workflow runs without DDS or an LLM.
 
 ## Executable flow
 1. Build a MuJoCo scene from the preserved official B2 MJCF. Remove meshes, retain joint/inertial/collision definitions, add ladders/walls/crates and an explicitly assumed inspection camera.
@@ -27,7 +64,17 @@ Type-specific demo fields mirror the teammate bible's proposed subsets. They are
 Recorded scene XML includes the changed scene for the last patrol; per-frame scene snapshots preserve earlier patrol geometry. `upstream.xml` remains unmodified. Depth arrays dominate disk usage. Run folders are ignored by Git. Persisted events include an originating run ID and absolute local evidence root. Each export copies evidence referenced from older runs into `history/{run_id}/` and rewrites export paths; keep original run folders available while sharing a database.
 
 ## Limits and future work
-No sensor fusion SLAM, validated model inference, actual tactile checks, executed real B2 transport, external data upload, n.core API, formal PDF exporter, continuous live dashboard, volumetric area coverage, robust real-world re-ID, or physics-validated controller. Rerun supports replay and a `--follow` tail of live simulation telemetry/events. RViz remains a replay path; stdout/JSONL is the dependency-free live event interface. Rerun/DimOS imports are optional and fail with useful instructions if absent. SDK runtime validation is pending; graphical/ROS operation is restricted in this execution environment.
+No sensor fusion SLAM, validated model inference, actual tactile checks,
+executed real B2 transport, external data upload, n.core API, signed official
+protocol, live robot-to-dashboard integration, volumetric area coverage,
+robust real-world re-ID, or physics-validated controller is established. The
+separate team dashboard and unsigned per-ladder PDF path exist; they are not
+proof of a completed inspection or live robot feed. Rerun supports replay and
+a `--follow` tail of simulation telemetry/events. RViz remains a replay path;
+stdout/JSONL is the dependency-free live event interface. Rerun/DimOS imports
+are optional and fail with useful instructions if absent. SDK runtime
+validation is pending; graphical/ROS operation is restricted in this
+execution environment.
 
 A real baseline must replace oracle observations with aligned detector/depth/TF outputs, preserve unknowns, verify the official required components and calibrate evidence quality. Connect approved high-level navigation to organizer B2 control, retaining RC priority/watchdog. Real autonomy is an independent integration gate.
 

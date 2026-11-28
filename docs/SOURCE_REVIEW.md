@@ -2,8 +2,9 @@
 
 Update: the organizer's actual checklist, photos and simulator are now reviewed in [organizer alignment](ORGANIZER_ALIGNMENT.md). This supersedes the earlier “official template unknown” statements below. Original planning evidence is retained for comparison.
 
-Reviewed 27 November 2026. Source PDFs remain unmodified under `docs/`; extracted text was read page by page for the organizer documents and teammate build bible, with the DGUV scope and inspection/checklist sections checked directly. Figures are illustrative planning material, not hardware verification. Sources have distinct authority: organizer facts; teammate proposals; manufacturer/library interfaces; DGUV guidance.
+Reviewed 27 November 2026. Team source documents are comparison evidence and remain available. The Nesseller checklist and five related forms were read from the locally supplied source checkout; source PDFs are not copied into this team repository. Figures are illustrative planning material, not hardware verification. Sources have distinct authority: organizer facts; teammate proposals; manufacturer/library interfaces; DGUV guidance.
 
+The earlier Pass 6 autonomy-first recommendations remain preserved comparison history. The current user-directed priority is simulation-only label-first capture and evidence-linked drafting toward the Nesseller form. The public example is not that form; a rendered HTTP probe reached a draft using manual synthetic transcription and a locally retained source-specific schema, not real OCR or inspection. Browser controls and focus were checked separately in specified simulation setups. This change does not authorize hardware. See [LABEL_FIRST_BASELINE.md](LABEL_FIRST_BASELINE.md) and [validation](VALIDATION.md).
 ## Organizer evidence
 
 | Source/page | What it establishes | Repository consequence |
@@ -28,11 +29,37 @@ The supplied Discord thread establishes the planned Unitree B2, Jetson, Ubuntu 2
 
 Disagreements resolved: the original text-only demo routed expiry to review; the new ULTRON policy follows the bible and flags an explicitly overdue label. The legacy package remains separately labeled. A scoped AUTOMATED_PASS is retained for communication, with safe_to_use=false and human sign-off always pending. Dataset/Hugging Face and one-pager requirements in the challenge/team plan are retained as team deliverables; the general kickoff hand-in minimum is code plus hardware video.
 
+## Nesseller ladder form and five related forms
+
+The locally supplied source is `nesseler-data/kontrollblatt_checkliste_leitern_tritte.pdf`
+in `ctrl-rwth/ctrl-hackathon-2026` at commit
+`bd3247546f0c753a7535da1554bbbb1315e0bfa8`. The three-page German form was
+read directly. It covers equipment and inspection context, condition checks
+and human outcomes. The [label-first overview](LABEL_FIRST_BASELINE.md)
+summarizes these topics without reproducing the form. The local 42-field
+source-specific catalog is an approximate internal aid requiring review
+against the source, not the official form; rights remain unverified, it is
+excluded from distribution, and local use requires verified local-use rights.
+An independently authored minimal synthetic public example and an
+`ULTRON_FORM_SCHEMA` override for a compatible local schema are available.
+The example is neither the official form nor a complete mapping,
+and prior local observations do not validate it or the override. Product
+identification remains distinct from recurring inspection evidence, and no
+universal annual due date is inferred.
+
+The source README lists five additional forms: scaffold pre-use protocol,
+low-dust site, first aid/fire protection, subcontractor briefing, and
+risk-assessment effectiveness check. Their document-specific subjects and
+human-context boundaries are summarized in the baseline overview; this does not
+implement or propose automatic population of those forms. The fourteen
+supplied ladder photos are unannotated examples, not independent ladder
+trials or validated model data.
+
 ## DGUV Information 208-016 (supplied August 2022 edition)
 
 Pages 5–6 describe guidance for portable ladders/steps and exclude fixed ladders from this document. Page 43 addresses before-use checks, recurring visual/functional checks, risk-based intervals (at least annual inspection is recommended), inspector qualifications and numbered records. Page 44 describes withdrawing damaged ladders from use. Pages 46–47 provide the checklist: stiles, fixings, rungs, hinges, spreaders, hooks/guides, feet, contamination, locks, platforms, markings and accessories.
 
-This supports a documentation/prescreening aid with persistent IDs, evidence and human completion. It does not support a robot certifying fastener tightness, locking function or structural load capacity from images. An inspection sticker alone proves neither current condition nor a full inspection. Do not infer a universal legal deadline from a fixed 365-day interval; the scenario uses an explicit due date only. The actual official nesseler template remains unknown.
+This supports a documentation/prescreening aid with persistent IDs, evidence and human completion. It does not support a robot certifying fastener tightness, locking function or structural load capacity from images. An inspection sticker alone proves neither current condition nor a full inspection. Do not infer a universal legal deadline from a fixed 365-day interval; the scenario uses an explicit due date only. The Nesseller checklist is available locally and summarized above; its source does not establish that the current demo implements the form or that every template requirement is a legal requirement.
 
 The manufacturer's summary and detailed standard references in search results must not replace the actual document or qualified human interpretation. This repo makes no DGUV/BetrSichV compliance claim. Official publication: [DGUV 208-016](https://publikationen.dguv.de/widgets/pdf/download/article/450).
 

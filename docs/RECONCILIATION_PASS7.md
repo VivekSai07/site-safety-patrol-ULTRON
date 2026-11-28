@@ -7,25 +7,76 @@ integrated reference are retained in Om's personal workspace, not copied into
 this team repository. `R-nn` refers to that reference's reconciliation
 ledger. A source plan or decision is **not** evidence that the feature exists.
 
-The existing [jury strategy](JURY_STRATEGY.md), [source review](SOURCE_REVIEW.md),
+The Nesseller ladder checklist was reviewed in the local organizer source
+checkout. The source-specific local map is excluded from distribution pending
+rights review; the minimal public synthetic example is not a substitute for
+the original form or a complete mapping. See
+[LABEL_FIRST_BASELINE.md](LABEL_FIRST_BASELINE.md).
+The label-first workflow is the current priority; a rendered synthetic HTTP
+capture-to-draft probe used manual fixture transcription. Bounded browser
+controls and focus were checked separately; real OCR and hardware are not
+established. Preserve the Pass 6 recommendations and this
+reconciliation as historical comparison evidence; the user-directed
+simulation-first baseline supersedes them only where current priority
+conflicts.
+
+The source-specific map requires comparison with the locally reviewed PDF.
+Other organizer/jury source PDFs are not included in this team checkout.
+Verify their actual wording and edition when available. The existing
+[jury strategy](JURY_STRATEGY.md), [source review](SOURCE_REVIEW.md),
 [pitch](PITCH.md), [handoff](EVENT_HANDOFF.md), [design](DESIGN.md) and
 [previous validation record](VALIDATION.md) remain available for comparison.
-The original organizer/jury PDFs are not present in this checkout; verify
-their actual wording and edition when they are available. Do not treat this
-summary as a substitute for them.
+Do not treat this summary as a substitute for the source PDFs.
 
 **Status terms:** *existing* means present in the repository; *simulation only*
 means fixture- or model-based, not physical proof; *proposed* means design or
 backlog, not implemented; *open* means a decision or measurement is pending.
 Automated tests do not establish physical B2 safety or learned-model accuracy.
 
+## Main reconciliation and branch inventory
+
+The fetched team main was `79fb408`: it adds the dashboard, Nav2 goal bridge
+and versioned ladder/site-safety assessment packs to the earlier baseline.
+This branch preserves those changes alongside the label-first capture/draft
+and detection-world work. To identify a reviewed or published snapshot, use
+the actual commit SHA rather than assuming this document's fetch point is
+still the remote tip.
+
+At the reconciliation fetch, divergence below is relative to `79fb408`;
+behind counts main-only commits, and ahead counts branch-only commits:
+
+| Live team branch | Tip at fetch | Behind / ahead | Status |
+|---|---|---:|---|
+| `main` | `79fb408` | 0 / 0 | Integration base |
+| `feature/dashboard` | `6d8cae2` | 1 / 0 | Already an ancestor of main |
+| `feature/site-pipeline` | `649c06c` | 1 / 3 | Separate, not merged here |
+| `feature/model-safety-perception` | `803e6e8` | 0 / 18 | Separate model/site-safety work, not merged here |
+| `sahil/sim-slam-nav2` | `f2a7094` | 7 / 14 | Separate autonomy/simulation work, not merged here |
+
+The model/site-safety branch includes additional assets and model work whose
+rights, behavior and ownership have not been reviewed in this reconciliation.
+The locally cached `feature/protocol-reader` ref was absent from the live
+remote and may be stale. Local `main` and the two `om/pass7-*` branches are
+independent refs; use Git to inspect their current tips. Refresh remote refs
+before relying on this inventory. The personal repository and this team
+repository retain separate histories.
+
+The assessment adapter builds hash-bound API requests and checks proposals
+without making a network call. The optional local live adapter is separate,
+off by default and requires image/text sharing approval; its local catalog
+override is fixture-only. Dashboard goals are off by default; the ROS bridge can forward goals to any reachable matching action
+server and does not prove isolation. Do not start it where real hardware
+could receive a goal; localhost, a namespace or a ROS domain alone is not
+proof of isolation.
+
 ## Topic decisions
 
 | Topic | Team baseline and Om's plan | Reconciled disposition |
 |---|---|---|
 | Objective and tiers | ULTRON already demonstrates bounded patrol, evidence, history and conservative outcomes in a simulator. Pass 6 protects an autonomous Tier 1, then bounded Tier 2 and experimental Tier 3. | **Keep** ULTRON's working demo and the tier/fallback structure. Tier 1 on a physical robot is a future acceptance target, not a current capability. |
+| Immediate baseline priority | Pass 6/research prioritized autonomous patrol and treated the actual Nesseller template as unknown. The source checklist was later reviewed locally; the source-specific map remains excluded. | **Prioritize** a simulation-only operator-positioned, label-first capture and evidence-linked draft for human review. The public schema is a synthetic example, not an official form. A rendered HTTP probe used manual fixture transcription and the excluded local schema; browser controls and focus were checked separately. Autonomous acquisition is later work. The other five PDFs are inventory only; main's separate `site_safety_v1` pack does not populate them. |
 | Deployment order | ULTRON originally said sim-only; the current request permits periodic partial hardware tests before the complete system passes simulation. | **Adopt** the [simulation-to-hardware policy](SIM_TO_HARDWARE.md): full integrated deployment waits for full-system simulation acceptance and independent hardware checks; individually bounded, authorized hardware tests may occur earlier. No robot is contacted by this change. |
-| Executive | [`supervisor.py`](../src/ultron/supervisor.py) selects deterministic simulation tasks; Om proposes a `py_trees_ros` executive and four ROS 2 Action servers (R-05, R-56). | **Keep** the existing supervisor for the sim. Proposed ROS action adapters can be added later behind contracts; do not claim that ROS Actions, Nav2 or a behavior tree already run. |
+| Executive | [`supervisor.py`](../src/ultron/supervisor.py) selects deterministic simulation tasks; Om proposes a `py_trees_ros` executive and four ROS 2 Action servers (R-05, R-56). | **Keep** the existing supervisor for the sim. The separate dashboard Nav2 action client does not implement that executive or establish a real navigation stack. |
 | Actuation | [`motion.py`](../src/ultron/motion.py) records bounded simulated command profiles and has an explicitly invoked B2 SDK transport. It is not an independent watchdog or an approved hardware supervisor. | **Extend later** with a verified onboard control chain, RC priority and independent stop/watchdog. Proposed chain: executive → ROS Actions → Nav2 → `/cmd_vel` → `twist_mux` → watchdog → verified B2 bridge. The physical E-stop is independent. A 500 ms stop is a **MUST TEST** target, not a measurement (R-40, R-41, R-73). |
 | Mapping and coverage | The demo uses a static 2-D grid, obstacle inflation and A*; Om proposes saved-map localization, PatrolZone and keep-outs. | **Keep** the grid for simulation; add real localization and the verified starter stack later. Waypoint completion and simulated `MISSION_COMPLETE` do not establish searched-area coverage. |
 | Mission modes | The demo records `AUTONOMOUS_SIMULATION` or an injected `DEGRADED_TELEOP_ASSISTED` case; Pass 6 describes setup, autonomous patrol and guarded operator recovery. | **Merge** the vocabulary as a proposed future contract. Real operator preemption, recovery and guarded resume are not implemented. |
@@ -38,15 +89,15 @@ Automated tests do not establish physical B2 safety or learned-model accuracy.
 | Tilt | No verified body-pose integration exists. Sources disagree on SDK/ROS posture APIs and limits (R-02, R-67). | **Keep disabled** until an approved interface, return-to-neutral, stability, timing and TF are tested; a normal overview/close-up remains the fallback. |
 | Evidence and verdict | `verdict()` scans supplied failures first, then completeness. Model outputs remain uncalibrated; `evidence_gate()` forces model-based passes to review. Om requires hard-fail-first across all validated evidence and abstention on missing/conflicting data (R-31–R-33). | **Change** empty required scopes to `MANUAL_REVIEW`; preserve visible, threshold-meeting FAIL proposals for recognized components outside the type template. **Do not** count optional PASS as required evidence. Invalid model responses still route to review; full raw-evidence scanning, derived failures and cross-view conflict inference remain future work. |
 | Evidence independence | The current simulator's simple check union does not require distinct angles or measure image sharpness. Om proposes independent views and a ≥25° separation (R-32, R-38). | **Do not claim implemented**. Add this to the real evidence adapter only after the method, data and thresholds are approved and tested. Repeated correlated views must not manufacture a pass. |
-| Labels and OCR | Demo labels are scenario fixtures, evaluated against fixed date `2026-11-27`; the separate model reader proposes label status. Om proposes literal QR/OCR, explicit clock and sticker-schema verification. | **Keep** fixtures marked synthetic; real date parsing and label meaning remain **proposed**. Unreadable/ambiguous labels require review. |
+| Labels and OCR | Demo labels are scenario fixtures, evaluated against fixed date `2026-11-27`; the separate model reader proposes label status. A source-specific map was reviewed locally but is not distributed. | **Keep** fixtures marked synthetic; the rendered capture-to-draft probe used manual synthetic transcription, not automatic literal reading. Real date parsing and label meaning require qualified interpretation. Unreadable/ambiguous values require review; do not infer a universal annual due date. |
 | System One | No System One service or feature flag exists in ULTRON. Om proposes an offboard typed-decision experiment (R-04). | **Proposal only:** `DECISION_SHADOW_ENABLED` defaults off; after the hard-fail scan, a read-only allowed-action comparison is appended to audit and stops. Timeout/invalid response → `NO_RECOMMENDATION`. No path to motion, verdict or veto; the baseline is unchanged. |
 | Simulation and replay | ULTRON renders MuJoCo RGB/depth/segmentation with kinematically placed base and oracle findings. Rerun/RViz are optional replay paths. Om distinguishes sensor mocks, MCAP replay and optional Isaac/Gazebo experiments (R-08, R-75). | **Keep** the working simulator; **propose** real-recording replay and interface mocks. ULTRON's MuJoCo app is not a validated Unitree DDS/SportClient simulator. No simulated test proves balance, slip, stopping, RF behavior, glare or real model performance. |
-| Reporting and hash | ULTRON writes local HTML/JSON, evidence files and per-file SHA-256 hashes. Om proposes a UI, an unsigned PDF, canonical manifest hash and n.core-oriented export (R-24, R-39, R-59). | **Keep** the existing report; **propose** the other artifacts. The current per-file hash map is not yet a shared canonical manifest hash, a signed PDF, a live n.core API or a formal inspection certificate. |
+| Reporting and hash | ULTRON writes local HTML/JSON, evidence files and per-file SHA-256 hashes; main adds a dashboard and unsigned per-ladder PDF path. Om proposes a canonical manifest hash and n.core-oriented export (R-24, R-39, R-59). | **Keep** the separate report and dashboard paths. The current per-file hash map is not a shared canonical manifest hash, a signed PDF, a live n.core API or a formal inspection certificate. Confirm form rights and real integration separately. |
 | Data and model choice | ULTRON provides optional YOLOE/YOLO-World and Qwen adapters plus synthetic annotations. The research discusses alternative detector, OCR, reader and anomaly stacks. | **Keep** adapters as unverified options; pick and license-check models with held-out real data. Simulation defect metadata is not evidence that a defect is visible. Split data by physical ladder/session; do not publish without approval. |
 | Standards and jury sources | Team source review cites an August 2022 DGUV edition; the research proposes March 2022 while explicitly leaving the PDF check open (R-80). Team notes cite the event scoring and deliverables. | **Open:** check actual organizer and DGUV documents and qualified interpretation. Preserve both source histories; do not invent an edition, compliance claim or legal duty. A proposed dataset publication is not automatically an organizer hand-in requirement. |
 | Figures | Thirteen figures have specifications but no accepted renders. | **Keep pending.** No broken image embeds or claims that a generated image has been checked. Use the figure list in the Pass 7 Bible. |
 
-## Small changes in this branch
+## Earlier small Pass 7 changes
 
 1. Empty required inspection scope cannot become `AUTOMATED_PASS`; a supplied
    hard fail still wins.

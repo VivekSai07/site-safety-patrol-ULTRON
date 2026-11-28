@@ -28,4 +28,4 @@ safety-patrol = "site_safety_patrol.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-ultron = ["assets/b2/*.xml", "assets/b2/LICENSE", "assets/b2/PROVENANCE.md"]
+ultron = ["assets/b2/*.xml", "assets/b2/LICENSE", "assets/b2/PROVENANCE.md", "assets/schemas/generic_ladder_draft_v1.json"]

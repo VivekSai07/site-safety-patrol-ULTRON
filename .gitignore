@@ -21,3 +21,8 @@ datasets/
 *.sqlite-wal
 .env
 .env.*
+# Local reference-derived artifacts and teammate source pending rights review.
+docs/NESSLER_IMAGE_REVIEW.md
+src/ultron/assets/schemas/nesseler_ladder_checklist_v1.json
+src/ultron/detection_world/hall_scene.py
+src/ultron/detection_world/hall_scene.py.local

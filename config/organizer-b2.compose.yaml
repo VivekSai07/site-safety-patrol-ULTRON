@@ -1,0 +1,26 @@
+services:
+  robot:
+    image: ${ULTRON_KIT_IMAGE:?Set ULTRON_KIT_IMAGE}
+    environment:
+      ROBOT: b2
+      DOMAIN: "71"
+      IFACE: lo
+      DISPLAY_NUM: "2"
+      VNC_PORT: "5901"
+      NOVNC_PORT: "6081"
+      NOVNC_LISTEN: 0.0.0.0
+    ports:
+      - "127.0.0.1:${ULTRON_VIEWER_PORT:?Set ULTRON_VIEWER_PORT}:6081"
+    networks: [simulation]
+    command: run-sim
+  ros:
+    image: ${ULTRON_KIT_IMAGE:?Set ULTRON_KIT_IMAGE}
+    network_mode: service:robot
+    depends_on: [robot]
+    environment:
+      ROS_DOMAIN_ID: "71"
+      CYCLONEDDS_URI: file:///opt/kit/cyclonedds-lo.xml
+    command: sleep infinity
+networks:
+  simulation:
+    internal: true

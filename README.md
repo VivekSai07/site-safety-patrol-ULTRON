@@ -1,18 +1,34 @@
 # ULTRON · Site Safety Patrol
 
-**A lightweight Unitree B2 MuJoCo simulation for the nesseler challenge.** A robot model patrols a bounded construction scene, discovers ladders, approaches for evidence, requests one second look, and remembers ladder identities across patrols. Actual simulated RGB/depth frames become a traceable inspection report. Rerun export and ROS 2 Humble/RViz replay consume the same recording.
+**A lightweight Unitree B2 MuJoCo simulation for the nesseler challenge.** The existing demo has a robot model patrol a bounded construction scene, discover ladders, approach for evidence, request one second look, and remember ladder identities across patrols. Actual simulated RGB/depth frames become a traceable inspection report. Rerun export and ROS 2 Humble/RViz replay consume the same recording. The label-first baseline has a rendered synthetic capture-to-draft probe with manual fixture transcription, plus bounded browser-control checks; real OCR and real-world operation remain unverified. See the [baseline and source overview](docs/LABEL_FIRST_BASELINE.md).
 
 ![ULTRON B2 patrol preview](docs/images/ultron-patrol.gif)
 
 This is ULTRON's team-side working repository. The organizer starter remains the integration authority for real hardware. The simulation demo does not contact organizers or send robot commands; the optional hardware hook is not verified for real operation.
 
+An independently authored minimal synthetic draft schema and an
+`ULTRON_FORM_SCHEMA` override for a compatible, locally supplied schema are
+available. The public example is not the official Nesseler form or a complete
+mapping. The source-specific catalog remains local, is excluded from
+distribution and may be used locally only with verified local-use rights.
+Local catalogs are fixture-only in the optional OpenAI adapter; live use is
+not enabled for them. Earlier probe results do not validate this example or
+override.
+
 **Organizer starter alignment:** retain ULTRON for inspection workflows and use the SMAROBIX Unitree simulator for SDK/DDS/ROS tests. See the [source comparison, launch commands and nesseler checklist export](docs/ORGANIZER_ALIGNMENT.md). The organizer simulator stands with physics and joint interfaces; it has no walking controller, camera or lidar.
 
 Version 0.4 adds optional model-backed simulation observations, grouped synthetic corpus generation, training entry points and a DimOS goal adapter. [Commands and verification limits](docs/RUNTIME_V04.md) distinguish implemented interfaces from executed integrations.
 
+For the separate simulation-only ladder and inspection-label detection test,
+see the [detection world](docs/DETECTION_WORLD_USAGE.md), [public-source
+review](docs/DETECTION_WORLD_SOURCES.md), and [offline evaluation
+guide](docs/DETECTION_EVALUATION.md). A [yellow-card label baseline](docs/DETECTION_LABEL_BASELINE.md)
+exercises the evaluator using image pixels; it is not a trained label model.
+Synthetic ground truth is not a detector.
+
 ## Weekend target architecture
 
-**Plan to build, not a claim of completed integration.** Use a local ladder detector for discovery, then an OpenAI vision API worker for evidence-based checklist proposals. A deterministic supervisor owns movement and completion; a deterministic policy owns screening decisions. The dashboard shows the evidence, uncertainty and human completion fields. The seven nesseler sections are report categories, not seven defects a camera can always prove absent.
+**Later team integration plan, not a claim of completed integration.** The current baseline is operator-driven simulation capture, starting with an overview and inspection label, followed by a local evidence-linked draft. Autonomous acquisition and the OpenAI worker are later integrations; any live API use requires separate authorization and rights/privacy review for both images and text. A deterministic supervisor owns movement and completion; a deterministic policy owns screening decisions. The seven nesseler sections are report categories, not seven defects a camera can always prove absent.
 
 ```mermaid
 flowchart TB
@@ -91,28 +107,28 @@ Green marks the existing rendered source/evidence baseline; blue marks target in
 For Om's first baseline, try YOLO-World with a saved `ladder`/`stepladder` vocabulary, then compare a ladder-trained checkpoint if available. Ultralytics documents [custom vocabulary and saving the prepared model](https://docs.ultralytics.com/models/yolo-world/); this supplies an integration route, not demonstrated ladder recall on our course. Keep whichever model meets measured recall/latency, and retain its license/version provenance.
 
 1. **Discover and bind.** Om's detector processes sampled RGB; aligned depth plus timestamp-correct transforms locate the candidate. Sahil's memory associates it with a map-scoped ID, preserving ambiguous matches. Use the same detector adapter for rendered and real images, but evaluate those domains separately. Simulator segmentation remains labeled oracle ground truth for tests, never model performance.
-2. **Approach and capture.** The baseline is a whole-ladder overview plus an aisle-facing label close-up, with feet/rung/spreader crops from suitable frames. Preserve uncropped originals and crop coordinates. Select sharp, sufficiently exposed, distinct views of the same ladder; nearby ladders must not leak into its evidence bundle. Start with roughly 4–8 selected images per ladder as a tunable trial budget, not a measured optimum.
+2. **Approach and capture.** Start with a whole-ladder overview and an aisle-facing label close-up, then add views for unresolved visual fields as needed. Preserve uncropped originals and crop coordinates. Select sharp, sufficiently exposed, distinct views of the same ladder; nearby ladders must not leak into its evidence bundle. No minimum image count has been established.
 3. **Inspect reachable surfaces.** Add one approved second look when it can resolve a specific gap. A full circle is optional, not a prerequisite. The current experimental full-ring path is simulation-only for an explicitly open A-frame with missing rear evidence. Wall-backed ladders, blocked paths and unknown clearances must not trigger an orbit. A fixed camera cannot promise a top-down view; do not assume a gimbal, arm or body-tilt interface. Record unseen upper/rear/underside surfaces as unknown.
 4. **Queue evidence, then continue bounded work.** Kaan's worker receives the immutable image manifest and seven-section rubric. API processing must not block the motion watchdog or sensor pipeline. While analysis is pending, the supervisor may resume its configured route; a later result updates the same asset/job. Any re-observation is a separately validated goal with a budget, never a free-form VLM instruction.
 5. **Validate, preserve and report.** Check every returned image/criterion ID against the request. Retain raw response, model ID, prompt/schema version, timestamps and usage. Fuse evidence without clearing earlier hard failures. Weak/conflicting/unseen evidence, unreadable dates, API failure or a model-only clean result require human review. Return to base with any pending/gap counts visible; navigation completion and analysis completion are separate states.
 
 ### Seven-section rubric for the API worker
 
-Expand each section into the actual criteria in the organizer PDF; a single coarse PASS per section is insufficient. Output literal observations with evidence image IDs, visibility, unknowns, raw model confidence and reasons. Confidence is uncalibrated and is not a probability of safe use. Human-only criteria remain pending even when the visible surface looks intact.
+An authorized local reviewer should compare independently authored criteria against the source; a single coarse PASS per section is insufficient. Do not publish or externally transmit reference-derived form text without separate authorization and rights/privacy review. Output literal observations with evidence image IDs, visibility, unknowns, raw model confidence and reasons. Confidence is uncalibrated and is not a probability of safe use. Human-only criteria remain pending even when the visible surface looks intact.
 
-| Nesseler section | Image-based proposals to request | What remains human/unknown without other evidence |
+| Proposed review area | Image-based proposals to request | What remains human/unknown without other evidence |
 |---|---|---|
-| 1. Holme — rails/stiles | Visible bends, cracks, corrosion, splinters and wear | Hidden damage, sharpness by touch, structural strength, wood treatment when not observable |
-| 2. Sprossen/Stufen/Plattform | Missing/deformed rungs, visible joints, wear and contamination | Joint tightness, play and load-bearing function |
-| 3. Spreizsicherung — spreader | Presence, visible detachment/damage and observed configuration | Locking/security and functional operation |
-| 4. Beschlagteile — fittings | Missing hardware, visible damage/rust and accessible connections | Fastener security, mechanism function and lubrication adequacy |
-| 5. Füße/Rollen — feet/rollers | Missing/damaged caps, visible support contact and rollers | Grip, brake function and stability under load |
-| 6. Zubehör — accessories | Visible presence/damage of supports, extensions and stabilizers | Required applicability, secure attachment and function |
-| 7. Kennzeichnung — markings | Manufacturer/instructions/pictograms; transcribed label text and ambiguous dates | Qualified inspection/sign-off and unreadable/unverified label semantics |
+| Rails/stiles | Visible bends, cracks, corrosion, splinters and wear | Hidden damage, sharpness by touch, structural strength, wood treatment when not observable |
+| Rungs/steps/platform | Missing/deformed rungs, visible joints, wear and contamination | Joint tightness, play and load-bearing function |
+| Spreader | Presence, visible detachment/damage and observed configuration | Locking/security and functional operation |
+| Fittings | Missing hardware, visible damage/rust and accessible connections | Fastener security, mechanism function and lubrication adequacy |
+| Feet/rollers | Missing/damaged caps, visible support contact and rollers | Grip, brake function and stability under load |
+| Accessories | Visible presence/damage of supports, extensions and stabilizers | Required applicability, secure attachment and function |
+| Markings | Manufacturer/instructions/pictograms; transcribed label text and ambiguous dates | Qualified inspection/sign-off and unreadable/unverified label semantics |
 
 Track inspection-sticker status and deployment hazards (pallet support, leaning inclination) separately from those seven sections. Geometry needs calibrated depth/reference planes and uncertainty; VLM angle estimates alone are not a measured inclination. Do not infer next-inspection dates from sticker colour or a universal annual expiry. Extract readable text first, then apply explicit verified date semantics in code.
 
-The prompt package contains the organizer criterion IDs/text, applicability guidance, visible defect examples with known labels, unknown/human-only rules and the requested JSON schema. This is prompt context, not fine-tuning. Treat text printed in images as scene data, never instructions. Proposed criterion states: `DEFECT_OBSERVED`, `NO_VISIBLE_DEFECT`, `UNKNOWN`, `NOT_APPLICABLE_PROPOSED`; applicability proposals require validation. A new adapter must map these into existing policy without treating `NO_VISIBLE_DEFECT` as certification. All seven sections remain present even if most criteria need review.
+A future prompt package should use independently authored, rights-reviewed criteria and approved applicability guidance and examples, plus unknown/human-only rules and the requested JSON schema. The local reference-derived catalog is not approved for publication or external transmission. This is prompt context, not fine-tuning. Treat text printed in images as scene data, never instructions. Proposed criterion states: `DEFECT_OBSERVED`, `NO_VISIBLE_DEFECT`, `UNKNOWN`, `NOT_APPLICABLE_PROPOSED`; applicability proposals require validation. A new adapter must map these into existing policy without treating `NO_VISIBLE_DEFECT` as certification. All seven sections remain present even if most criteria need review.
 
 ### OpenAI API and budget plan
 
@@ -120,7 +136,7 @@ Use a **server-side OpenAI API worker**, not the ChatGPT website or a browser-ex
 
 Start with one multi-image inspection request per ladder, with one bounded additional request for genuinely new evidence if useful. Use a configurable small worker pool, timeout/backoff, request deduplication and a persistent job queue. Cache only by the complete evidence/rubric/model context; a changed inspection cannot reuse an unrelated old result. Refusal, malformed/incomplete response, exhausted budget or network failure produces `MANUAL_REVIEW` with saved evidence, not a fabricated result. Measure P50/P95 latency and actual token usage before setting the stopped-inspection deadline.
 
-The reported **$75 per member** is a resource to verify per credited project/account, not an assumed pooled balance. Use a backend-owned environment key, never commit it or send it to the dashboard. Log estimated cost from observed usage and the verified model price; impose an application-side per-run spend/request cap and reserve credits for the final demo. No streaming every frame, no five-key rotation scheme, and no model training on the critical path. No API calls or credits have been spent by this architecture update.
+Any project/account credit is a resource to verify, not an assumed pooled balance. Use a backend-owned environment key, never commit it or send it to the dashboard. Log estimated cost from observed usage and the verified model price; impose an application-side per-run spend/request cap and reserve credits for the final demo. No streaming every frame, no five-key rotation scheme, and no model training on the critical path. No API calls or credits have been spent by this architecture update.
 
 ## Team owners and deliverables
 
@@ -128,9 +144,9 @@ These assignments keep Sahil and Aravind's current work intact. Vivek owns the i
 
 | Owner | Workstream and concrete output | First handoff / acceptance | Ownership boundary |
 |---|---|---|---|
-| **Sahil** | SLAM, localization, maps/costmaps, navigation, observed spatial memory and coverage; DimOS or justified alternative. Continue on [`sahil`](https://github.com/VivekSai07/site-safety-patrol-ULTRON/tree/sahil) using the [agent handoff](https://github.com/VivekSai07/site-safety-patrol-ULTRON/blob/sahil/docs/SAHIL_HANDOFF.md). | Pose/map stream, observed asset records and cancellable goal adapter. Demo capture pause/resume, repeated IDs, blocked goal and return/unreachable-base outcomes. Real SLAM must be sensor-driven; disclose replay/kinematic parts. | `autonomy/` package if chosen; coordinate `navigation.py`, `memory.py` and map schema with Vivek. No inspection verdict changes. |
+| **Sahil** | SLAM, localization, maps/costmaps, navigation, observed spatial memory and coverage; DimOS or justified alternative. The fetched work was on [`sahil/sim-slam-nav2`](https://github.com/VivekSai07/site-safety-patrol-ULTRON/tree/sahil/sim-slam-nav2), with its [handoff](https://github.com/VivekSai07/site-safety-patrol-ULTRON/blob/sahil/sim-slam-nav2/docs/SAHIL_HANDOFF.md). Refresh branch status before use. | Pose/map stream, observed asset records and cancellable goal adapter. Demo capture pause/resume, repeated IDs, blocked goal and return/unreachable-base outcomes. Real SLAM must be sensor-driven; disclose replay/kinematic parts. | `autonomy/` package if chosen; coordinate `navigation.py`, `memory.py` and map schema with Vivek. No inspection verdict changes. |
 | **Om** | Ladder detector and evidence localization; prepare a ladder vocabulary/checkpoint, run it on synthetic and real samples, produce boxes/tracks plus depth/TF observations. Own detection dataset annotation and recall evaluation with negatives/occlusion. | First deliver saved detector config/weights provenance, annotated preview and timestamped detection fixture. Then report recall/false detections, FPS/latency and ID/depth failures on held-out physical ladder/session groups. | `perception/` detector adapter, observation schema implementation, dataset/evaluation tooling. No API inspection worker or navigation control. |
-| **Kaan** | OpenAI multi-image inspection worker; versioned seven-section rubric/prompt/schema; label transcription; bounded retries/budgeting; criterion evidence and nesseler field mapping. Own inspector-reviewed assessment cases. | First deliver an inspection-job fixture and schema-valid result fixture without needing the robot. Then run a credited-project API smoke test and evaluate defect/unreadable/occluded cases; retain raw responses and failure-to-review results. | Proposed `inspection_api/`, prompt/schema files and checklist mapping in `nesseler.py`. Coordinate policy mapping with Vivek; no final model-only safe verdict. |
+| **Kaan** | OpenAI multi-image inspection worker; versioned seven-section rubric/prompt/schema; label transcription; bounded retries/budgeting; criterion evidence and nesseler field mapping. Own inspector-reviewed assessment cases. | First deliver an inspection-job fixture and schema-valid result fixture without needing the robot. Only after separate approval and rights/privacy review, run an API smoke test and evaluate defect/unreadable/occluded cases; retain raw responses and failure-to-review results. | Proposed `inspection_api/`, prompt/schema files and checklist mapping in `nesseler.py`. Coordinate policy mapping with Vivek; no final model-only safe verdict. |
 | **Vivek** | Mission orchestrator and integration lead; own shared contracts, frame-to-asset evidence bundles, capture quality/pose budgets, deterministic policy, persistent jobs/events and end-to-end runner. Coordinate hardware readiness with a named authorized operator. | First publish versioned contracts/fixtures to everyone. Wire one detection -> capture bundle -> API result -> policy -> dashboard. Then integrate Sahil's goal/status adapter, repeat patrol, cloud outage and evidence-gap scenarios. | `mission.py`, `supervisor.py`, capture/bundle code, event/worker plumbing and integration tests. Resolve shared-file changes; do not rewrite teammates' backends. |
 | **Aravind** | Live dashboard with ladder/map list, navigation and coverage state, seven-section evidence cards, pending/API-failed states, human completion and protocol download. Rerun may supply spatial diagnostics; the usable inspection UI is the deliverable. | Build now against Vivek/Kaan's fixtures; display image-linked findings and live event updates. Validate that pending/unknown never looks green and that final reports survive API failure/reconnect. | Dashboard frontend and its read API/SSE or WebSocket adapter, coordinated with Vivek. Browser has no OpenAI credentials or direct robot transport. A UI stop request is not an independent E-stop. |
 
@@ -146,13 +162,13 @@ These assignments keep Sahil and Aravind's current work intact. Vivek owns the i
 | Kaan -> Vivek | `InspectionProposal`: job/asset IDs, all criterion IDs with evidence/unknowns, literal label text/date proposal, raw confidence, model/prompt/schema versions, response reference, usage and error/refusal state. No command or final safety certification. |
 | Vivek -> Aravind | Ordered, replayable `MissionEvent` plus REST-style snapshots/evidence access; include event sequence, job/asset IDs, provenance and proposed states `CAPTURED`, `ANALYZING`, `FLAGGED`, `MANUAL_REVIEW`, `HUMAN_COMPLETED`. Human completion does not mean safe use; preserve the signed decision separately. |
 
-Vivek defines/versions these shared schemas and publishes success, pending and failure fixtures first. Om and Kaan implement separate modules against them. Aravind develops without robot/API access. Sahil maintains his dedicated branch. Use focused work branches/PRs for the other workstreams; only `sahil` has been created by this assignment, so do not assume other branch names already exist. Agree before changing a shared schema or database; preserve evidence/history through explicit migrations.
+Vivek defines/versions these shared schemas and publishes success, pending and failure fixtures first. Om and Kaan implement separate modules against them. Aravind develops without robot/API access. Sahil maintains his dedicated branch. Refresh the [branch inventory](docs/RECONCILIATION_PASS7.md) before relying on names or merge status. Agree before changing a shared schema or database; preserve evidence/history through explicit migrations.
 
 ### Integration gates through submission
 
 | Order | Team target / acceptance evidence |
 |---|---|
-| **Now** | Agree contracts and fixture IDs. Om runs a detector on a real reference/sample image; Kaan produces one seven-section API proposal; Aravind renders its evidence; Vivek joins them. Reference photos are examples, not labeled defect ground truth. |
+| **Now** | Agree contracts and fixture IDs. Om evaluates rights-reviewed sample data; Kaan produces an offline seven-section proposal fixture; Aravind renders its evidence; Vivek joins them. Reference photos are examples, not labeled defect ground truth. |
 | **Baseline** | One ladder end-to-end, persistent record, human review and a cloud-failure case. Then two ladders and correct image-to-asset binding. Sahil supplies sensor/replay mapping and navigation with explicit validity/gap states. |
 | **Protected demo** | Integrate bounded patrol -> discover -> approach -> capture -> report -> resume -> return. Measure detector recall against an independently enumerated course; report false-pass count, abstentions, duplicate/merged IDs, interventions, processing latency and spend. Run representative blocked/unreadable/network-failure cases. |
 | **Freeze** | Team planning target: Saturday 28 Nov around 13:30 for the reliable baseline; preserve a backup hardware video by 22:00 if authorized access is available. These are planning targets, not evidence the system is ready. Drop full orbits/fine-tuning before risking the working slice. |
@@ -171,6 +187,16 @@ Optional advanced intelligence has no control authority. Proposed System One rem
 Numeric thresholds and launch, network and device details in plans or examples are proposed until verified for their intended environment; simulation settings are not hardware approvals. The [Pass 7 Build Bible](docs/bible/BUILD_BIBLE_PASS7.md) and [reconciliation record](docs/RECONCILIATION_PASS7.md) distinguish current implementation from proposed work; neither authorizes hardware operation.
 
 ## Run the simulation
+
+Separate organizer-kit probes observed B2 DDS samples and a standing B2
+viewer image via isolated container loopback; browser GUI/host access,
+walking and hardware remain untested. For exact commands and limits see
+[organizer B2 simulation](docs/ORGANIZER_B2_SIM.md).
+For the distinct simulated capture UI and local manifest-to-draft commands,
+see [label-first usage](docs/LABEL_FIRST_USAGE.md). The separate
+[validation record](docs/VALIDATION.md) scopes the rendered synthetic probe.
+The host-local teleop UI has no user authentication; localhost does not
+protect it from other local users. Use a trusted host and non-sensitive data.
 
 From the repository root, on a machine with MuJoCo, NumPy and Pillow (verify dependencies and launch details locally):
 
@@ -273,7 +299,7 @@ PYTHONPATH=src python3 -m ultron rerun runs/live-patrol --spawn --follow
 
 A normal COCO YOLO checkpoint lacks a ladder class; use a ladder-trained checkpoint or open-vocabulary YOLOE/YOLO-World. Model confidence is not a calibrated safety probability. Unseen/weak evidence is UNKNOWN, and unvalidated model PASS proposals require human review. Synthetic defect metadata does not establish pixel visibility. See [motion/perception](docs/PERCEPTION_MOTION.md), [supervisor architecture](docs/AUTONOMOUS_SUPERVISOR.md), and [data collection](docs/DATA_COLLECTION.md).
 
-Start with [source review](docs/SOURCE_REVIEW.md), [jury strategy](docs/JURY_STRATEGY.md), [B2/DimOS integration](docs/INTEGRATION.md), [handoff](docs/EVENT_HANDOFF.md) and [pitch/video plan](docs/PITCH.md). The referenced organizer and teammate PDFs are not included in this checkout; locally supplied PDFs are ignored by Git. These notes identify source pages to verify.
+Start with [source review](docs/SOURCE_REVIEW.md), [jury strategy](docs/JURY_STRATEGY.md), [B2/DimOS integration](docs/INTEGRATION.md), [handoff](docs/EVENT_HANDOFF.md) and [pitch/video plan](docs/PITCH.md). The organizer source PDFs are not included in this team checkout. The [baseline overview](docs/LABEL_FIRST_BASELINE.md) cites the locally supplied Nesseller checklist's source revision; the original remains outside this team repository. The local reference-derived catalog is not approved for public distribution.
 
 ## Verify
 

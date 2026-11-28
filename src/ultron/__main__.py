@@ -3,6 +3,7 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import sys
 import uuid
 
 
@@ -73,6 +74,16 @@ def main():
     nesseler=sub.add_parser('export-nesseler',help='Export organizer checklist hand-off with pending human checks')
     nesseler.add_argument('run',type=Path)
     nesseler.add_argument('--out',type=Path,required=True)
+    adaptive=sub.add_parser('adaptive-draft',help='Build a local evidence-linked Nesseler draft')
+    adaptive.add_argument('manifest',type=Path,help='Local JSON manifest with views and manual/fixture observations')
+    adaptive.add_argument('--sessions-root',type=Path,default=Path('runs/label-first-sessions'))
+    adaptive.add_argument('--ladder-id',required=True)
+    adaptive.add_argument('--operator-id')
+    adaptive.add_argument('--session-id')
+    sub.add_parser('teleop',help='Run the local simulated B2 teleoperation UI')
+    if len(sys.argv) > 1 and sys.argv[1] == 'teleop':
+        from .teleop import main as teleop_main
+        return teleop_main(sys.argv[2:])
     args=parser.parse_args()
     try:
         if args.command=='demo':
@@ -121,6 +132,16 @@ def main():
             result=analyze(args.images,args.out,weights=args.weights,family=args.family,qwen=args.qwen,
                            ladder_type=args.ladder_type,allow_download=args.allow_download,device=args.device)
             print(json.dumps({'status':result['status'],'report':str(args.out/'report.html')},indent=2))
+        elif args.command=='adaptive-draft':
+            from .adaptive_draft import build_adaptive_draft_from_file
+            result=build_adaptive_draft_from_file(
+                args.manifest,
+                sessions_root=args.sessions_root,
+                ladder_id=args.ladder_id,
+                operator_id=args.operator_id,
+                session_id=args.session_id,
+            )
+            print(json.dumps(result,indent=2))
         else:
             from .dimos_bridge import ingest
             ingest(args.run,args.database)
