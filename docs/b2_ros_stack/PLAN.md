@@ -292,13 +292,13 @@ A → (B, C, D, E, F start on stubs immediately); B → C(real); C(sim) → D; D
 
 | Unknown | Owner | Fallback |
 |---|---|---|
-| `/scan_cloud` producer & fields (ring/time) | B | re-decode packets with rslidar_sdk |
-| `/tf` 100 Hz publisher, `/tf_static` content | B | own description values, flagged TO_VERIFY |
-| B2 odometry availability on robot (`/sportmodestate`) | C | MOLA/KISS lidar odometry only |
+| `/scan_cloud` producer & fields (ring/time) | B | re-decode packets with rslidar_sdk — **Answered by bag (28 Nov, [BAG_FACTS.md](BAG_FACTS.md))**: XYZIRT (`x,y,z,intensity` f32, `ring` u16 0–31, `timestamp` f64 absolute per point, span 0.1 s), unorganized N×1, dense, 10 Hz in `lidar_link`; RS-Helios-32 class, layout matches rslidar_sdk (node name not recorded). Packet fallback **not viable** for this bag (58 % of MSOP packets recorded). Driver config TO_VERIFY |
+| `/tf` 100 Hz publisher, `/tf_static` content | B | own description values, flagged TO_VERIFY — **Answered by bag**: `/tf` = Xsens `world → imu_link`, orientation only (zero translation, not odometry); `/tf_static` = RealSense-internal `head_link → head_{color,depth}_frame → *_optical_frame` only. No `base_link`, no `lidar_link` edge: lidar/IMU/camera-to-body extrinsics stay TO_VERIFY |
+| B2 odometry availability on robot (`/sportmodestate`) | C | MOLA/KISS lidar odometry only — bag confirms none recorded (availability on robot still open) |
 | Orin JetPack/L4T, CPU/GPU budget, storage | A | run SLAM on laptop over Ethernet (not Wi-Fi) |
 | Network topology, multicast on venue Wi-Fi | F | zenoh bridge; Foxglove only |
 | Real footprint, stopping distance, B2 Move limits/firmware API | D (+ operator) | sim values, motion stays NO-GO |
-| Camera extrinsics/intrinsics (D457 head) | B/E | camera_info from bag; extrinsics TO_VERIFY |
+| Camera extrinsics/intrinsics (D457 head) | B/E | camera_info from bag; extrinsics TO_VERIFY — **Intrinsics answered by bag**: color 1280×720 rgb8 fx/fy 643.6/642.9, cx/cy 643.5/362.0, plumb_bob; depth 848×480 16UC1 fx=fy 431.1, cx/cy 425.9/241.0 (scale not recorded, 1 mm assumed TO_VERIFY); depth→color t = (−59.1, 0.1, 0.5) mm, 0.22°. Head-to-body extrinsics remain TO_VERIFY |
 | Ladder detector weights | Om (perception) | oracle_sim in sim only, labelled |
 | MOLA GPLv3 acceptability for team distribution | user | KISS-ICP |
 | Whether teleop may move without VALID localization (`teleop_requires_localization`) | safety owner (+ operator) | keep `true` (fail-closed); teleop still passes collision monitor + gate either way |
