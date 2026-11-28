@@ -49,6 +49,14 @@ class KeyframeStore:
     def for_object(self, object_id):
         return [k for k in self._frames if k.object_id == object_id]
 
+    def drop(self, object_id):
+        """Forget an object's keyframes (it was merged into another or discarded)."""
+        with self._lock:
+            for keyframe in self.for_object(object_id):
+                (self.root / keyframe.file).unlink(missing_ok=True)
+                self._frames.remove(keyframe)
+            self._save()
+
     def offer(self, frame, site_object, sighting, sharpness):
         """Keep this frame if it beats what its cell already holds. Returns the Keyframe or None."""
         view = view_name(site_object.kind, sighting.distance)

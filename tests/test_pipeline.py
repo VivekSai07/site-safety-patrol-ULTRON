@@ -45,11 +45,21 @@ def facing(target, side, distance):
     return (x, y, math.atan2(target[1] - y, target[0] - x))
 
 
+REAL_HEIGHT = {"ladder": 1.7, "fire_extinguisher": 0.5, "fire_hydrant": 0.8, "fire_alarm": 0.36, "first_aid_kit": 0.3}
+
+
+def sized_box(kind, distance):
+    """A centred box as tall as an object of this kind looks from `distance` metres."""
+    half = min(480.0, REAL_HEIGHT[kind] * CALIBRATION.fy / distance) / 480 * 500
+    return [400, round(500 - half), 600, round(500 + half)]
+
+
 class SeesEverything:
     """Detector that finds `kind` in the middle of every frame whose name starts with the kind."""
 
     def detect(self, frame):
-        return [Detection(kind, CENTRE, 0.9) for kind in KINDS if frame.name.startswith(kind)]
+        distance = float(frame.depth[240, 320]) if frame.depth is not None else 3.0
+        return [Detection(kind, sized_box(kind, distance), 0.9) for kind in KINDS if frame.name.startswith(kind)]
 
 
 class FormVlm:
@@ -91,6 +101,16 @@ class LiftTest(unittest.TestCase):
     def test_an_object_on_the_right_of_the_image_is_on_the_robots_right(self):
         sighting = lift(frame("a", (0.0, 0.0, 0.0), depth=2.0), Detection("ladder", [800, 200, 1000, 800]), CALIBRATION)
         self.assertLess(sighting.position[1], -0.5)
+
+    def test_range_comes_from_inside_the_outline_not_from_the_background_in_the_box(self):
+        depth = np.full((480, 640), 6.0, dtype=np.float32)   # wall behind
+        depth[100:400, 300:320] = 2.0                        # a thin rail
+        seen = Frame(Image.new("RGB", (640, 480)), name="a", pose=(0.0, 0.0, 0.0), depth=depth)
+        rail = [[469, 208], [500, 208], [500, 833], [469, 833]]
+        with_outline = lift(seen, Detection("ladder", [300, 100, 700, 900], outline=rail), CALIBRATION)
+        box_only = lift(seen, Detection("ladder", [300, 100, 700, 900]), CALIBRATION)
+        self.assertAlmostEqual(with_outline.distance, 2.0, delta=0.05)
+        self.assertAlmostEqual(box_only.distance, 6.0, delta=0.05)
 
     def test_without_range_the_position_is_marked_approximate(self):
         sighting = lift(frame("a", (0.0, 0.0, 0.0)), Detection("ladder", CENTRE), CALIBRATION)
@@ -150,10 +170,96 @@ class SurveyTest(Workspace):
             def detect(self, frame):
                 return [Detection("fire_extinguisher", [400, 300, 500, 600], 0.6),
                         Detection("fire_extinguisher", [405, 310, 510, 610], 0.9),
-                        Detection("ladder", [400, 300, 500, 600], 0.8)]
+                        Detection("ladder", [400, 100, 500, 900], 0.8)]
         seen = Survey(Stutter(), self.objects, self.keyframes, self.store, CALIBRATION, interval=0).feed(
-            frame("x", (0.0, 0.0, 0.0), depth=3.0))
+            frame("x", (0.0, 0.0, 0.0), depth=1.5))
         self.assertEqual([o.id for o in seen], ["FEX-001", "LAD-001"])
+
+    def test_a_box_inside_a_better_box_of_its_kind_is_a_part_of_it(self):
+        from ultron.pipeline.survey import distinct
+        whole, part = Detection("ladder", [300, 100, 700, 900], 0.9), Detection("ladder", [320, 150, 480, 850], 0.7)
+        beside = Detection("ladder", [720, 100, 900, 900], 0.8)
+        self.assertEqual(distinct([part, whole, beside]), [whole, beside])
+
+    def test_a_tracked_object_keeps_its_identity_next_to_another(self):
+        """Two ladders 0.5 m apart: position cannot tell them apart, the detector's track ids can."""
+        class Tracked:
+            def detect(self, frame):
+                if frame.name == "both":
+                    return [Detection("ladder", [300, 200, 480, 800], 0.9, track=1),
+                            Detection("ladder", [520, 200, 700, 800], 0.9, track=2)]
+                # Later only the second is in view, boxed where the first used to be.
+                return [Detection("ladder", [300, 200, 480, 800], 0.9, track=2)]
+        survey = Survey(Tracked(), self.objects, self.keyframes, self.store, CALIBRATION, interval=0)
+        survey.feed(frame("both", (0.0, 0.0, 0.0), 0.0, depth=3.0))
+        for stamp in range(1, 4):
+            survey.feed(frame("one", (0.0, 0.0, 0.0), float(stamp), depth=3.0))
+        self.assertEqual([(o.id, o.sightings) for o in self.objects.all()], [("LAD-001", 1), ("LAD-002", 4)])
+        self.assertEqual(self.objects.get("LAD-001").apart, ["LAD-002"])
+
+    def test_a_track_that_jumps_across_the_map_is_not_believed(self):
+        class Swapped:
+            def detect(self, frame):
+                return [Detection("ladder", CENTRE, 0.9, track=7)]
+        survey = Survey(Swapped(), self.objects, self.keyframes, self.store, CALIBRATION, interval=0)
+        survey.feed(frame("a", facing((5.0, 5.0), 0, 3.0), 0.0, depth=3.0))
+        survey.feed(frame("b", facing((15.0, 5.0), 0, 3.0), 1.0, depth=3.0))
+        self.assertEqual(len(self.objects.all()), 2)
+
+    def test_fragments_are_merged_into_the_object_beside_them(self):
+        for stamp in range(4):
+            self.see("ladder", (5.0, 5.0), 0, 3.0, float(stamp))
+        self.see("ladder", (5.0, 6.2), 0, 3.0, 10.0)   # a lone partial box 1.2 m off
+        self.see("ladder", (12.0, 5.0), 0, 3.0, 11.0)  # a lone box with nothing near it
+        self.assertEqual(len(self.keyframes.for_object("LAD-002")), 1)
+        self.assertEqual(self.survey.tidy(), {"LAD-002": "LAD-001"})
+        self.assertEqual([(o.id, o.sightings) for o in self.objects.all()], [("LAD-001", 5), ("LAD-003", 1)])
+        self.assertEqual(self.keyframes.for_object("LAD-002"), [])
+        self.assertEqual(self.store.events()[-1]["kind"], "object_merged")
+
+    def test_a_look_alike_of_the_wrong_size_is_ignored(self):
+        """A 36 cm alarm box four metres away was detected as a fire extinguisher on the real robot."""
+        class Small:
+            def detect(self, frame):
+                return [Detection("fire_extinguisher", [480, 450, 520, 545], 0.6),   # about 0.36 m tall at 4 m
+                        Detection("fire_alarm", [480, 450, 520, 545], 0.5)]
+        seen = Survey(Small(), self.objects, self.keyframes, self.store, CALIBRATION, interval=0).feed(
+            frame("x", (0.0, 0.0, 0.0), depth=4.0))
+        self.assertEqual([o.kind for o in seen], ["fire_alarm"])
+
+    def test_a_box_between_two_known_neighbours_waits_for_a_clearer_frame(self):
+        class Pair:
+            def detect(self, frame):
+                if frame.name == "both":
+                    return [Detection("ladder", [300, 200, 480, 800], 0.9, track=1),
+                            Detection("ladder", [520, 200, 700, 800], 0.9, track=2)]
+                return [Detection("ladder", [410, 200, 590, 800], 0.9, track=3)]  # new track, midway
+        survey = Survey(Pair(), self.objects, self.keyframes, self.store, CALIBRATION, interval=0)
+        survey.feed(frame("both", (0.0, 0.0, 0.0), 0.0, depth=3.0))
+        self.assertEqual(survey.feed(frame("between", (0.0, 0.0, 0.0), 1.0, depth=3.0)), [])
+        self.assertEqual([o.sightings for o in self.objects.all()], [1, 1])
+
+    def test_a_part_boxed_beside_the_whole_is_folded_back_in(self):
+        class Halves:
+            def detect(self, frame):
+                whole = [Detection("ladder", [300, 200, 600, 800], 0.9, track=1)]
+                return whole + ([Detection("ladder", [560, 200, 640, 800], 0.6, track=2)] if frame.stamp < 2 else [])
+        survey = Survey(Halves(), self.objects, self.keyframes, self.store, CALIBRATION, interval=0)
+        for stamp in range(20):
+            survey.feed(frame("x", (0.0, 0.0, 0.0), float(stamp), depth=3.0))
+        self.assertEqual(survey.tidy(), {"LAD-002": "LAD-001"})
+
+    def test_objects_seen_in_one_frame_are_never_merged(self):
+        class Pair:
+            def detect(self, frame):
+                boxes = [Detection("ladder", [300, 200, 480, 800], 0.9, track=1)]
+                return boxes + ([Detection("ladder", [520, 200, 700, 800], 0.8, track=2)] if frame.name == "both" else [])
+        survey = Survey(Pair(), self.objects, self.keyframes, self.store, CALIBRATION, interval=0)
+        survey.feed(frame("both", (0.0, 0.0, 0.0), 0.0, depth=3.0))
+        for stamp in range(1, 4):
+            survey.feed(frame("one", (0.0, 0.0, 0.0), float(stamp), depth=3.0))
+        self.assertEqual(survey.tidy(), {})
+        self.assertEqual(len(self.objects.all()), 2)
 
     def test_a_stopped_survey_resumes_from_disk(self):
         self.see("ladder", (5.0, 5.0), 0, 3.0)
@@ -270,10 +376,11 @@ class InspectionTest(Workspace):
         return Inspection(self.objects, self.keyframes, vlm, self.store, self.survey, navigator, camera,
                           min_sightings=1, mission="PATROL-1")
 
-    def test_single_sightings_are_not_inspected_by_default(self):
-        self.see("ladder", (5.0, 5.0), 0, 3.0)
+    def test_rarely_seen_objects_are_not_inspected_by_default(self):
+        for stamp in range(2):
+            self.see("ladder", (5.0, 5.0), 0, 3.0, stamp=float(stamp))
         self.assertEqual(self.objects.pending(), [])
-        self.see("ladder", (5.0, 5.0), 0, 3.0, stamp=1.0)
+        self.see("ladder", (5.0, 5.0), 0, 3.0, stamp=2.0)
         self.assertEqual([o.id for o in self.objects.pending()], ["LAD-001"])
 
     def test_ladder_gets_its_missing_views_then_its_kontrollblatt(self):

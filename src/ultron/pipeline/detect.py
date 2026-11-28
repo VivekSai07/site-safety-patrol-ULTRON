@@ -41,27 +41,39 @@ class VlmDetector:
 
 
 class YoloDetector:
-    """Open-vocabulary YOLO (YOLOE) through `ultralytics`. Needs a GPU to be fast; weights download on first use.
+    """Open-vocabulary YOLO (YOLOE) through `ultralytics`, with its tracker and segmentation masks.
 
-    On the hall recording false hits scored below 0.4 and real objects mostly above 0.5.
+    Needs a GPU to be fast (0.1 s per frame on an RTX 5090); weights download on first use.
+    Feed frames in order and several per second, or the tracker cannot follow objects.
     """
 
-    def __init__(self, weights="yoloe-11l-seg.pt", min_score=0.5, device=None):
+    def __init__(self, weights="yoloe-11l-seg.pt", device=None, track=True):
         from ultralytics import YOLOE
         self.model = YOLOE(weights)
         self.prompts = list(KIND_OF_PROMPT)
         self.model.set_classes(self.prompts, self.model.get_text_pe(self.prompts))
-        self.min_score, self.device = min_score, device
+        self.lowest = min(kind.min_score for kind in KINDS.values())
+        self.device, self.track = device, track
 
     def detect(self, frame):
-        result = self.model.predict(frame.image, conf=self.min_score, device=self.device, verbose=False)[0]
+        options = dict(conf=self.lowest, device=self.device, verbose=False)
+        if self.track:
+            result = self.model.track(frame.image, persist=True, tracker="botsort.yaml", **options)[0]
+        else:
+            result = self.model.predict(frame.image, **options)[0]
         width, height = frame.image.size
+        tracks = result.boxes.id.tolist() if result.boxes.id is not None else [None] * len(result.boxes)
+        outlines = result.masks.xy if result.masks is not None else [None] * len(result.boxes)
         found = []
-        for box in result.boxes:
+        for box, track, outline in zip(result.boxes, tracks, outlines):
+            kind, score = KIND_OF_PROMPT[self.prompts[int(box.cls[0])]], float(box.conf[0])
             x0, y0, x1, y1 = box.xyxy[0].tolist()
             thousandths = clean_box([1000 * x0 / width, 1000 * y0 / height, 1000 * x1 / width, 1000 * y1 / height])
-            if thousandths:
-                found.append(Detection(KIND_OF_PROMPT[self.prompts[int(box.cls[0])]], thousandths, float(box.conf[0])))
+            if thousandths and score >= KINDS[kind].min_score:
+                points = None
+                if outline is not None and len(outline) >= 3:
+                    points = [[round(1000 * x / width), round(1000 * y / height)] for x, y in outline.tolist()]
+                found.append(Detection(kind, thousandths, score, None if track is None else int(track), points))
         return found
 
 
@@ -72,4 +84,5 @@ class ReplayDetector:
         self.recorded = recorded
 
     def detect(self, frame):
-        return [Detection(d["kind"], list(d["box"]), d.get("score", 1.0)) for d in self.recorded.get(frame.name, [])]
+        return [Detection(d["kind"], list(d["box"]), d.get("score", 1.0), d.get("track"))
+                for d in self.recorded.get(frame.name, [])]

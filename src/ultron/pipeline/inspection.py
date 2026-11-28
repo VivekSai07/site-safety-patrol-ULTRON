@@ -17,7 +17,7 @@ from ..protocol.vlm import VlmError
 
 class Inspection:
     def __init__(self, objects, keyframes, vlm, store, survey=None, navigator=None, camera=None,
-                 is_free=None, max_extra_views=3, max_attempts=6, min_sightings=2, mission=None):
+                 is_free=None, max_extra_views=3, max_attempts=6, min_sightings=3, mission=None):
         self.objects, self.keyframes, self.vlm, self.store = objects, keyframes, vlm, store
         self.survey = survey                  # used to process frames captured at requested views
         self.navigator = navigator or Passive()
@@ -29,6 +29,8 @@ class Inspection:
         self.mission = mission
 
     def run(self):
+        if self.survey:
+            self.survey.tidy(self.min_sightings)
         for site_object in self.objects.pending(self.min_sightings):
             self.inspect(site_object)
 

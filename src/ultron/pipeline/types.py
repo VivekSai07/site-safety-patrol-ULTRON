@@ -11,6 +11,8 @@ class Detection:
     kind: str
     box: list
     score: float = 1.0
+    track: int = None     # detector's track id: the same number in later frames is the same object
+    outline: list = None  # object outline as [[x, y], ...] in thousandths, when the detector segments
 
 
 @dataclass
@@ -20,6 +22,7 @@ class Sighting:
     position: tuple = None   # object (x, y) in the map frame, None if the frame has no pose
     distance: float = None   # metres from camera to object
     approximate: bool = False  # True when no range sensor hit the object and the range was assumed
+    height: float = None     # physical height of the box in metres at the measured range
 
     def side(self, robot_pose):
         """Viewing direction as a 45 degree step, 0..7: the map bearing from object to camera."""
@@ -39,6 +42,7 @@ class SiteObject:
     last_seen: float = 0.0
     status: str = "FOUND"    # FOUND -> INSPECTED (or UNREACHABLE)
     result: dict = field(default_factory=dict)  # what the inspection concluded
+    apart: list = field(default_factory=list)   # ids seen in the same frame: certainly other objects
 
     def to_json(self):
         return asdict(self)

@@ -31,6 +31,9 @@ FIRE_ROWS = (
 CHECKLISTS = {
     "fire_extinguisher": FIRE_ROWS,
     "fire_hydrant": FIRE_ROWS,
+    "fire_alarm": (
+        Row("EH-2", "Meldeeinrichtungen sind vorhanden.", "Alarm devices are present", PRESENCE),
+    ),
     "first_aid_kit": (
         Row("EH-1", "Erste-Hilfe-Material (Verbandkasten) ist vorhanden. Haltbarkeit beachten!",
             "First-aid material (kit) is present", PRESENCE),

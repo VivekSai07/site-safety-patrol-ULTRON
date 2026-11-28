@@ -40,9 +40,9 @@ Workspace (`--data`, default `runs/pipeline`): `objects.json`, `keyframes.json`,
 |---|---|---|
 | `catalog.py` | Kinds to look for, detector prompts, views and sides each form needs | works; values are first guesses |
 | `types.py` | Records passed between modules | works |
-| `detect.py` | `VlmDetector` (vision model returns boxes), `YoloDetector` (open-vocabulary YOLOE), `ReplayDetector` | YOLO run on the real recording; VLM detector tested with fakes only |
+| `detect.py` | `YoloDetector` (open-vocabulary YOLOE with tracking and masks), `VlmDetector` (vision model returns boxes), `ReplayDetector` | YOLO works on the real recording; VLM detector tested with fakes only |
 | `lift.py` | Detection → map position from lidar, depth image or assumed range | depth path run on the real recording; **assumes the camera looks along the robot's +x from its origin** |
-| `objects.py` | Object map: associate sightings, stable ids, saved every change | works |
+| `objects.py` | Object map: associate sightings by track and position, merge fragments, stable ids, saved every change | works on the real recording |
 | `keyframes.py` | Bounded keyframe store per object × view range × viewing direction; selection for the reader | works; quality score is a simple heuristic |
 | `coverage.py` | Missing views → goal poses around the object | works; no occlusion or part visibility |
 | `navigate.py` | `Passive`, `Operator`, `DashboardNavigator` (dashboard `/api/goal` → bridge → Nav2) | tested against the dashboard app; **never run with Nav2** |
@@ -68,7 +68,7 @@ Each is one branch off `feature/site-pipeline` and touches the listed files only
 
 | Branch | Goal | Files |
 |---|---|---|
-| `pipeline/detector` | A detector that finds ladders, extinguishers, hydrants and first-aid kits in the hall: YOLO weights and prompts, thresholds, tracking between frames | `detect.py`, `catalog.py` |
+| `pipeline/detector` | More recordings: first-aid kits, ladders side by side, other lighting; re-fit thresholds and size ranges | `detect.py`, `catalog.py` |
 | `pipeline/sensors` | Live topics as in the recording (the ROS 2 source does not read depth yet), pose from SLAM instead of offline odometry, camera offset from the robot origin | `protocol/sources.py`, `protocol/bag.py`, `lift.py` |
 | `pipeline/keyframes` | Better frame choice: which ladder part is in view, occlusion, DAAAM-style joint selection | `keyframes.py`, `coverage.py` |
 | `pipeline/navigation` | `is_free` from the SLAM occupancy map, goals through Nav2, check on arrival that the object is in view | `navigate.py`, `inspection.py` |
@@ -76,28 +76,41 @@ Each is one branch off `feature/site-pipeline` and touches the listed files only
 | `pipeline/dashboard` | Show non-ladder objects, checklist results and view requests; today only ladders reach the dashboard | `protocol/publish.py`, `dashboard/` |
 | `pipeline/stages` | One process that switches between survey and inspection on a trigger, instead of two commands | `__main__.py` |
 
-## First run on the real robot's recording
+## On the real robot's recording
 
 `ws:~/data/b2_real/rosbag2_2026_11_28-00_48_42` (36 s, 17 m loop in the hall; RealSense head camera
 colour 1280×720 and depth 848×480, lidar cloud at 10 Hz, IMU; no pose and no camera-to-lidar
 transform recorded). Read without ROS by `protocol/bag.py`:
 
 ```bash
-pip install rosbags kiss-icp ultralytics      # bag reader, lidar odometry, YOLOE (GPU)
-python -m ultron.pipeline survey --source bag:BAG,rate=3 --calibration bag:BAG --detector yolo --interval 0
+pip install -e '.[protocol,bags,detector]'    # bag reader, lidar odometry, YOLOE (GPU)
+python -m ultron.pipeline survey --source bag:BAG,rate=8 --calibration bag:BAG --detector yolo --interval 0
 ```
 
-- Depth is re-projected into the colour camera with the recorded intrinsics and extrinsics.
-- Poses come from lidar odometry over the scans: the loop closes to within 15 cm and its heading
+Result: 5 objects, each a real one with the right kind: the A-frame ladder (84 sightings, seen
+from two sides), the leaning ladder (48), the fire extinguisher (19), the red hose cabinet (32) and
+the red alarm box (28). A second extinguisher was in view for one frame only and is not kept. The
+whole pass takes about 30 s on an RTX 5090.
+
+What it took, in the order the recording forced it:
+
+- **Depth** is re-projected into the colour camera with the recorded intrinsics and extrinsics.
+- **Pose** comes from lidar odometry over the scans: the loop closes to within 15 cm and its heading
   agrees with the IMU. The camera is assumed to look along the lidar's +x from the lidar's position.
-- YOLOE (`yoloe-11l-seg`, threshold 0.5) on an RTX 5090: 109 frames in under 30 s including model
-  load. It finds the three ladders and the fire extinguisher in view; false hits scored below 0.4.
-- Result: 7 objects for 4 real ones in view. Clean: the leaning ladder, the extension ladder, the
-  extinguisher. Wrong: the stepladder's object also holds two frames of the extension ladder
-  standing 0.5 m from it, and there are two spurious two-sighting objects (one ladder fragment, one
-  repeat of the extinguisher). Position alone cannot separate objects that close: that needs
-  tracking or appearance, the `pipeline/detector` package.
-- "fire hydrant" and "fire hose cabinet" prompts did not reach 0.5 on the red wall boxes.
+- **Detector**: YOLOE (`yoloe-11l-seg`), 0.1 s per frame. Compared on twelve frames with Grounding
+  DINO (slower, muddled labels, confident false hits) and OWLv2 (finds everything but floods ladder
+  parts and doors). YOLOE's misses were prompt wording, see `catalog.py`.
+- **Tracking**: YOLOE's tracker ids keep an object's identity from frame to frame; feed it several
+  frames per second. Two boxes in one frame are always two objects.
+- **Range from the mask**, not the box: a ladder's box is mostly background.
+- **Size check**: each kind has a plausible height. From 4 m the alarm box scored 0.6 as an
+  extinguisher; at 0.36 m tall it cannot be one.
+- **Merging fragments**: an object seen far less often than a same-kind neighbour within reach is
+  folded into it (half-ladder boxes, a cabinet seen twice at slightly different ranges).
+
+Limits of this evidence: one recording, one hall. Thresholds and size ranges are fitted to it. The
+two ladders stand 3 m apart; two ladders side by side rely on tracking and on being seen in one
+frame at least once, which is tested with synthetic data only.
 
 ## Not yet verified
 
