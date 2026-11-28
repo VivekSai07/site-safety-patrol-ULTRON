@@ -8,8 +8,8 @@ Services (relative; the bringup namespace applies):
   the MOLA metric map (``map_save`` -> ``map3d*``). ``map_meta.json`` lists SHA-256 of every
   file. Versions are never overwritten.
 - ``map/load`` (ultron_b2_interfaces/LoadMap): resolves map_id/version or yaml_path, verifies the
-  hashes (refuses on mismatch), asks slam_toolbox to ``deserialize_map`` (localize at
-  ``initial_pose``) when that service exists, and publishes the MapInfo.
+  hashes (refuses on mismatch), requires a pose graph and the slam_toolbox ``deserialize_map``
+  service (localize at ``initial_pose``), and publishes the MapInfo only after the call completes.
 
 ``initial_map`` (yaml path, ``map_id`` or ``map_id:version``) announces a map loaded by
 slam_toolbox at launch (``map_file_name``), after the same hash check. A map whose hashes do not
@@ -204,6 +204,8 @@ class MapManager:
     def _load(self, request, response):
         response.schema_version = self.LoadMap.Request.SCHEMA_VERSION
         try:
+            if request.schema_version and request.schema_version != self.LoadMap.Request.SCHEMA_VERSION:
+                raise ValueError(f'schema {request.schema_version!r} != {self.LoadMap.Request.SCHEMA_VERSION}')
             response.success, response.message, info = self._announce(request.map_id, request.map_version,
                                                                        request.yaml_path, deserialize=True)
             if info is not None:
@@ -222,7 +224,9 @@ class MapManager:
         d = map_store.info_dict(directory)
         if not d['yaml_path']:
             return False, f'{directory}: no 2D map', None
-        if deserialize and d['posegraph_path'] and self.deserialize.service_is_ready():
+        if deserialize:
+            if not d['posegraph_path']:
+                return False, f'{directory}: no slam_toolbox pose graph', None
             req = self.Deserialize.Request()
             req.filename = d['posegraph_path']
             req.match_type = self.Deserialize.Request.LOCALIZE_AT_POSE

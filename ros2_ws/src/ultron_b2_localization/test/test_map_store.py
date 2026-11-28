@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from ultron_b2_localization import map_store
-from ultron_b2_localization.map_manager_node import grid_to_pgm, parse_map_ref, write_grid
+from ultron_b2_localization.map_manager_node import MapManager, grid_to_pgm, parse_map_ref, write_grid
 
 
 def _grid(width=6, height=4):
@@ -88,3 +88,44 @@ def test_info_dict_and_map_refs(tmp_path):
     assert parse_map_ref(str(d / 'map.yaml')) == ('', 0, str(d / 'map.yaml'))
     assert map_store.resolve(tmp_path, yaml_path=str(d / 'map.yaml')) == d
     assert map_store.resolve(tmp_path, yaml_path=str(d)) == d
+
+
+def test_load_requires_posegraph_and_backend_before_announcement(tmp_path):
+    _, directory = _save(tmp_path)
+    manager = MapManager.__new__(MapManager)
+    manager.root = tmp_path
+    manager.initial_pose = [0.0, 0.0, 0.0]
+    class Request:
+        LOCALIZE_AT_POSE = 3
+
+        def __init__(self):
+            self.initial_pose = SimpleNamespace(x=0.0, y=0.0, theta=0.0)
+
+    manager.Deserialize = SimpleNamespace(Request=Request)
+    manager.deserialize = object()
+    published = []
+    manager.info_pub = SimpleNamespace(publish=published.append)
+    manager._info_msg = lambda d: d
+    manager._call = lambda client, req: (None, 'service unavailable')
+
+    ok, message, _ = manager._announce('hall-test', 1, '', deserialize=True)
+    assert not ok and 'service unavailable' in message and not published
+
+    manager._call = lambda client, req: (object(), '')
+    ok, _, _ = manager._announce('hall-test', 1, '', deserialize=True)
+    assert ok and len(published) == 1
+
+    (directory / 'map.posegraph').unlink()
+    (directory / 'map.data').unlink()
+    map_store.write_meta(directory, 'hall-test', 1, source='test', provenance='UNIT_TEST')
+    ok, message, _ = manager._announce('hall-test', 1, '', deserialize=True)
+    assert not ok and 'no slam_toolbox pose graph' in message and len(published) == 1
+
+
+def test_load_rejects_unknown_schema():
+    manager = MapManager.__new__(MapManager)
+    manager.LoadMap = SimpleNamespace(Request=SimpleNamespace(SCHEMA_VERSION='ultron.load_map/v1'))
+    manager.node = SimpleNamespace(get_logger=lambda: SimpleNamespace(info=lambda _: None, error=lambda _: None))
+    manager._announce = lambda *_args, **_kwargs: pytest.fail('must not announce an incompatible request')
+    response = manager._load(SimpleNamespace(schema_version='ultron.load_map/v2'), SimpleNamespace())
+    assert not response.success and 'schema' in response.message

@@ -6,7 +6,7 @@
   ``map_id:version`` or a map directory / map.yaml under ``map_root``). The map's hashes are
   verified here before slam_toolbox gets it; map_manager announces it on ``map/info`` and
   localization_monitor scores against it. Without ``map:=`` no localization backend starts and
-  the state stays INITIALIZING ("No map loaded") until ``map/load`` is called.
+  the state stays INITIALIZING ("No map loaded"); ``map/load`` cannot start a backend.
 
 Outputs (relative): ``map`` (OccupancyGrid), TF ``map -> odom``, ``state/localization``,
 ``map/info``; services ``map/save``, ``map/load``.
@@ -69,7 +69,7 @@ def _nodes(context):
                                  {'map_file_name': info['posegraph_path'], 'map_start_pose': pose}])]
         else:
             actions.append(LogInfo(msg='[slam] WARNING: no map:= given; localization backend not started '
-                                       '(state INITIALIZING until map/load)'))
+                                       '(state INITIALIZING; relaunch with map:= to start backend)'))
         actions.append(Node(package=PKG, executable='localization_monitor', name='localization_monitor',
                             output='screen', parameters=[cfg('localization_monitor.yaml'), sim_time,
                                                          {'map_source': 'map_info'}]))
