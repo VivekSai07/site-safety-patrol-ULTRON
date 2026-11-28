@@ -31,6 +31,7 @@ pytestmark = pytest.mark.skipif(os.environ.get('ULTRON_E2E_SIM') != '1',
 
 NS = '/ultron/sim'
 HOLD_STOP_ALLOWANCE_S = 1.2   # = sim_nav_cases accept stop_within_s
+HOLD_MAX_SAMPLE_GAP_S = 0.5  # proposed observation continuity limit, not a hardware threshold
 
 
 def test_full_sim_mission_hall():
@@ -149,6 +150,10 @@ def test_full_sim_mission_hall():
             'HOLD did not cancel the selected view goal'
         assert any(t >= hold_t1 and e.event_type == 'RESUMED' for t, e in events), 'mission did not resume'
         assert held, 'no cmd_vel samples while HOLD was asserted'
+        assert held[0][0] <= hold_t0 + HOLD_STOP_ALLOWANCE_S + HOLD_MAX_SAMPLE_GAP_S
+        assert held[-1][0] >= hold_t1 - HOLD_MAX_SAMPLE_GAP_S
+        assert all(b[0] - a[0] <= HOLD_MAX_SAMPLE_GAP_S for a, b in zip(held, held[1:])), \
+            'cmd_vel observation gap during HOLD'
         assert all(all(v == 0.0 for v in sample[1:]) for sample in held), ('motion during HOLD', held)
         reached = {e.goal_id for _, e in events if e.event_type == 'GOAL_RESULT'
                    and json.loads(e.payload_json).get('status') == 'REACHED'
