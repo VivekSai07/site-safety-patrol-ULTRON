@@ -255,3 +255,11 @@ class TestTextQuery(unittest.TestCase):
         from ultron.spatial.memory import SpatialMemory
         silent = SpatialMemory(Path(self._tmp.name), embedder=None)
         self.assertEqual(silent.query_text("0"), [])
+
+
+@unittest.skipIf(np is None, "numpy and Pillow required")
+class TestAdvisorHook(unittest.TestCase):
+    def test_spatial_memory_is_an_association_advisor(self):
+        from ultron.spatial import AssociationAdvisor, SpatialConfig, SpatialMemory, load_embedder  # noqa: F401
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsInstance(SpatialMemory(tmp), AssociationAdvisor)
