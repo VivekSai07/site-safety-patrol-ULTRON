@@ -1,0 +1,21 @@
+# Capture evidence at planned view poses. Captures are evidence, not inspection verdicts.
+string SCHEMA_VERSION = "ultron.capture_views/v1"
+string schema_version
+string capture_id
+string mission_id
+string asset_id
+string map_id
+int64 map_version
+geometry_msgs/PoseStamped[] view_poses
+string[] modalities                     # e.g. color, depth
+---
+string schema_version
+string status                           # COMPLETE | PARTIAL | FAILED | CANCELLED
+string reason
+uint32 views_captured
+uint32 views_failed
+string[] evidence_refs
+---
+uint32 views_done
+uint32 current_view
+string status

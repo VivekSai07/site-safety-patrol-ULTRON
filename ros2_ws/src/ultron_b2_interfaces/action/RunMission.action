@@ -1,0 +1,16 @@
+string SCHEMA_VERSION = "ultron.run_mission/v1"
+string schema_version
+string mission_id
+string zone_id
+string map_id
+int64 map_version
+string mode                             # PATROL | EXPLORE | SURVEY_ROUTE
+float64 max_duration_s
+---
+string schema_version
+string status                           # DONE | DONE_WITH_GAPS | ABORTED | HOLD
+string reason
+CoverageReport coverage
+string summary_ref
+---
+MissionStatus status

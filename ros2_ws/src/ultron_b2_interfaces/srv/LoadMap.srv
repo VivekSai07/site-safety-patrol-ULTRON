@@ -1,0 +1,10 @@
+string SCHEMA_VERSION = "ultron.load_map/v1"
+string schema_version
+string map_id
+int64 map_version
+string yaml_path
+---
+string schema_version
+bool success
+string message
+MapInfo info

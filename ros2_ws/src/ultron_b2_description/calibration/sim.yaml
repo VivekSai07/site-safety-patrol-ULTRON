@@ -1,0 +1,41 @@
+# ULTRON B2 sensor mounts for SIMULATION. Values are simulation choices, not hardware settings.
+# Each frame: parent, xyz [m], rpy [rad], source (datasheet|organizer|measured|assumed|TO_VERIFY), provenance.
+schema: ultron.b2_calibration/v1
+profile: sim
+frames:
+  base_footprint:
+    parent: base_link
+    xyz: [0.0, 0.0, -0.65]
+    rpy: [0.0, 0.0, 0.0]
+    source: assumed
+    provenance: src/ultron/autonomy/hall_scene.py BASE_HEIGHT_M (kinematic standing height)
+  lidar_link:
+    parent: base_link
+    xyz: [0.342, 0.0, 0.18]
+    rpy: [0.0, 0.0, 0.0]
+    source: assumed
+    provenance: config/autonomy/lidar_helios32.yaml mount_xyz_m / mount_rpy_rad
+  imu_link:
+    parent: base_link
+    xyz: [0.0, -0.02341, 0.04927]
+    rpy: [0.0, 0.0, 0.0]
+    source: assumed
+    provenance: Unitree B2 MJCF site "imu" (body IMU, not the Xsens MTi)
+  cam_head_link:
+    parent: base_link
+    xyz: [0.45, 0.0, 0.13]
+    rpy: [0.0, -0.2219, 0.0]
+    source: assumed
+    provenance: src/ultron/scene.py camera "inspection" (pos .45 0 .13, pitched up ~12.7 deg)
+  cam_head_color_optical_frame:
+    parent: cam_head_link
+    xyz: [0.0, 0.0, 0.0]
+    rpy: [-1.5707963267948966, 0.0, -1.5707963267948966]
+    source: assumed
+    provenance: REP-103 optical convention (z forward, x right, y down)
+  cam_head_depth_optical_frame:
+    parent: cam_head_link
+    xyz: [0.0, 0.0, 0.0]
+    rpy: [-1.5707963267948966, 0.0, -1.5707963267948966]
+    source: assumed
+    provenance: simulated RGB-D shares one optical centre

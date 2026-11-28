@@ -1,0 +1,13 @@
+# Robot footprint for costmaps/collision checks. PROPOSED; sim values are not hardware settings.
+schema: ultron.b2_footprint/v1
+sim:
+  type: circle
+  radius_m: 0.55
+  source: assumed
+  provenance: docs/b2_ros_stack/PLAN.md (sim 0.55 m circle until measured)
+real:
+  type: TO_VERIFY
+  radius_m: null
+  polygon_m: null
+  source: TO_VERIFY
+  provenance: measure the B2 with mounted payload (Agent D + operator); motion stays NO-GO until then

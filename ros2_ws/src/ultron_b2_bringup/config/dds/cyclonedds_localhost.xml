@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ULTRON sim/replay: loopback only, no multicast, shared memory off. Use with
+     ROS_LOCALHOST_ONLY=1 and ROS_DOMAIN_ID 71 (sim) / 72 (replay). PROPOSED. -->
+<CycloneDDS xmlns="https://cdds.io/config"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+  <Domain Id="any">
+    <General>
+      <!-- No <Interfaces>: ROS_LOCALHOST_ONLY=1 (required by preflight in sim/replay) already
+           selects loopback, and Cyclone rejects selecting "lo" twice. -->
+      <AllowMulticast>false</AllowMulticast>
+    </General>
+    <!-- Loopback has no multicast, so discovery is unicast over participant indices; the default
+         MaxAutoParticipantIndex (9) is too small for the stack (11+ nodes plus CLI tools). -->
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>
+      <Peers>
+        <Peer address="localhost"/>
+      </Peers>
+    </Discovery>
+    <SharedMemory>
+      <Enable>false</Enable>
+    </SharedMemory>
+  </Domain>
+</CycloneDDS>

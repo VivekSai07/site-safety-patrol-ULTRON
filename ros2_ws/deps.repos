@@ -1,0 +1,60 @@
+# ULTRON B2 third-party sources, pinned (vcstool). Imported by scripts/import_deps.sh into external/.
+# Binary-first: the dev image installs apt binaries where they exist (see docker/Dockerfile.dev and
+# README.md "Dependencies"). Paths under build/ are compiled with the workspace; paths under ref/
+# are pinned references (COLCON_IGNORE) for the owning agent to promote to build/ when needed.
+# Pinned 2026-11-28 from upstream default/humble branches.
+repositories:
+  # --- built from source now -------------------------------------------------------------
+  build/unitree_ros2:               # unitree_api / unitree_go / unitree_hg msgs (Agent D bridge). BSD-3
+    type: git
+    url: https://github.com/unitreerobotics/unitree_ros2.git
+    version: 668d1ec5a05d1c38d3306bdca7d59f2ba3581a88
+  build/rslidar_msg:                # RslidarPacket for /rslidar_packets (no Humble binary). BSD-3 (verify)
+    type: git
+    url: https://github.com/RoboSense-LiDAR/rslidar_msg.git
+    version: fe8a95cb242bd294cc3d5e3422f2093fb49a56ee
+  # --- pinned references (not built by default) --------------------------------------------
+  ref/rslidar_sdk:                  # SOURCE (Agent B): Helios-32 packet decode; needs libpcap/yaml-cpp
+    type: git
+    url: https://github.com/RoboSense-LiDAR/rslidar_sdk.git
+    version: 8b4b4b7ff910799260347821084c59e1c73d50d5
+  ref/xsens_mti_ros2_driver:        # SOURCE (Agent B, live only): Xsens MTi driver, branch ros2
+    type: git
+    url: https://github.com/xsenssupport/Xsens_MTi_ROS_Driver_and_Ntrip_Client.git
+    version: 909dc42f1432bf19ad7b4475252c0988e78f85c0
+  ref/realsense-ros:                # APT realsense2_camera_msgs installed; driver source for live (Agent B)
+    type: git
+    url: https://github.com/IntelRealSense/realsense-ros.git
+    version: 4.59.2
+  ref/kiss-icp:                     # SOURCE (Agent C): ROS 2 wrapper (no Humble binary); pip kiss-icp 1.2.3 in image. MIT
+    type: git
+    url: https://github.com/PRBonn/kiss-icp.git
+    version: v1.2.3
+  ref/mola:                         # APT ros-humble-mola 3.6.0 installed (binary preferred). GPLv3/BSD mix
+    type: git
+    url: https://github.com/MOLAorg/mola.git
+    version: dc835ac7b11e9bb775750fb14ec80a6f363b7246
+  ref/mola_lidar_odometry:          # APT ros-humble-mola-lidar-odometry 3.6.0 installed. GPLv3: separate process only
+    type: git
+    url: https://github.com/MOLAorg/mola_lidar_odometry.git
+    version: 8e5158dd3ed058499a522d60bad4cd3b58d5dc4c
+  ref/slam_toolbox:                 # APT ros-humble-slam-toolbox 2.6.10 installed. LGPL-2.1
+    type: git
+    url: https://github.com/SteveMacenski/slam_toolbox.git
+    version: dccc5d1fd2b5007098f4050e681d20da37ef183f
+  ref/foxglove_bridge:              # APT ros-humble-foxglove-bridge 3.6.3 installed. MIT
+    type: git
+    url: https://github.com/foxglove/ros-foxglove-bridge.git
+    version: 42c0ba4fffeec88dc6890dd98ea2590e20bd4370
+  ref/domain_bridge:                # APT ros-humble-domain-bridge 0.5.0 installed. Apache-2.0
+    type: git
+    url: https://github.com/ros2/domain_bridge.git
+    version: f4311f668a1da12545db3e1e37a593ca847d0110
+  ref/m-explore-ros2:               # SOURCE reference (Agent E): frontier exploration. BSD
+    type: git
+    url: https://github.com/robo-friends/m-explore-ros2.git
+    version: 326cf8a0b487c34246bb8f3326afbcd69576dc60
+  ref/unitree_ros:                  # B2 model reference (b2_description); URDF here uses unitree_mujoco MJCF. BSD-3
+    type: git
+    url: https://github.com/unitreerobotics/unitree_ros.git
+    version: ed3803887b2690d445b534084df0c50d7507d76a

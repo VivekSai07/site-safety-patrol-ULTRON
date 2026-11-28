@@ -1,0 +1,11 @@
+# Arm/disarm the B2 command bridge. Arming never bypasses preflight, hardware_enable or the motion gate.
+string SCHEMA_VERSION = "ultron.arm/v1"
+string schema_version
+bool arm
+string operator_id
+string reason
+---
+string schema_version
+bool success
+bool armed
+string message

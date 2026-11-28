@@ -1,0 +1,7 @@
+build/
+install/
+log/
+external/
+.dev_home/
+*.db3
+*.mcap

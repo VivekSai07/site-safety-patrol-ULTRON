@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ULTRON live (Orin on the B2 robot network, domain 0). TEMPLATE ONLY.
+     The NIC name is TO_VERIFY on the real Orin; do not guess it. Using this file requires
+     explicit user/operator authorization (docs/SIM_TO_HARDWARE.md). Shared memory off. -->
+<CycloneDDS xmlns="https://cdds.io/config"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+  <Domain Id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="TO_VERIFY" priority="default" multicast="default"/>
+      </Interfaces>
+    </General>
+    <SharedMemory>
+      <Enable>false</Enable>
+    </SharedMemory>
+  </Domain>
+</CycloneDDS>

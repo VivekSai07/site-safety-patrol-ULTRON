@@ -1,0 +1,10 @@
+string SCHEMA_VERSION = "ultron.save_map/v1"
+string schema_version
+string map_id
+string directory
+bool save_3d
+---
+string schema_version
+bool success
+string message
+MapInfo info

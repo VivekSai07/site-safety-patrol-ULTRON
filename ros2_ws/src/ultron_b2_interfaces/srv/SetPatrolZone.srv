@@ -1,0 +1,13 @@
+# Bounded patrol/exploration zone in the map frame.
+string SCHEMA_VERSION = "ultron.patrol_zone/v1"
+string schema_version
+string zone_id
+string map_id
+int64 map_version
+geometry_msgs/Polygon boundary
+geometry_msgs/Polygon[] keepout
+geometry_msgs/PoseStamped base_pose
+---
+string schema_version
+bool success
+string message

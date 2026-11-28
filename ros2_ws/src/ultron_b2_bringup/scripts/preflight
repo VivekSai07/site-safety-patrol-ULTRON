@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+import sys
+
+from ultron_b2_bringup.preflight import main
+
+sys.exit(main())

@@ -1,0 +1,139 @@
+<?xml version="1.0"?>
+<!--
+  ULTRON Unitree B2 description: primitive geometry, official B2 kinematics
+  (see ../license/PROVENANCE.md, BSD-3 Unitree licence retained) and sensor
+  mounts loaded from calibration/<profile>.yaml.
+
+  Args:
+    calibration: absolute path to a calibration yaml (default: sim.yaml)
+    legs:        true adds the revolute leg chain (needs joint_states to appear on TF);
+                 false (default) keeps the tree to body + sensors.
+  The root link is base_link: odom->base_link has exactly one external publisher.
+-->
+<robot name="unitree_b2" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="calibration" default="$(find ultron_b2_description)/calibration/sim.yaml"/>
+  <xacro:arg name="legs" default="false"/>
+  <xacro:property name="cal" value="${xacro.load_yaml('$(arg calibration)')}"/>
+  <xacro:property name="frames" value="${cal['frames']}"/>
+
+  <material name="body_grey"><color rgba="0.7 0.7 0.7 1"/></material>
+  <material name="sensor_black"><color rgba="0.15 0.15 0.15 1"/></material>
+
+  <!-- MJCF base_link inertial; principal-axis quaternion omitted (diagonal approximation). -->
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0.0212868 0.0045819 0.0106169" rpy="0 0 0"/>
+      <mass value="40.8426"/>
+      <inertia ixx="1.73786" iyy="1.66448" izz="0.343734" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual>
+      <geometry><box size="0.5 0.28 0.15"/></geometry>
+      <material name="body_grey"/>
+    </visual>
+    <collision>
+      <geometry><box size="0.5 0.28 0.15"/></geometry>
+    </collision>
+    <collision>
+      <origin xyz="0.41 0 0.005"/>
+      <geometry><box size="0.04 0.12 0.14"/></geometry>
+    </collision>
+    <collision>
+      <origin xyz="-0.405 0 0.005"/>
+      <geometry><box size="0.025 0.12 0.14"/></geometry>
+    </collision>
+  </link>
+
+  <xacro:macro name="mount" params="name">
+    <xacro:property name="f" value="${frames[name]}"/>
+    <link name="${name}"/>
+    <joint name="${name}_joint" type="fixed">
+      <parent link="${f['parent']}"/>
+      <child link="${name}"/>
+      <origin xyz="${f['xyz'][0]} ${f['xyz'][1]} ${f['xyz'][2]}"
+              rpy="${f['rpy'][0]} ${f['rpy'][1]} ${f['rpy'][2]}"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:mount name="base_footprint"/>
+  <xacro:mount name="lidar_link"/>
+  <xacro:mount name="imu_link"/>
+  <xacro:mount name="cam_head_link"/>
+  <xacro:mount name="cam_head_color_optical_frame"/>
+  <xacro:mount name="cam_head_depth_optical_frame"/>
+
+  <!-- MJCF front lidar cylinder (r 0.076, half-length 0.08) as lidar_link visual helper. -->
+  <link name="lidar_housing">
+    <visual>
+      <geometry><cylinder radius="0.076" length="0.16"/></geometry>
+      <material name="sensor_black"/>
+    </visual>
+  </link>
+  <joint name="lidar_housing_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="lidar_housing"/>
+    <origin xyz="0.34218 0 0.15851"/>
+  </joint>
+
+  <!-- Leg chain from the MJCF (joint ranges in rad). Effort/velocity limits are placeholders, unused. -->
+  <xacro:macro name="leg" params="prefix fx sy">
+    <link name="${prefix}_hip">
+      <inertial><mass value="2.5294"/><inertia ixx="0.00485541" iyy="0.00370618" izz="0.00277182" ixy="0" ixz="0" iyz="0"/></inertial>
+      <visual>
+        <origin xyz="0 ${sy * 0.12} 0" rpy="1.5707963 0 0"/>
+        <geometry><cylinder radius="0.07" length="0.05"/></geometry>
+        <material name="body_grey"/>
+      </visual>
+    </link>
+    <joint name="${prefix}_hip_joint" type="revolute">
+      <parent link="base_link"/><child link="${prefix}_hip"/>
+      <origin xyz="${fx * 0.3285} ${sy * 0.072} 0"/>
+      <axis xyz="1 0 0"/>
+      <limit lower="-0.87" upper="0.87" effort="200" velocity="20"/>
+    </joint>
+    <link name="${prefix}_thigh">
+      <inertial><mass value="7.4554"/><inertia ixx="0.085057" iyy="0.0842843" izz="0.0112538" ixy="0" ixz="0" iyz="0"/></inertial>
+      <visual>
+        <origin xyz="-0.025 0 -0.16" rpy="0 1.5707963 0"/>
+        <geometry><box size="0.32 0.0445 0.054"/></geometry>
+        <material name="body_grey"/>
+      </visual>
+    </link>
+    <joint name="${prefix}_thigh_joint" type="revolute">
+      <parent link="${prefix}_hip"/><child link="${prefix}_thigh"/>
+      <origin xyz="0 ${sy * 0.11973} 0"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-0.94" upper="4.69" effort="200" velocity="20"/>
+    </joint>
+    <link name="${prefix}_calf">
+      <inertial><mass value="0.679123"/><inertia ixx="0.0162494" iyy="0.0161173" izz="0.000398115" ixy="0" ixz="0" iyz="0"/></inertial>
+      <visual>
+        <origin xyz="0.02 0 -0.17" rpy="0 0 0"/>
+        <geometry><box size="0.025 0.0245 0.34"/></geometry>
+        <material name="body_grey"/>
+      </visual>
+    </link>
+    <joint name="${prefix}_calf_joint" type="revolute">
+      <parent link="${prefix}_thigh"/><child link="${prefix}_calf"/>
+      <origin xyz="0 0 -0.35"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-2.82" upper="-0.43" effort="200" velocity="20"/>
+    </joint>
+    <link name="${prefix}_foot">
+      <visual>
+        <geometry><sphere radius="0.032"/></geometry>
+        <material name="sensor_black"/>
+      </visual>
+    </link>
+    <joint name="${prefix}_foot_joint" type="fixed">
+      <parent link="${prefix}_calf"/><child link="${prefix}_foot"/>
+      <origin xyz="0 0 -0.35"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:if value="$(arg legs)">
+    <xacro:leg prefix="FL" fx="1" sy="1"/>
+    <xacro:leg prefix="FR" fx="1" sy="-1"/>
+    <xacro:leg prefix="RL" fx="-1" sy="1"/>
+    <xacro:leg prefix="RR" fx="-1" sy="-1"/>
+  </xacro:if>
+</robot>

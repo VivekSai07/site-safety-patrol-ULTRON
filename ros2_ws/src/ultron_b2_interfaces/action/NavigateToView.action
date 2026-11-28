@@ -1,0 +1,36 @@
+# Mirrors ultron.navigation_goal/v1 and ultron.navigation_result/v1 (src/ultron/autonomy/navigation_contract.py).
+# Statuses: ACCEPTED, ACTIVE, REACHED, REJECTED, CANCELLED, TIMEOUT, FAILED.
+string SCHEMA_VERSION = "ultron.navigation_goal/v1"
+string STATUS_ACCEPTED = "ACCEPTED"
+string STATUS_ACTIVE = "ACTIVE"
+string STATUS_REACHED = "REACHED"
+string STATUS_REJECTED = "REJECTED"
+string STATUS_CANCELLED = "CANCELLED"
+string STATUS_TIMEOUT = "TIMEOUT"
+string STATUS_FAILED = "FAILED"
+string schema_version
+string goal_id
+string mission_id
+string map_id
+int64 map_version
+geometry_msgs/PoseStamped target        # header.frame_id must be "map"; header.stamp = requested_at
+float64 xy_tolerance_m
+float64 yaw_tolerance_rad
+float64 timeout_s
+string reason
+string asset_id                         # empty <=> JSON null
+---
+string RESULT_SCHEMA_VERSION = "ultron.navigation_result/v1"
+string schema_version
+string goal_id
+string status
+string reason
+builtin_interfaces/Time stamp
+bool has_last_valid_pose
+geometry_msgs/PoseStamped last_valid_pose
+bool stop_acknowledged
+bool settled                            # CAPTURE_READY: settled with VALID localization (JSON capture_ready)
+---
+string status
+geometry_msgs/PoseStamped pose
+float64 distance_remaining_m
