@@ -12,3 +12,20 @@ docker run --rm --gpus all --network none -v "$PWD":/repo:ro -v BAG_DIR:/bag:ro 
 ```
 
 What it does not show: the Orin's speed, NVIDIA's Jetson PyTorch wheel, and the robot's drivers.
+
+## Exploration contract check (dashboard + bridge, no robot)
+
+`explore_check.sh` runs the dashboard, the real `dashboard_bridge.py`, `fake_nav2.py` (stand-in
+NavigateToPose server and `/map`) and `fake_explore.py` (stand-in explore_lite) in one container with the
+network off, and walks [EXPLORATION_CONTRACT.md](../../docs/EXPLORATION_CONTRACT.md): manual goals, start,
+pause, pipeline goal, resume, operator takeover, lease expiry, fence and obstacle topics, finish, explorer
+crash, bridge restart, Nav2 absent. Needs an image with ROS 2 and `nav2_msgs` (`ultron-b2box:humble` has
+no `nav2_msgs`; `sitegen-ros:jazzy-4` was used) and the dashboard's packages for that image's Python:
+
+```bash
+pip install --target /tmp/pydeps312 --python-version 3.12 --platform manylinux2014_x86_64 \
+    --platform manylinux_2_28_x86_64 --implementation cp --only-binary=:all: \
+    fastapi uvicorn "pydantic>=2" pypdf reportlab Pillow
+docker run --rm --network none -v "$PWD":/repo:ro -v /tmp/pydeps312:/pydeps:ro sitegen-ros:jazzy-4 \
+    bash /repo/scripts/b2_standin/explore_check.sh
+```

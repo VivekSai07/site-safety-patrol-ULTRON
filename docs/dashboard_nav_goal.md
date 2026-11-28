@@ -47,6 +47,10 @@ curl -X POST http://127.0.0.1:8000/api/missions -H 'Content-Type: application/js
 | `map_frame` / `base_frame` | `map` / `base_link` | TF used for the robot pose; set `base_frame` to your robot's frame |
 | `action_name` | `navigate_to_pose` | nav2 action |
 | `pose_rate_hz` / `map_min_period_s` | `5` / `2` | Upload rates |
+| `nav_wait_s` / `nav_accept_timeout_s` | `3` / `10` | A goal fails (`navigation not available` / `navigation did not answer`) instead of hanging |
+| `explore_command` | `ros2 launch explore_lite explore.launch.py use_sim_time:=false` | Started on Start exploration, stopped on Finish. **Reads the unfenced `/map`**; see docs/EXPLORATION_CONTRACT.md for one that reads `/map_fenced` |
+| `explore_resume_topic` / `explore_status_topic` | `explore/resume` / `explore/status` | explore_lite's topics |
+| `fenced_map_topic` / `keepout_mask_topic` / `obstacles_topic` | `/map_fenced` / `/keepout_mask` / `/ultron/object_obstacles` | Fence and object obstacles out to ROS |
 
 `--lan` exposes the unauthenticated dashboard on all interfaces. Do not use it
 on a shared network or with sensitive data; a private network alone is not an
@@ -62,6 +66,12 @@ Positions are in metres in the `map` frame. `yaw` is in radians, counter-clockwi
 | `GET /api/goal` | The current goal and its `status`. |
 | `GET /api/stream` | Live events (Server-Sent Events). Each `goal` event carries the new status. |
 | `GET /api/map` / `GET /api/map.png` | Occupancy map metadata and image (from the bridge). |
+| `POST /api/exploration` `{"action": "start"}` | Exploration: `start`, `pause`, `renew`, `resume`, `finish` (see docs/EXPLORATION_CONTRACT.md). |
+| `GET/PUT /api/fence`, `GET/PUT /api/obstacles` | Where the robot may go; objects Nav2 may not see. |
+
+A goal also takes `"by": "pipeline"` (default `operator`). Every goal is refused with 409 `exploring` while
+the explorer drives, and `pausing` while it stops; pause it first. A pipeline goal is refused with
+`operator goal underway` while an operator goal runs.
 
 Goal `status` moves through these values:
 
@@ -115,4 +125,8 @@ print(wait(goal['seq']))
   `navigate_to_pose` server: map and pose reached the dashboard, success and
   cancellation were observed, and no server yielded failure. The exact
   network isolation and reproduction were not independently verified here.
-- **Not yet checked:** real Nav2 with SLAM, ROS Humble, and the B2's real base frame name.
+- `scripts/b2_standin/explore_check.sh`: the bridge against `fake_nav2.py` (stand-in NavigateToPose
+  server and `/map`) and `fake_explore.py` (stand-in explorer) in a Jazzy container with the network off:
+  manual goals, start / pause / pipeline goal / resume / finish, operator takeover, lease expiry, fence and
+  obstacle topics, explorer crash, bridge restart, Nav2 absent.
+- **Not yet checked:** real Nav2 with SLAM, real explore_lite, ROS Humble, and the B2's real base frame name.

@@ -88,3 +88,62 @@ objects to the dashboard, `PUT /api/obstacles {"frame_id": "map", "cell": 0.1, "
 (cell centres, replaced on every PUT). The bridge republishes them as `/ultron/object_obstacles`
 (`sensor_msgs/PointCloud2`, map frame, points at z = 0.05 and 0.3 m) for an obstacle layer to
 subscribe to. **Owner: navigation stack (Sahil); not done.**
+
+## As built: dashboard and bridge (deviations and details)
+
+Implemented in `ultron.dashboard` (app, models, live page) and `scripts/dashboard_bridge.py`, with the
+ROS-free half in `ultron/dashboard/ros_link.py`. Checked by unit tests and by
+`scripts/b2_standin/explore_check.sh` (real bridge against a fake explorer and a fake Nav2, Jazzy, network
+off); **not yet with explore_lite, Nav2 or the robot.** Where the contract above was silent or could not be
+followed exactly:
+
+- **`lease_until`** (and `since`) are ISO 8601 UTC strings to the second, e.g. `2026-11-28T14:03:10+00:00`;
+  `lease_until` is `null` when there is no lease (operator pause, or not paused). `lease_s` above 180 is
+  cut to 180, not refused; `lease_s <= 0` is a 422.
+- **`by` in the exploration state** is who asked for the current step (`operator` or `pipeline`), and also
+  `dashboard` (a lease ran out) or `explorer` (bridge: no frontiers left). The bridge keeps `by` when it
+  confirms PAUSED, so a pause stays its holder's.
+- **Holder rules.** `renew` only by the holder, else 409 `paused by <holder>`. Operator > pipeline: an
+  operator `pause` during a pipeline PAUSING/PAUSED, or an operator goal during a pipeline PAUSED, takes the
+  pause over (same `seq`, lease removed, detail `operator took over`). After that a pipeline `resume` or
+  `renew` gets 409 `paused by operator`: **the pipeline should read this as "the pause is no longer mine"
+  and stand down, not as an error.** A pipeline `pause` while the operator holds one is 409.
+- **Which goal is cancelled.** `resume`, a lease running out and `finish` mark the running goal CANCELED
+  (whoever owns it) before the new state is published, so the bridge stops it first. With the takeover rule
+  a pipeline pause can only have a pipeline goal running, as the contract says; an operator goal is
+  cancelled only by the operator's own `resume` or by `finish`. Reason for `finish`: explore_lite calls
+  `async_cancel_all_goals()` in `stop()`, and its destructor calls `stop()`, so stopping the node cancels
+  every goal on the Nav2 action server anyway. A late `ACCEPTED` for a cancelled goal is refused (409).
+- **FINISHING** refuses goals with 409 `exploring`, like STARTING and RESUMING.
+- **Fence extras:** `DELETE /api/fence` clears it; `python -m ultron.dashboard --fence FILE` loads one at
+  start-up (the dashboard keeps it in memory only, so pass it again after a restart). `/api/live` carries
+  it and the live page draws it. The fence's `frame_id` must equal the SLAM map's frame; otherwise the
+  bridge warns and publishes the map unfenced. With no fence, `/map_fenced` is the map unchanged and
+  `/keepout_mask` all 0, so an explorer reading `/map_fenced` still works.
+- **The explorer must be pointed at `/map_fenced`; the default command does not do it.** The bridge's
+  `explore_command` defaults to `ros2 launch explore_lite explore.launch.py use_sim_time:=false`, whose
+  package `params.yaml` sets `costmap_topic: map`: that explorer reads the **unfenced** map. Use a params
+  file, or e.g.
+  `ros2 run explore_lite explore --ros-args -p use_sim_time:=false -p costmap_topic:=/map_fenced -p costmap_updates_topic:=/map_fenced_updates -p return_to_init:=false`
+  (`costmap_updates_topic` set to an unused topic, so no partial update of the raw map lands on the fenced one).
+- **explore_lite facts the bridge relies on** (read from robo-friends/m-explore-ros2 `main`, 2026-11-28):
+  `explore/resume` is a relative `std_msgs/Bool` subscription, depth 10; false calls `stop()` (cancels all
+  Nav2 goals, publishes `exploration_paused`), true calls `resume()` (publishes `exploration_in_progress`,
+  replans). `explore/status` is `explore_lite_msgs/ExploreStatus` (`status` string), transient-local,
+  published without any `#ifdef`, so a built explore_lite always has the msgs package; only the bridge's
+  machine may lack it. The costmap subscription uses default (volatile) QoS and the constructor blocks
+  until the first costmap arrives, so the bridge repeats `/map_fenced` every 2 s (`fenced_period_s`).
+  The node subscribes to `explore/resume` after its costmap arrived, then waits for the Nav2 action server
+  with no timeout, then publishes `exploration_started`. Action name `navigate_to_pose`.
+- **Confirmations.** With `explore_lite_msgs`: EXPLORING on `exploration_started`; PAUSED / EXPLORING
+  after `explore/resume` was heard (the matching status is awaited up to 3 s). Without it: EXPLORING once
+  the node listens on `explore/resume` and the Nav2 action server is up, and the process has lived 1 s.
+  Whenever the bridge reports FAILED it has stopped the explorer, so FAILED never leaves it driving.
+  `exploration_complete` gives MAPPED with `by: explorer`; the node is left running (with
+  `return_to_init` it drives back) and the next Start replaces it.
+- **Bridge restarts.** Neither old goals nor old exploration requests are replayed: a page that shows
+  exploration while no explorer runs gets FAILED (`press Start again`). The explorer runs in its own
+  process group under `setpriv --pdeathsig TERM`, so it dies with the bridge even when the bridge is killed.
+- **Obstacles** are repeated at 1 Hz with a fresh stamp (an obstacle layer drops stale observations).
+- `pipeline/navigate.py` still posts goals without `by`, so they count as operator goals until it sends
+  `"by": "pipeline"`.

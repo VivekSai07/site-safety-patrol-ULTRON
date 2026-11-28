@@ -6,24 +6,41 @@ Launch: `scripts/dashboard.sh demo` (simulated demo-site) or `scripts/dashboard.
 
 ## Exploration (Site map → Start exploration)
 
-The button is on the live page but is a placeholder: it shows "not connected yet" and sends nothing.
-The server side is in place and tested (`/api/exploration`: start / finish, states
-IDLE → STARTING → EXPLORING → FINISHING → MAPPED / FAILED, confirmed only by the bridge; goals and
-exploration exclude each other). Planned bridge behaviour (option B): Start launches the explore node,
-Finish mapping publishes `explore/resume=false` then shuts the node down, Start again relaunches it and
-continues the same SLAM map. Explorer: robo-friends/m-explore-ros2 (package `explore_lite`).
+Contract: [EXPLORATION_CONTRACT.md](EXPLORATION_CONTRACT.md) (its last section lists what was built and
+where it deviates). Done on the dashboard and bridge side, checked by unit tests and by
+`scripts/b2_standin/explore_check.sh` (real bridge, fake explorer, fake Nav2; Jazzy, network off):
 
-- [ ] **Launch command** for the explore node, with the team's params file. Placeholder until then:
-      `ros2 launch explore_lite explore.launch.py` (its default `use_sim_time` is **true**: pass
-      `use_sim_time:=false` on the real robot).
-- [ ] **Namespace**, if the explore node runs in one (topics are relative: `explore/resume`, `explore/status`).
-- [ ] **`explore_lite_msgs` installed** where the bridge runs, so it can read `explore/status`
-      (`exploration_started`, `exploration_paused`, `exploration_complete`, `returning_to_origin`, ...).
-      Not installed on Aravind's laptop today; only `slam_toolbox` is.
-- [ ] **`return_to_init`**: keep it (robot drives back to where Start was last pressed when no frontiers
-      are left) or turn it off.
-- [ ] **Costmap topic** the explorer reads (`costmap_topic`; the package's params use `map`).
-- [ ] Decide to wire the button for real (then: bridge step, and Set goal is refused while exploring).
+- [x] `/api/exploration` start / pause / renew / resume / finish, states IDLE → STARTING → EXPLORING ⇄
+      PAUSING → PAUSED → RESUMING → … → FINISHING → MAPPED / FAILED, confirmed only by the bridge.
+      Pipeline pauses on a lease (60 s default, 180 s max) that the dashboard itself ends.
+- [x] Goals carry `by` (operator / pipeline); operator > pipeline > explorer; 409 `exploring`, `pausing`,
+      `operator goal underway`.
+- [x] Live page: the button starts and finishes mapping for real; a second button pauses / resumes;
+      the state shows next to the goal; the fence is drawn on the map.
+- [x] Bridge: Start launches `explore_command` as a child process (stopped with the bridge), Pause / Resume
+      publish `explore/resume`, Finish stops the node; explorer death or no answer → FAILED with why.
+- [x] Fence: `GET/PUT/DELETE /api/fence`, `--fence FILE`; bridge publishes `/map_fenced` and `/keepout_mask`.
+- [x] Obstacles: `GET/PUT /api/obstacles`; bridge publishes `/ultron/object_obstacles` (PointCloud2).
+- [x] A goal with no Nav2 fails after 3 s with `navigation not available` instead of hanging.
+
+Still open:
+
+- [ ] **Launch command** for the explore node, with the team's params file, **pointing `costmap_topic` at
+      `/map_fenced`**. The default (`ros2 launch explore_lite explore.launch.py use_sim_time:=false`) reads
+      the package params, `costmap_topic: map`: **the unfenced map, so it would chase the space behind the
+      windows.** A working example without a params file is in EXPLORATION_CONTRACT.md. Set it with
+      `-p explore_command:="..."` on the bridge.
+- [ ] **Namespace**, if the explore node runs in one (bridge parameters `explore_resume_topic`,
+      `explore_status_topic`; defaults `explore/resume`, `explore/status`).
+- [ ] **`explore_lite_msgs` installed** where the bridge runs, so it reads `explore/status`. Without it the
+      bridge infers the state from the process and its `explore/resume` subscription (works, less exact).
+- [ ] **`return_to_init`**: keep it or turn it off (the example command turns it off; in a small room a
+      drive back is of little use).
+- [ ] **The room's fence**: draw it (map frame, slightly inside the glass) and save it as a JSON file for
+      `--fence`. There is no drawing tool on the page yet; `PUT /api/fence` with curl.
+- [ ] **KeepoutFilter / obstacle layer** in the Nav2 params that read `/keepout_mask` and
+      `/ultron/object_obstacles` (navigation stack, Sahil).
+- [ ] A first run with **real explore_lite + Nav2 + SLAM**: start, pause, goal, resume, finish.
 
 ## Map, pose and goals (live page)
 
