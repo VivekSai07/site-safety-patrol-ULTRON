@@ -23,6 +23,7 @@ from .keyframes import KeyframeStore
 from .navigate import ContractNavigator, DashboardNavigator, Operator, Passive, free_space, http_json
 from .objects import ObjectMap
 from .survey import Survey
+from .sweep import Sweep
 from .verify import Verifier
 from ..protocol.__main__ import build_vlm, connect_dashboard
 from ..protocol.lidar import Calibration
@@ -79,9 +80,11 @@ def object_folder(args):
 
 def build_survey(args, store, vlm):
     folder = object_folder(args)
+    checked = vlm and not args.no_verify  # sweep objects are announced only once verified
+    sweep = Sweep(VlmDetector(vlm)) if checked and not args.no_sweep and args.detector != "vlm" else None
     return Survey(build_detector(args, vlm), ObjectMap(folder), KeyframeStore(folder), store,
                   load_calibration(args), args.interval, args.min_sharpness,
-                  verifier=Verifier(vlm) if vlm and not args.no_verify else None, map_id=map_id(args))
+                  verifier=Verifier(vlm) if checked else None, map_id=map_id(args), sweep=sweep)
 
 
 def print_events(store):
@@ -226,6 +229,8 @@ def main(argv=None):
     common.add_argument("--replay", help="recorded model answers instead of a model")
     common.add_argument("--no-cache", action="store_true")
     common.add_argument("--no-verify", action="store_true", help="survey without the vision model's second opinion")
+    common.add_argument("--no-sweep", action="store_true",
+                        help="no vision-model sweep for objects the detector misses (sweep.py)")
     commands = parser.add_subparsers(dest="command", required=True)
 
     survey = commands.add_parser("survey", parents=[common], help="stage 1: build the object map")

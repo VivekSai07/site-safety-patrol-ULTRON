@@ -119,9 +119,10 @@ class ObjectMap:
         """Objects found but not yet inspected, in the order they were found, and those in `again`
         that an earlier patrol inspected (or could not reach).
 
-        A single sighting is not trusted: detectors produce one-off false hits.
+        A single sighting is not trusted: detectors produce one-off false hits. An object the vision
+        model confirmed is, however few its sightings (the sweep adds objects from two).
         """
-        return [o for o in self._objects.values() if o.sightings >= min_sightings and (
+        return [o for o in self._objects.values() if (o.sightings >= min_sightings or o.verified) and (
             o.status == "FOUND" or o.status in ("INSPECTED", "UNREACHABLE") and o.id in again)]
 
     def _new_id(self, kind):
@@ -165,6 +166,13 @@ class ObjectMap:
         if len(near) > 1 and near[1].id in near[0].apart:
             return AMBIGUOUS  # two different objects stand within reach: position cannot decide
         return near[0] if near else None
+
+    def find(self, sighting, exclude=()):
+        """The known object of its kind this sighting belongs to, None, or AMBIGUOUS. Changes nothing."""
+        with self._lock:
+            if sighting.cells:
+                return self._match_footprint(sighting.detection.kind, sighting, exclude)
+            return self._match(sighting.detection.kind, sighting.position, 0.0, exclude)
 
     def observe(self, sighting, stamp, exclude=(), known=None, create=True, frozen=()):
         """The object this sighting belongs to: a known one nearby, else a new one (unless not

@@ -6,13 +6,16 @@ and keyframes are on disk after every frame, so pausing is simply not feeding it
 import copy
 import math
 
+import numpy as np
+
 from PIL import Image
 
 from .anchor import Anchoring
 from .catalog import KINDS
 from .lift import lift
 from .moved import look_through
-from .objects import MIN_SHARE, footprint, offset, touching
+from .objects import AMBIGUOUS, MIN_SHARE, footprint, offset, touching
+from .sweep import rectangle
 from .types import Sighting
 from .verify import NONE
 
@@ -47,6 +50,17 @@ MISSED_SPREAD = 0.5     # metres
 # sightings split objects, and their frames are useless for inspection: they are not used.
 MAX_RANGE = 12.0        # metres
 ANNOUNCE = 3            # sightings before an object is announced: single boxes are often false hits or parts
+# The vision-model sweep (`sweep.py`) adds an object only where the fast detector has none: a sweep
+# box overlapping one of the fast detector's of its kind in the same frame is that object; one of
+# another kind covering much the same box is a dispute about the kind, which verification settles.
+# (Another kind's box merely inside it is not: on the hall recording the hose cabinet's box lies
+# inside the leaning ladder's.) A new object needs this many sweep frames placing it.
+SWEEP_OVERLAP = 0.3
+SWEEP_DISPUTE = 0.5     # intersection over union
+# Nor is a sweep object lying on the footprint of a mapped object of another kind new: it is that
+# object under another name (hall recording: an "extinguisher" in the hose cabinet).
+SWEEP_ON_OTHER = 0.5    # share of its floor cells within a cell of the other object's footprint
+SWEEP_AGREE = 2
 
 
 def new_look(last, pose):
@@ -73,6 +87,40 @@ def overlap(a, b):
     return max(shared / (area_a + area_b - shared), (shared / min(area_a, area_b)) * SAME_BOX_OVERLAP / PART_OF_BOX)
 
 
+def iou(a, b):
+    width = min(a[2], b[2]) - max(a[0], b[0])
+    height = min(a[3], b[3]) - max(a[1], b[1])
+    if width <= 0 or height <= 0:
+        return 0.0
+    shared = width * height
+    return shared / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - shared)
+
+
+def plausible(sighting):
+    """Can the detector be right? Not if the object is too far away to place, or the wrong size
+    for its kind (a look-alike). A box cut off by the image edge may show any part of it."""
+    if sighting.distance and not sighting.approximate and sighting.distance > MAX_RANGE:
+        return False
+    box, (low, high) = sighting.detection.box, KINDS[sighting.detection.kind].size
+    cut_off = box[1] <= EDGE or box[3] >= 1000 - EDGE
+    return sighting.height is None or (cut_off or low <= sighting.height) and sighting.height <= high
+
+
+def same_place(a, b):
+    """Do two sightings of one kind place the object at the same spot?"""
+    if a.cells and b.cells:
+        return touching(a.cells, np.asarray(b.cells, dtype=int).reshape(-1, 2)) >= MIN_SHARE
+    return math.dist(a.position, b.position) <= KINDS[a.detection.kind].same_object_radius
+
+
+def on(sighting, site_object):
+    """Does the sighting lie on the mapped object (its footprint; its place, without one)?"""
+    if sighting.cells and site_object.cells:
+        return touching(sighting.cells, footprint(site_object), 1) >= SWEEP_ON_OTHER
+    return bool(site_object.position) and (
+        math.dist(sighting.position, site_object.position) <= KINDS[site_object.kind].same_object_radius)
+
+
 def distinct(detections):
     """Best-scoring detections first, dropping repeats of the same thing."""
     kept = []
@@ -84,9 +132,11 @@ def distinct(detections):
 
 class Survey:
     def __init__(self, detector, objects, keyframes, store, calibration=None, interval=1.0, min_sharpness=0.0,
-                 verifier=None, map_id=None):
+                 verifier=None, map_id=None, sweep=None):
         self.detector, self.objects, self.keyframes, self.store = detector, objects, keyframes, store
         self.verifier = verifier            # optional second opinion from the vision model, one call per object
+        self.sweep = sweep                  # optional vision-model sweep for objects the detector misses
+        self.swept = set()                  # objects the sweep added
         self.calibration = calibration
         self.interval = interval            # seconds between processed frames
         self.min_sharpness = min_sharpness  # frames blurrier than this are skipped
@@ -128,17 +178,14 @@ class Survey:
         except Exception as error:  # a failing model must not end the patrol
             self.store.emit("error", stage="detect", message=str(error))
             return []
+        if self.sweep and not (self.anchoring and self.anchoring.state == Anchoring.SUSPECT):
+            self.sweep.offer(frame, detections)
         seen = []
         # Detections the tracker already knows go first, so a newcomer cannot take their object.
         for detection in sorted(detections, key=lambda d: d.track not in self._tracks):
             sighting = lift(frame, detection, self.calibration)
-            if sighting.distance and not sighting.approximate and sighting.distance > MAX_RANGE:
+            if not plausible(sighting):
                 continue
-            low, high = KINDS[detection.kind].size
-            # A box cut off by the image edge shows only part of the object: it may be any size or larger.
-            cut_off = detection.box[1] <= EDGE or detection.box[3] >= 1000 - EDGE
-            if sighting.height is not None and not ((cut_off or low <= sighting.height) and sighting.height <= high):
-                continue  # wrong size for its kind: a look-alike
             measured = sighting.position is not None and not sighting.approximate
             create, landmark = True, None
             if self.anchoring:
@@ -328,17 +375,95 @@ class Survey:
             self._replace(removed, target)
             self.store.emit("object_merged", object=removed, into=target, announced=removed in self.announced)
             self.announced.discard(removed)
+        self.apply_sweep()
         self.judge_missed()
         self.announce(min_sightings, settled=True)
         self.verify(min_sightings)
         self.announce(min_sightings, settled=True)  # a confirmed object counts as found whatever its sightings
         return merged
 
+    def apply_sweep(self):
+        """Take in the vision-model sweep's answers (waiting for calls still running). Ends the sweep.
+
+        Its boxes are placed like the detector's. One on an object the map has makes that object seen
+        in this patrol (so a stored object the detector missed is not taken for gone); one where the
+        fast detector boxed something in the same frame is skipped. A new object needs SWEEP_AGREE
+        sweep frames placing it at one spot; it is announced once verification confirms it."""
+        if self.sweep is None:
+            return
+        answered, failed = self.sweep.results()
+        self.sweep = None
+        if self.anchoring and self.anchoring.state == Anchoring.SUSPECT:
+            self.store.emit("vision_sweep", frames=len(answered), failed=failed, skipped="localisation suspect")
+            return
+        confirmed, new = set(), []  # map objects the sweep saw; (frame, sighting) of objects not on the map
+        for frame, fast, found in answered:
+            for detection in distinct(found):
+                if any(overlap(detection.box, d.box) > SWEEP_OVERLAP if d.kind == detection.kind
+                       else iou(detection.box, d.box) > SWEEP_DISPUTE for d in fast):
+                    continue
+                sighting = lift(frame, rectangle(detection), self.calibration)
+                if sighting.position is None or sighting.approximate or not plausible(sighting):
+                    continue
+                match = self.objects.find(sighting)
+                if match is AMBIGUOUS:
+                    continue
+                if match is not None:
+                    if match.status in ("FOUND", "INSPECTED"):
+                        confirmed.add(match.id)
+                    continue
+                if any(o.kind != detection.kind and o.status in ("FOUND", "INSPECTED") and on(sighting, o)
+                       for o in self.objects.all()):
+                    continue
+                if (self.anchoring and self.anchoring.state != Anchoring.ANCHORED
+                        and self.anchoring.near(detection.kind, sighting.position)):
+                    continue  # may be a stored object, displaced by poses not yet lined up
+                new.append((frame, sighting))
+        for object_id in confirmed:
+            self.seen_now[object_id] = self.seen_now.get(object_id, 0) + 1
+        groups = []  # one list of (frame, sighting) per object, at most one sighting per frame
+        for frame, sighting in new:
+            group = next((g for g in groups if g[0][1].detection.kind == sighting.detection.kind
+                          and all(f is not frame for f, _ in g) and any(same_place(sighting, s) for _, s in g)), None)
+            if group is None:
+                groups.append([(frame, sighting)])
+            else:
+                group.append((frame, sighting))
+        added = []
+        # Better supported first: of two kinds the model gave one thing in different frames, the
+        # more frequent wins and the other lies on it.
+        for group in sorted(groups, key=len, reverse=True):
+            if len(group) < SWEEP_AGREE or any(
+                    o.kind != group[0][1].detection.kind and on(group[0][1], o) for o in map(self.objects.get, added)):
+                continue
+            site_object = None
+            for frame, sighting in group:
+                found = self.objects.observe(sighting, frame.stamp, known=site_object and site_object.id,
+                                             create=site_object is None)
+                if found is None or site_object and found.id != site_object.id:
+                    continue
+                site_object = found
+                self.keyframes.offer(frame, site_object, sighting, frame.sharpness(), any_range=True)
+                self.seen_now[site_object.id] = self.seen_now.get(site_object.id, 0) + 1
+            if site_object and site_object.id not in added:  # two groups may join one object
+                self.swept.add(site_object.id)
+                if self.anchoring:
+                    self.created.add(site_object.id)
+                added.append(site_object.id)
+        # Seen in one sweep frame only: not added, but worth a look by whoever watches the patrol.
+        single = [{"kind": g[0][1].detection.kind, "position": [round(v, 2) for v in g[0][1].position]}
+                  for g in groups if len(g) < SWEEP_AGREE]
+        self.store.emit("vision_sweep", frames=len(answered), failed=failed, confirmed=sorted(confirmed),
+                        added=added, unconfirmed=single)
+
     def verify(self, min_sightings=3):
-        """Ask the vision model about every well-seen object it has not judged yet."""
+        """Ask the vision model about every well-seen object it has not judged yet, and about those
+        the sweep added."""
         if self.verifier is None:
             return
-        for site_object in self.objects.pending(min_sightings):
+        swept = [self.objects.get(i) for i in sorted(self.swept) if self.objects.get(i)]
+        swept = [o for o in swept if o.status == "FOUND" and o.sightings < min_sightings]
+        for site_object in self.objects.pending(min_sightings) + swept:
             views = self.keyframes.select(site_object, budget=VERIFY_VIEWS)
             if site_object.verified or not views:
                 continue

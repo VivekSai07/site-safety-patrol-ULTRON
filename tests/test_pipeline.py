@@ -966,6 +966,93 @@ class VerifyTest(Workspace):
         self.assertEqual(self.opinion.asked, [])
 
 
+class SweepTest(Workspace):
+    """The vision-model sweep adds what the fast detector missed, and nothing else."""
+
+    class VisionModel:
+        """Sweep detector stand-in: sees an extinguisher in the middle of every frame it is shown."""
+
+        def __init__(self):
+            self.shown = []
+
+        def detect(self, frame):
+            self.shown.append(frame.name)
+            return [Detection("fire_extinguisher", sized_box("fire_extinguisher", 3.0), 0.8)]
+
+    def swept_survey(self, verdict="fire_extinguisher"):
+        from ultron.pipeline.sweep import Sweep
+        from ultron.pipeline.verify import Verifier
+        self.model = self.VisionModel()
+        self.survey = Survey(SeesEverything(), self.objects, self.keyframes, self.store, CALIBRATION, interval=0,
+                             verifier=Verifier(Opinion({}, verdict)), sweep=Sweep(self.model))
+
+    def look(self, name, sides, target=(5.0, 5.0)):
+        for stamp, side in enumerate(sides):
+            self.survey.feed(frame(f"{name}-{side}", facing(target, side, 3.0), float(stamp), depth=3.0))
+
+    def sweep_event(self):
+        return next(e for e in self.store.events(limit=None) if e["kind"] == "vision_sweep")
+
+    def test_an_object_the_detector_missed_is_added_when_two_sweep_frames_agree(self):
+        self.swept_survey()
+        self.look("nothing", (0, 2))  # the fast detector finds nothing in these frames
+        self.survey.tidy()
+        [added] = self.objects.all()
+        self.assertEqual((added.id, added.sightings, added.verified), ("FEX-001", 2, True))
+        self.assertAlmostEqual(added.position[0], 5.0, delta=0.3)
+        self.assertAlmostEqual(added.position[1], 5.0, delta=0.3)
+        self.assertEqual(self.sweep_event()["added"], ["FEX-001"])
+        self.assertIn("FEX-001", [e["object"] for e in self.store.events(limit=None) if e["kind"] == "object_found"])
+        self.assertEqual([o.id for o in self.objects.pending()], ["FEX-001"])  # verified: it gets inspected
+
+    def test_frames_from_one_place_are_one_look(self):
+        self.swept_survey()
+        self.look("nothing", (0, 0, 0))
+        self.survey.tidy()
+        self.assertEqual(self.model.shown, ["nothing-0"])
+        self.assertEqual(self.objects.all(), [])
+        self.assertEqual([c["kind"] for c in self.sweep_event()["unconfirmed"]], ["fire_extinguisher"])
+
+    def test_a_box_the_detector_also_drew_adds_nothing(self):
+        self.swept_survey()
+        self.look("fire_extinguisher", (0, 2, 4))
+        self.survey.tidy()
+        self.assertEqual([(o.id, o.sightings) for o in self.objects.all()], [("FEX-001", 3)])
+        self.assertEqual(self.sweep_event()["added"], [])
+
+    def test_a_mapped_object_under_another_name_is_not_added(self):
+        self.swept_survey(verdict="fire_hydrant")
+        self.look("fire_hydrant", (0, 1, 7))  # the cabinet is mapped; the model calls it an extinguisher
+        self.survey.sweep.taken = [(f, [], fut) for f, _, fut in self.survey.sweep.taken]
+        self.survey.tidy()
+        self.assertEqual([o.kind for o in self.objects.all()], ["fire_hydrant"])
+
+    def test_an_object_the_vision_model_rejects_is_not_announced(self):
+        self.swept_survey(verdict="none")
+        self.look("nothing", (0, 2))
+        self.survey.tidy()
+        self.assertEqual([o.status for o in self.objects.all()], ["REJECTED"])
+        self.assertNotIn("object_found", [e["kind"] for e in self.store.events(limit=None)])
+
+    def test_a_known_object_the_detector_missed_counts_as_seen(self):
+        self.swept_survey()
+        self.look("fire_extinguisher", (0, 1, 7))
+        self.survey.seen_now.clear()  # as if found in an earlier patrol
+        self.survey.sweep.taken = [(f, [], fut) for f, _, fut in self.survey.sweep.taken]  # ... and missed now
+        self.survey.tidy()
+        self.assertEqual([o.id for o in self.objects.all()], ["FEX-001"])
+        self.assertEqual(self.sweep_event()["confirmed"], ["FEX-001"])
+        self.assertTrue(self.survey.seen_now.get("FEX-001"))
+
+    def test_no_answer_from_the_vision_model_changes_nothing(self):
+        self.swept_survey()
+        self.model.detect = unittest.mock.Mock(side_effect=OSError("offline"))
+        self.look("nothing", (0, 2))
+        self.survey.tidy()
+        self.assertEqual(self.objects.all(), [])
+        self.assertEqual(self.sweep_event()["failed"], 2)
+
+
 class CalibrateTest(unittest.TestCase):
     """A detector whose prompts behave like the real one did: wording decides what is found."""
 
