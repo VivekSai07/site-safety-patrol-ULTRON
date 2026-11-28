@@ -187,3 +187,43 @@ class TestReId(unittest.TestCase):
         from ultron.spatial.memory import SpatialMemory
         reloaded = SpatialMemory(Path(self._tmp.name), embedder=FakeEmbedder())
         self.assertEqual(reloaded.was_inspected("ladder-1"), "HALL-1")
+
+
+@unittest.skipIf(np is None, "numpy and Pillow required")
+class TestPlaceMemory(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        from ultron.spatial.memory import SpatialMemory
+        self.memory = SpatialMemory(self.root, embedder=FakeEmbedder())
+
+    def test_sampling_by_distance_turn_and_time(self):
+        self.assertTrue(self.memory.remember_place(img(0, 64), (0.0, 0.0, 0.0), stamp=100.0))
+        # too soon, even though it moved far
+        self.assertFalse(self.memory.remember_place(img(0, 64), (5.0, 0.0, 0.0), stamp=100.5))
+        # late enough but barely moved and barely turned
+        self.assertFalse(self.memory.remember_place(img(0, 64), (0.5, 0.0, 0.2), stamp=102.0))
+        # moved a metre
+        self.assertTrue(self.memory.remember_place(img(0, 64), (1.6, 0.0, 0.2), stamp=103.0))
+        # turned on the spot by 90 degrees (wrap-around across pi must count the short way)
+        self.assertTrue(self.memory.remember_place(img(0, 64), (1.6, 0.0, 0.2 + math.pi / 2), stamp=104.0))
+        self.assertEqual(len(self.memory.places), 3)
+        self.assertTrue((self.root / self.memory.places[0]["thumbnail"]).is_file())
+
+    def test_no_pose_no_place(self):
+        self.assertFalse(self.memory.remember_place(img(0, 64), None, stamp=100.0))
+
+    def test_sampling_state_survives_reload(self):
+        self.memory.remember_place(img(0, 64), (0.0, 0.0, 0.0), stamp=100.0)
+        from ultron.spatial.memory import SpatialMemory
+        reloaded = SpatialMemory(self.root, embedder=FakeEmbedder())
+        self.assertFalse(reloaded.remember_place(img(0, 64), (0.1, 0.0, 0.0), stamp=200.0))
+        self.assertEqual(len(reloaded.places), 1)
+
+    def test_place_without_embedder_keeps_pose_and_thumbnail(self):
+        from ultron.spatial.memory import SpatialMemory
+        silent = SpatialMemory(self.root, embedder=None)
+        self.assertTrue(silent.remember_place(img(0, 64), (0.0, 0.0, 0.0), stamp=100.0))
+        self.assertIsNone(silent.places[0]["embedding"])
+        self.assertTrue((self.root / silent.places[0]["thumbnail"]).is_file())

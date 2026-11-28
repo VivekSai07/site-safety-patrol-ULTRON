@@ -188,3 +188,50 @@ class SpatialMemory:
         """The mission that inspected this object, or None."""
         inspected = self.objects.get(object_id, {}).get("inspected")
         return inspected["mission"] if inspected else None
+
+    # places ---------------------------------------------------------------------
+    def remember_place(self, image, pose, stamp=None, mission_id=""):
+        """Store a patrol frame when the robot has moved or turned enough; True when stored.
+
+        DimOS samples places by distance and time; a patrol also pans in place,
+        so a large enough turn counts as movement too.
+        """
+        if pose is None:
+            return False
+        stamp = time.time() if stamp is None else float(stamp)
+        x, y = float(pose[0]), float(pose[1])
+        yaw = float(pose[2]) if len(pose) > 2 else 0.0
+        if self._last_place is not None:
+            last_x, last_y, last_yaw, last_stamp = self._last_place
+            turned = abs((yaw - last_yaw + math.pi) % (2 * math.pi) - math.pi)
+            if stamp - last_stamp < self.config.place_interval:
+                return False
+            if (math.dist((x, y), (last_x, last_y)) < self.config.place_distance
+                    and turned < self.config.place_angle):
+                return False
+        index = len(self.places)
+        thumbnail = self._thumbnail(image, f"places/{index:05d}.jpg")
+        embedding = self._embed(image)
+        key = f"p{index:05d}" if embedding is not None else None
+        if key:
+            self._place_embeddings[key] = embedding
+        self.places.append({"pose": [x, y, yaw], "stamp": stamp, "mission": mission_id,
+                            "thumbnail": thumbnail, "embedding": key})
+        self._last_place = (x, y, yaw, stamp)
+        self._save()
+        return True
+
+    def _thumbnail(self, image, name, max_side=320):
+        if image is None:
+            return None
+        try:
+            from PIL import Image
+            if not isinstance(image, Image.Image):
+                image = Image.fromarray(np.asarray(image, dtype=np.uint8))
+            small = image.convert("RGB").copy()
+            small.thumbnail((max_side, max_side))
+            small.save(self.root / name, "JPEG", quality=80)
+            return name
+        except Exception as error:
+            logger.warning("thumbnail failed: %s", error)
+            return None
