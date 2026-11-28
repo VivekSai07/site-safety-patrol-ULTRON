@@ -1,0 +1,20 @@
+# cloud_filter parameters for the simulated Helios-32 (sim). Simulation choices, not hardware settings.
+/**:
+  ros__parameters:
+    expected_frame: lidar_link
+    input_reliability: reliable   # sim cloud bridge QoS TO_VERIFY (Agent D); use best_effort if it offers best-effort
+    range_min: 0.30
+    range_max: 40.0
+    z_min: -1.5
+    z_max: 3.0
+    self_box_enabled: true
+    # config/autonomy/sim_slam.yaml self_filter box (base_link [-0.55,-0.38,-0.75]..[0.50,0.38,0.60])
+    # shifted by the sim lidar mount (0.342, 0, 0.18); the sim lidar already applies it.
+    self_box_min: [-0.892, -0.38, -0.93]
+    self_box_max: [0.158, 0.38, 0.42]
+    voxel_size: 0.10
+    deskew: false
+    deskew_reference: end
+    imu_time_offset_s: 0.0
+    imu_to_cloud_rpy: [0.0, 0.0, 0.0]
+    stats_period_s: 10.0

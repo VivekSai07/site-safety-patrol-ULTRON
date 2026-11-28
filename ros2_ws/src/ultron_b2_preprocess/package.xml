@@ -2,13 +2,17 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>ultron_b2_preprocess</name>
-  <version>0.0.1</version>
-  <description>STUB (owner: Agent B). Self-filter crop box, range/height crop, voxel downsample, optional deskew; pointcloud_to_laserscan config. Python+numpy first, C++ later if throughput needs it.</description>
+  <version>0.1.0</version>
+  <description>Lidar preprocessing for the ULTRON B2 stack (owner: Agent B): self-filter crop box, range/height crop, voxel downsample, optional rotation deskew (vectorized numpy) and pointcloud_to_laserscan configs.</description>
   <maintainer email="ultron@example.invalid">ULTRON team</maintainer>
   <license>Apache-2.0</license>
 
   <exec_depend>rclpy</exec_depend>
-  <exec_depend>ultron_b2_interfaces</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>pointcloud_to_laserscan</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
 
   <export>
     <build_type>ament_python</build_type>
