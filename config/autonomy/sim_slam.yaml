@@ -20,6 +20,9 @@ topics:
   cmd_vel: /ultron/sim/cmd_vel
   localization_state: /ultron/sim/localization_state
   status: /ultron/sim/bridge_status
+  nav_cmd_raw: /ultron/sim/nav/cmd_vel_raw
+  operator_enable: /ultron/sim/operator_enable
+  gate_status: /ultron/sim/motion_gate_status
 self_filter:
   # Crop box in base_link removing returns from the robot's own body and legs,
   # as a real driver/filter would. Simulation choice; measure on the robot.
@@ -62,3 +65,14 @@ localization:
   degraded_timeout_s: 3.0       # DEGRADED longer than this -> LOST
   jump_threshold_m: 0.5         # pose jump between scans -> DEGRADED (no silent relocalization)
   jump_threshold_rad: 0.35
+navigation:
+  # Nav2 adapter and motion gate (simulation choices, fixed before Nav phase evaluation).
+  operator_enable_max_age_s: 1.0   # operator enable must be re-asserted at least this often
+  command_max_age_s: 0.3           # Nav2 command older than this is not forwarded
+  goal_xy_tolerance_m: 0.25
+  goal_yaw_tolerance_rad: 0.35
+  default_timeout_s: 90.0
+  settle_time_s: 0.8               # REACHED + still for this long + VALID -> capture ready
+  settle_speed_m_s: 0.02
+  settle_yaw_rate_rad_s: 0.03
+  target_clearance_m: 0.55         # goal footprint must be free and known in the saved map

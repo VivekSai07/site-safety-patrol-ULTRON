@@ -126,3 +126,53 @@ Findings fixed during the phase:
 3. `map_start_pose` is applied by slam_toolbox only when the first scan is processed (identity `map -> odom` before); confirmed with a 3 m offset (parameter `[3.0, 0.0, 0.0]`, pose jumped to x = 2.88). Samples before the first scored scan are INITIALIZING.
 
 Limitations: match score measures agreement with the map, not accuracy; a repetitive environment could match confidently at a wrong pose. No covariance from the backend. Single hall and route family; static scene; one map. Consumers see VALID ~0.25 s after a pose's time (scan period + scoring delay). Map versioning beyond v1 and Nav2 integration are next.
+
+## Phase 5 — Robustness and realism
+
+**Date:** 2026-11-28 · **Code:** time-sliced lidar (`lidar.py`), walking people (`hall_scene.py`), bridge options `--people`, `--motion-distortion`, `--odom-scale`, `--lidar-profile`, `--control-hz`, scenario fault `lidar_dropout`, `latency_probe.py` (scan→TF latency, CPU/RAM sampler) · **Matrix:** `runs/phase5/matrix.sh` (local). Thresholds unchanged from Phases 3/4; nothing retuned.
+
+Conditions: *walking* = three people walking 1 m/s (replacing the static ones; map reference excludes people); *odom 3×* = all odometry error terms ×3 (final drift 4.1 m RMSE); *distortion* = each 36° slice of a sweep cast from its own true pose, stamp = sweep start, no deskewing; *20 Hz* = 0.4° columns at 20 Hz (100 Hz control); *dropout* = 60 % of points dropped for 6 s while moving.
+
+Mapping (`hall_survey_loop`, 1.5×, 20 Hz at 1×):
+
+| Run | Verdict | ATE RMSE / max | Yaw RMSE | Odom-only RMSE | Precision | Wall recall | Scan→TF latency median/p95 |
+|---|---|---|---|---|---|---|---|
+| Baseline (regression after lidar changes) | PASS | 0.069 / 0.160 m | 1.15° | 1.25 m | 0.981 | 0.951 | 0.08 / 0.10 s |
+| Walking people | PASS | 0.055 / 0.137 m | 0.98° | 1.25 m | 0.985 | 0.959 | 0.06 / 0.10 s |
+| Odometry error 3× | PASS | 0.059 / 0.151 m | 1.71° | 4.10 m | 0.999 | 0.956 | 0.08 / 0.10 s |
+| Motion distortion | PASS | 0.049 / 0.091 m | 0.67° | 1.25 m | 1.000 | 0.955 | 0.18 / 0.20 s (stamp = sweep start) |
+| 20 Hz lidar | PASS | 0.051 / 0.128 m | 0.84° | 1.28 m | 0.995 | 0.968 | 0.05 / 0.05 s |
+| Combined: walking + distortion + odom 3× | PASS | 0.068 / 0.137 m | 1.63° | 4.10 m | 0.971 | 0.955 | 0.18 / 0.20 s |
+
+Localization on the Phase 3 map (1.5×; initial guess 0.5 m / 15° off unless noted):
+
+| Run | Verdict | First VALID | VALID fraction | False VALID | While VALID RMSE / max | Notes |
+|---|---|---|---|---|---|---|
+| Baseline (regression) | PASS | 0.4 s | 1.00 | 0 | 0.040 / 0.086 m | |
+| Walking people | PASS | 0.4 s | 1.00 | 0 | 0.041 / 0.094 m | median match score 0.97 |
+| Odometry error 3× | PASS | 0.4 s | 0.99 | 0 | 0.042 / 0.089 m | |
+| Motion distortion | PASS | 0.4 s | 0.99 | 0 | 0.048 / 0.085 m | |
+| Dropout 60 % for 6 s (exact guess) | PASS | 0.4 s | 1.00 | 0 | 0.041 / 0.091 m | VALID throughout dropout, max error 0.027 m |
+| Combined kidnap: walking + distortion + odom 3× | PASS | 0.4 s | 0.81 | 0 | 0.055 / 0.120 m | kidnap detected 0.38 s after teleport (0.08 s without distortion); error up to 3.79 m only while not VALID |
+
+Resources at real time (1.0×, 16-core laptop; % of one core; simulator bridge is not deployed on the robot):
+
+| Process | Mapping | Localization |
+|---|---|---|
+| slam_toolbox | 8.4 % mean, 17.3 % p95, 85 MB | 26.2 % mean, 83.8 % p95, 92 MB |
+| ULTRON logger / localization monitor | 14.0 %, 65 MB | 16.8 %, 70 MB |
+| Simulator bridge (MuJoCo + lidar) | 176 %, 110 MB | 177 %, 110 MB |
+| Scan → `map->odom` update latency | median 0.06 s, p95 0.08 s, max 0.10 s | same |
+
+Latency is sim-time from a scan's stamp to the first `map->odom` carrying it (slam_toolbox updates it for every received scan, measured in a bag); it is not full scan-matching time. Jetson Orin figures are not measured.
+
+Findings fixed during the phase:
+1. **Concurrent `mj_multiRay` on one `MjData` is unsafe** (mujoco 3.3.7): 0–31 rays per distorted sweep differed run to run. Same-origin sweeps had shown 0/76,800 mismatches against exact rays, so Phases 1–4 results were not visibly affected, but the race was real. Each worker now owns an `MjData` synced before every scan; regression test asserts threaded == single-threaded bit for bit. Baselines re-run after the fix: PASS (rows above).
+2. Resource sampler named its stop event `_stop`, overriding a `threading.Thread` method, and crashed on join; the first matrix attempt therefore left slam_toolbox/logger processes running, and **later runs overlapped with several slam_toolbox instances** in one domain. That attempt is discarded (`runs/phase5/invalid_first_attempt/`). Fixes: rename, children stopped even if sampling fails, and a preflight that refuses to start while any simulation stack process runs.
+3. The sampler thread died silently when process groups were added after start (dictionary changed during iteration); now locked, and errors are recorded instead of killing it.
+4. The localization evaluator applied blackout checks (must go STALE) to the dropout fault; only blackouts are now checked that way (dropout must not produce false VALID, covered globally).
+5. Process note: editing `sim_slam.yaml` while the matrix ran broke one run's final evaluation (20 Hz); it was re-evaluated afterwards from its saved outputs.
+
+Deferred: long low-feature corridor (degenerate along-track geometry) — not representative of the ~10 × 10 m course; noted as an open risk for corridor-like venues.
+
+Unit tests: `tests/test_autonomy_robustness.py` (7): per-slice pose casting exact, static pose function equals undistorted, threaded determinism, walkers on their segments, people modes, dropout scenario and 20 Hz profile, sampler/latency summary. Full suites: system Python 117 (23 skipped), `.venv-ros` rendered 117 (5 skipped), ROS/SLAM opt-in 23 OK.

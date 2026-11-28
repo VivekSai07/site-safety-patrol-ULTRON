@@ -14,6 +14,8 @@ os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
 
 import argparse  # noqa: E402
 import array  # noqa: E402
+from collections import deque  # noqa: E402
+import dataclasses  # noqa: E402
 import json  # noqa: E402
 import math  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -21,7 +23,7 @@ import time  # noqa: E402
 
 import numpy as np  # noqa: E402
 
-from .config import CONFIG_DIR, load_route, load_scenario, load_sim_slam_config  # noqa: E402
+from .config import CONFIG_DIR, load_lidar_profile, load_route, load_scenario, load_sim_slam_config  # noqa: E402
 from .driver import KinematicDriver, route_segments  # noqa: E402
 from .hall_scene import HallSim  # noqa: E402
 from .lidar import SimLidar  # noqa: E402
@@ -50,7 +52,8 @@ def _quat(yaw):
 
 
 class SimBridge:
-    def __init__(self, config, route=None, rate=1.0, out=None, scenario=None):
+    def __init__(self, config, route=None, rate=1.0, out=None, scenario=None, people='static',
+                 distortion=False, odom_scale=1.0, lidar_profile_path=None):
         import rclpy
         from rclpy.node import Node
         from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
@@ -69,7 +72,9 @@ class SimBridge:
         if not 0 < self.rate <= 10:
             raise ValueError('rate must be in (0, 10]')
         lidar_profile = config.lidar
-        self.sim = HallSim(lidar_profile.mount_xyz_m, lidar_profile.mount_rpy_rad)
+        self.people, self.distortion, self.odom_scale = people, bool(distortion), float(odom_scale)
+        self.lidar_profile_path = lidar_profile_path
+        self.sim = HallSim(lidar_profile.mount_xyz_m, lidar_profile.mount_rpy_rad, people=people)
         if route and scenario:
             raise ValueError('Use either a route or a scenario')
         start = route.start_pose if route else scenario.start_pose if scenario else DEFAULT_START
@@ -87,10 +92,24 @@ class SimBridge:
         self.wait_until = None
         self.blackout_until = float('-inf')
         self.scans_suppressed = 0
-        self.odom = OdometrySimulator(config.odometry)
+        self.points_dropped_by_fault = 0
+        if not 0 <= self.odom_scale <= 20:
+            raise ValueError('odom_scale must be in [0, 20]')
+        scaled = dict(config.odometry)
+        for key in ('linear_scale_error', 'yaw_rate_bias_rad_s', 'linear_noise_std', 'angular_noise_std'):
+            scaled[key] *= self.odom_scale
+        self.odom = OdometrySimulator(scaled)
+        self.period = 1.0 / lidar_profile.scan_rate_hz
+        self.history = deque(maxlen=int(4 * self.period * config.odometry['rate_hz']) + 4)
+        self.dropout_until, self.dropout_p = float('-inf'), 0.0
+        self.fault_rng = np.random.default_rng(config.odometry['seed'] + 2)
         self.start = start
         self.dt = 1.0 / config.odometry['rate_hz']
-        self.scan_every = max(1, round(1.0 / (lidar_profile.scan_rate_hz * self.dt)))
+        ratio = 1.0 / (lidar_profile.scan_rate_hz * self.dt)
+        if abs(ratio - round(ratio)) > 1e-6 or round(ratio) < 1:
+            raise ValueError(f'Lidar rate {lidar_profile.scan_rate_hz} Hz is not an integer divisor of the '
+                             f'{1 / self.dt:.0f} Hz control rate; use --control-hz')
+        self.scan_every = round(ratio)
         self.t = CLOCK_START_S
         self.ignored_commands = 0
 
@@ -157,6 +176,11 @@ class SimBridge:
             'route': None if not self.route else {'name': self.route.name, 'sha256': self.route.sha256},
             'scenario': None if not self.scenario else {'name': self.scenario.name, 'sha256': self.scenario.sha256},
             'rate': self.rate, 'clock_start_s': CLOCK_START_S, 'noise_seed': self.config.odometry['seed'],
+            'people': self.people, 'motion_distortion': self.distortion, 'odom_error_scale': self.odom_scale,
+            'lidar_profile': {'name': self.config.lidar.name, 'path': self.lidar_profile_path,
+                              'scan_rate_hz': self.config.lidar.scan_rate_hz,
+                              'horizontal_resolution_deg': self.config.lidar.horizontal_resolution_deg},
+            'scan_stamp': 'sweep start (points carry time offsets)' if self.distortion else 'single pose at stamp',
             'scan_geometry': {'angle_min': g.angle_min, 'angle_max': g.angle_max,
                               'angle_increment': g.angle_increment, 'bins': g.bins,
                               'z_band_base_link': [g.z_min, g.z_max]},
@@ -204,8 +228,28 @@ class SimBridge:
                 self._event('TELEPORT', true_before=list(before), true_after=list(step[1]),
                             note='odometry not informed (kidnapped robot)')
             elif step[0] == 'fault':
-                self.blackout_until = self.t + step[2]
-                self._event('FAULT_START', fault=step[1], duration_s=step[2])
+                if step[1] == 'lidar_blackout':
+                    self.blackout_until = self.t + step[2]
+                else:
+                    self.dropout_until, self.dropout_p = self.t + step[2], step[3]
+                self._event('FAULT_START', fault=step[1], duration_s=step[2], probability=step[3])
+
+    def _true_pose_at(self, t):
+        """Interpolated TRUE base pose (simulator internal; used only to cast distorted sweeps)."""
+        h = self.history
+        if t <= h[0][0]:
+            return h[0][1:]
+        for (t0, x0, y0, a0), (t1, x1, y1, a1) in zip(h, list(h)[1:]):
+            if t0 <= t <= t1:
+                f = (t - t0) / (t1 - t0)
+                return x0 + f * (x1 - x0), y0 + f * (y1 - y0), a0 + f * math.atan2(math.sin(a1 - a0), math.cos(a1 - a0))
+        return h[-1][1:]
+
+    def _drop_points(self, scan):
+        keep = self.fault_rng.random(len(scan.points)) >= self.dropout_p
+        self.points_dropped_by_fault += int((~keep).sum())
+        return dataclasses.replace(scan, points=scan.points[keep], ring=scan.ring[keep], time=scan.time[keep],
+                                   intensity=scan.intensity[keep], eval_geom_id=scan.eval_geom_id[keep])
 
     @property
     def scenario_done(self):
@@ -233,7 +277,8 @@ class SimBridge:
         msg = self.msg['LaserScan']()
         msg.header.stamp, msg.header.frame_id = stamp, self.config.frames['lidar']
         msg.angle_min, msg.angle_max, msg.angle_increment = g.angle_min, g.angle_max, g.angle_increment
-        msg.time_increment = 0.0  # whole sweep cast from one pose (no motion distortion simulated)
+        # With distortion, bins are ordered in sweep direction from the stamped sweep start.
+        msg.time_increment = (self.period * g.angle_increment / (2 * math.pi)) if self.distortion else 0.0
         msg.scan_time = 1.0 / self.config.lidar.scan_rate_hz
         msg.range_min, msg.range_max = g.range_min, g.range_max
         ranges = array.array('f')
@@ -275,6 +320,7 @@ class SimBridge:
                 'command_timeouts': s.timeouts, 'route_active': self.driver.route_active,
                 'ignored_commands': self.ignored_commands, 'requested_rate': self.rate,
                 'scans_suppressed_by_fault': self.scans_suppressed,
+                'points_dropped_by_fault': self.points_dropped_by_fault,
                 'achieved_rate': round(achieved_rtf, 3), 'odom_distance_m': round(self.odom.distance, 3),
                 'provenance': 'SIMULATION_ONLY'}
 
@@ -297,6 +343,8 @@ class SimBridge:
                     self._advance_scenario()
                 state = self.driver.step(self.t, self.dt)
                 self.sim.place(state.x, state.y, state.yaw)
+                self.history.append((self.t, state.x, state.y, state.yaw))
+                self.sim.update_people(self.t)
                 self.odom.step(state.vx, state.wz, self.dt)
                 self._publish_state(stamp)
                 if k % self.scan_every == 0:
@@ -305,9 +353,16 @@ class SimBridge:
                     else:
                         if self.scans_suppressed and self.t - self.blackout_until < self.dt * self.scan_every:
                             self._event('FAULT_END', fault='lidar_blackout', scans_suppressed=self.scans_suppressed)
-                        scan = self.lidar.scan(self.t)
-                        self._publish_cloud(scan, stamp)
-                        self._publish_scan(scan, stamp)
+                        if self.distortion:
+                            start = self.t - self.period
+                            scan = self.lidar.scan(start, pose_at=lambda off: self._true_pose_at(start + off))
+                            scan_stamp = self._stamp(start)
+                        else:
+                            scan, scan_stamp = self.lidar.scan(self.t), stamp
+                        if self.t < self.dropout_until:
+                            scan = self._drop_points(scan)
+                        self._publish_cloud(scan, scan_stamp)
+                        self._publish_scan(scan, scan_stamp)
                 elapsed = time.monotonic() - wall0
                 rtf = (self.t - t0) / elapsed if elapsed > 0 else 0.0
                 if self.t - last_status >= 1.0:
@@ -345,10 +400,18 @@ def main(argv=None):
     parser.add_argument('--duration', type=float, help='Stop after this many simulated seconds')
     parser.add_argument('--out', type=Path, help='New folder for run metadata and evaluation logs')
     parser.add_argument('--seed', type=int, help='Override odometry/lidar noise seed (recorded in run_meta)')
+    parser.add_argument('--people', choices=['static', 'walking', 'none'], default='static')
+    parser.add_argument('--motion-distortion', action='store_true', help='Cast each sweep slice from its own pose')
+    parser.add_argument('--odom-scale', type=float, default=1.0, help='Multiply all odometry error terms')
+    parser.add_argument('--lidar-profile', type=Path, help='Alternative lidar profile YAML')
+    parser.add_argument('--control-hz', type=float, help='Override control/odometry rate (default from config)')
     args = parser.parse_args(argv)
     config = load_sim_slam_config(args.config)
+    if args.control_hz:
+        config = dataclasses.replace(config, odometry=dict(config.odometry, rate_hz=args.control_hz))
+    if args.lidar_profile:
+        config = dataclasses.replace(config, lidar=load_lidar_profile(args.lidar_profile))
     if args.seed is not None:
-        import dataclasses
         config = dataclasses.replace(config, odometry=dict(config.odometry, seed=args.seed))
     check_isolation(config)
     route = load_route(args.route) if args.route else None
@@ -356,7 +419,8 @@ def main(argv=None):
     import rclpy
     rclpy.init()
     try:
-        bridge = SimBridge(config, route, args.rate, args.out, scenario)
+        bridge = SimBridge(config, route, args.rate, args.out, scenario, args.people, args.motion_distortion,
+                           args.odom_scale, str(args.lidar_profile) if args.lidar_profile else None)
         bridge.run(args.duration)
         bridge.node.destroy_node()
     except KeyboardInterrupt:

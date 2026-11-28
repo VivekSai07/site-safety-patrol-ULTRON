@@ -15,7 +15,9 @@ import os
 
 import numpy as np
 
-from .hall_scene import LIDAR_HOUSING_GROUP, ROBOT_GROUP
+from .hall_scene import BASE_HEIGHT_M, LIDAR_HOUSING_GROUP, ROBOT_GROUP
+
+TIME_SLICES = 10  # sweep divided into 36-degree slices; each can be cast from its own pose
 
 
 @dataclass
@@ -72,11 +74,12 @@ class SimLidar:
         columns = profile.columns
         self.azimuth_deg = np.arange(columns) * profile.horizontal_resolution_deg - 180.0
         azimuth = np.radians(self.azimuth_deg)
-        el, az = np.meshgrid(elevation, azimuth, indexing='ij')   # (channels, columns)
+        # Column-major order (index = column * channels + ring): contiguous blocks are time slices.
+        az, el = np.meshgrid(azimuth, elevation, indexing='ij')   # (columns, channels)
         self.directions = np.stack((np.cos(el) * np.cos(az), np.cos(el) * np.sin(az), np.sin(el)),
                                    axis=-1).reshape(-1, 3)        # lidar frame, unit vectors
-        self.ring = np.repeat(np.arange(profile.channels, dtype=np.uint16), columns)
-        self.column = np.tile(np.arange(columns), profile.channels)
+        self.ring = np.tile(np.arange(profile.channels, dtype=np.uint16), columns)
+        self.column = np.repeat(np.arange(columns), profile.channels)
         self.period = 1.0 / profile.scan_rate_hz
         self.time = (self.column / columns * self.period).astype(np.float32)
         self.mount_R = _rotation_rpy(*profile.mount_rpy_rad)
@@ -91,15 +94,22 @@ class SimLidar:
         self._robot_geom, self._robot_dist = self._robot_occlusion()
         self._geomid = np.zeros(n, dtype=np.int32)
         self._dist = np.zeros(n, dtype=np.float64)
-        # mj_multiRay releases the GIL, so contiguous ray chunks run in parallel threads.
+        # mj_multiRay releases the GIL, so ray slices run in parallel threads. It is NOT safe to
+        # call concurrently on one MjData (measured: 0-31 rays corrupted per distorted sweep),
+        # so each worker owns an MjData copy synchronised from the simulation before each scan.
         # Buffers are allocated once and reused: passing freshly allocated direction
         # arrays to the binding measured ~2.5x slower per call (mujoco 3.3.7).
         threads = threads or min(4, os.cpu_count() or 1)  # 4 measured fastest here; 8 slower
-        bounds = np.linspace(0, n, threads + 1).astype(int)
+        slices = min(TIME_SLICES, columns)
+        bounds = (np.linspace(0, columns, slices + 1).astype(int)) * profile.channels
         self._world_dirs = np.empty((n, 3), dtype=np.float64)
-        self._chunks = [(a, b, self.directions[a:b], self._world_dirs[a:b], self._world_dirs[a:b].reshape(-1),
-                         self._geomid[a:b], self._dist[a:b]) for a, b in zip(bounds[:-1], bounds[1:]) if b > a]
-        self._pool = ThreadPoolExecutor(len(self._chunks)) if len(self._chunks) > 1 else None
+        self._chunks = [(float(self.time[a:b].mean()), self.directions[a:b], self._world_dirs[a:b],
+                         self._world_dirs[a:b].reshape(-1), self._geomid[a:b], self._dist[a:b])
+                        for a, b in zip(bounds[:-1], bounds[1:]) if b > a]
+        workers = max(1, min(threads, len(self._chunks)))
+        self._groups = [self._chunks[i::workers] for i in range(workers)]
+        self._datas = [sim.mujoco.MjData(sim.model) for _ in range(workers)]
+        self._pool = ThreadPoolExecutor(workers) if workers > 1 else None
 
     def _robot_occlusion(self):
         """Exact distance from the lidar to the robot's own body for every beam.
@@ -127,24 +137,39 @@ class SimLidar:
     def rays(self):
         return len(self.directions)
 
-    def scan(self, stamp):
+    def _lidar_pose(self, base_pose):
+        x, y, yaw = base_pose
+        c, s = math.cos(yaw), math.sin(yaw)
+        R_base = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+        origin = np.array([x, y, BASE_HEIGHT_M]) + R_base @ self.mount_t
+        return origin, R_base @ self.mount_R
+
+    def scan(self, stamp, pose_at=None):
+        """Cast one sweep. ``pose_at(t)`` (true base pose at offset t from sweep start) enables
+        motion distortion: each 36-degree slice is cast from its own pose and its points are
+        expressed in the lidar frame at that time, as a spinning sensor reports them."""
         mujoco = self.sim.mujoco
         model, data = self.sim.model, self.sim.data
         site = self.sim.lidar_site
-        origin = data.site_xpos[site].copy()
-        R_world = data.site_xmat[site].reshape(3, 3)
-        R_world = np.array(R_world)
+        fixed = (data.site_xpos[site].copy(), np.array(data.site_xmat[site].reshape(3, 3)))
+        for copy in self._datas:  # same scene state (robot pose, walking people) in every worker
+            copy.qpos[:] = data.qpos
+            if model.nmocap:
+                copy.mocap_pos[:] = data.mocap_pos
+                copy.mocap_quat[:] = data.mocap_quat
+            mujoco.mj_kinematics(model, copy)
 
-        def cast(chunk):
-            _, _, local, world, flat, geom, dist = chunk
-            rotate(local, R_world, out=world)
-            mujoco.mj_multiRay(model, data, origin, flat, self.geomgroup, 1, -1, geom, dist,
-                               len(geom), self.profile.range_max_m)
+        def cast(group, worker_data):
+            for t_mid, local, world, flat, geom, dist in group:
+                origin, R_world = fixed if pose_at is None else self._lidar_pose(pose_at(t_mid))
+                rotate(local, R_world, out=world)
+                mujoco.mj_multiRay(model, worker_data, origin, flat, self.geomgroup, 1, -1, geom, dist,
+                                   len(geom), self.profile.range_max_m)
 
         if self._pool is None:
-            cast(self._chunks[0])
+            cast(self._groups[0], self._datas[0])
         else:
-            list(self._pool.map(cast, self._chunks))
+            list(self._pool.map(cast, self._groups, self._datas))
         dist = self._dist.copy()
         geom = self._geomid.copy()
         scene_hit = (geom >= 0) & (dist >= 0)
@@ -159,7 +184,7 @@ class SimLidar:
         base_pts = rotate(lidar_pts, self.mount_R) + self.mount_t
         inside = np.all((base_pts >= self.crop_min) & (base_pts <= self.crop_max), axis=1) & hit
         # Blind column: most channels of that azimuth are blocked by the robot itself.
-        blocked = inside.reshape(self.profile.channels, -1).mean(axis=0) > 0.5
+        blocked = inside.reshape(-1, self.profile.channels).mean(axis=1) > 0.5
         keep = hit & ~inside
         noisy = dist + self.rng.normal(0.0, self.profile.range_noise_std_m, dist.shape)
         keep &= (noisy >= self.profile.range_min_m) & (noisy <= self.profile.range_max_m)

@@ -50,7 +50,7 @@ class LidarTest(unittest.TestCase):
         profile = self.config.lidar
         self.assertEqual(self.lidar.rays, profile.channels * profile.columns)
         elevation = np.degrees(np.arcsin(self.lidar.directions[:, 2]))
-        expected = np.repeat(profile.vertical_angles_deg, profile.columns)
+        expected = np.tile(profile.vertical_angles_deg, profile.columns)  # column-major ray order
         np.testing.assert_allclose(elevation, expected, atol=1e-9)
         self.sim.place(6.0, 4.6, 0.4)
         scan = self.lidar.scan(1.25)

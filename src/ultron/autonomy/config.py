@@ -135,7 +135,8 @@ SIM_KEYS = {
     'ros': ('domain_id', 'localhost_only', 'use_sim_time'),
     'frames': ('map', 'odom', 'base', 'lidar'),
     'self_filter': ('min_xyz_m', 'max_xyz_m'),
-    'topics': ('clock', 'points', 'scan', 'odom', 'ground_truth', 'cmd_vel', 'localization_state', 'status'),
+    'topics': ('clock', 'points', 'scan', 'odom', 'ground_truth', 'cmd_vel', 'localization_state', 'status',
+               'nav_cmd_raw', 'operator_enable', 'gate_status'),
     'scan_projection': ('z_min_m', 'z_max_m', 'angle_increment_deg', 'range_min_m', 'range_max_m'),
     'odometry': ('rate_hz', 'linear_scale_error', 'yaw_rate_bias_rad_s', 'linear_noise_std',
                  'angular_noise_std', 'seed'),
@@ -144,6 +145,9 @@ SIM_KEYS = {
     'localization': ('scan_age_limit_s', 'pose_age_limit_s', 'match_tolerance_m', 'score_valid_min',
                      'score_lost_max', 'valid_consecutive', 'recover_consecutive', 'lost_consecutive',
                      'degraded_timeout_s', 'jump_threshold_m', 'jump_threshold_rad'),
+    'navigation': ('operator_enable_max_age_s', 'command_max_age_s', 'goal_xy_tolerance_m', 'goal_yaw_tolerance_rad',
+                   'default_timeout_s', 'settle_time_s', 'settle_speed_m_s', 'settle_yaw_rate_rad_s',
+                   'target_clearance_m'),
 }
 
 
@@ -157,6 +161,7 @@ class SimSlamConfig:
     odometry: dict
     driver: dict
     localization: dict
+    navigation: dict
     lidar: LidarProfile
     sha256: str
 
@@ -181,7 +186,7 @@ def load_sim_slam_config(path=CONFIG_DIR / 'sim_slam.yaml'):
         if not isinstance(topic, str) or not (topic in ALLOWED_TOPICS or topic.startswith(ALLOWED_TOPIC_PREFIXES)):
             raise ConfigError(f'topics.{name}: {topic!r} is outside the simulation namespace')
     numeric = {}
-    for section in ('scan_projection', 'odometry', 'driver', 'localization'):
+    for section in ('scan_projection', 'odometry', 'driver', 'localization', 'navigation'):
         numeric[section] = {}
         for key, value in data[section].items():
             if key in ('seed', 'valid_consecutive', 'recover_consecutive', 'lost_consecutive'):
@@ -200,6 +205,9 @@ def load_sim_slam_config(path=CONFIG_DIR / 'sim_slam.yaml'):
     for key, value in numeric['driver'].items():
         if value <= 0:
             raise ConfigError(f'driver.{key}: must be positive')
+    for key, value in numeric['navigation'].items():
+        if value <= 0:
+            raise ConfigError(f'navigation.{key}: must be positive')
     loc = numeric['localization']
     if not 0 < loc['score_lost_max'] < loc['score_valid_min'] <= 1:
         raise ConfigError('localization: need 0 < score_lost_max < score_valid_min <= 1')
@@ -254,7 +262,7 @@ class Scenario:
     sha256: str
 
 
-FAULTS = {'lidar_blackout'}
+FAULTS = {'lidar_blackout', 'lidar_dropout'}
 
 
 def load_scenario(path):
@@ -283,10 +291,12 @@ def load_scenario(path):
             _keys(step, ('teleport',), where)
             steps.append(('teleport', _vector(step['teleport'], 3, where)))
         elif 'fault' in step:
-            _keys(step, ('fault', 'duration_s'), where)
+            dropout = step.get('fault') == 'lidar_dropout'
+            _keys(step, ('fault', 'duration_s', 'probability') if dropout else ('fault', 'duration_s'), where)
             if step['fault'] not in FAULTS:
                 raise ConfigError(f'{where}.fault: one of {sorted(FAULTS)}')
-            steps.append(('fault', step['fault'], _number(step['duration_s'], where, positive=True)))
+            probability = _number(step['probability'], where, minimum=0, maximum=1) if dropout else 1.0
+            steps.append(('fault', step['fault'], _number(step['duration_s'], where, positive=True), probability))
         else:
             raise ConfigError(f'{where}: unknown step {sorted(step)}')
     return Scenario(name=path.stem, scene=str(data['scene']), start_pose=_vector(data['start_pose'], 3, 'start_pose'),

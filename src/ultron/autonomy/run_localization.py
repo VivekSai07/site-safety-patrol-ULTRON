@@ -9,13 +9,13 @@ import argparse
 import json
 import math
 from pathlib import Path
-import subprocess
 import sys
 import time
 
 from .config import CONFIG_DIR, load_scenario, load_sim_slam_config
 from .eval_slam import compose
-from .run_mapping import sha256, spawn, stop, terminate_cleanly
+from .run_mapping import (add_bridge_options, bridge_options, ensure_no_running_stack, latency_summary, run_bridge,
+                          sha256, spawn, stop, terminate_cleanly)
 from .sim_bridge import check_isolation
 
 LOC_PARAMS = CONFIG_DIR / 'slam_toolbox_localization.yaml'
@@ -34,12 +34,13 @@ def main(argv=None):
     parser.add_argument('--scenario', type=Path, default=CONFIG_DIR / 'scenarios' / 'loc_reload.yaml')
     parser.add_argument('--offset', type=float, nargs=3, default=(0.0, 0.0, 0.0), metavar=('DX', 'DY', 'DYAW_DEG'))
     parser.add_argument('--rate', type=float, default=1.0)
-    parser.add_argument('--seed', type=int)
+    add_bridge_options(parser)
     parser.add_argument('--no-eval', action='store_true')
     args = parser.parse_args(argv)
     config = load_sim_slam_config()
     check_isolation(config)
     terminate_cleanly()
+    ensure_no_running_stack()
     map_meta = json.loads((args.map / 'map_meta.json').read_text())
     if not (args.map / 'map.posegraph').exists():
         raise SystemExit(f'{args.map} has no serialized pose graph')
@@ -61,6 +62,9 @@ def main(argv=None):
         'ground_truth_used_by_estimator': False}, indent=2))
     py = sys.executable
     procs = {}
+    from .latency_probe import ResourceSampler
+    sampler = ResourceSampler({})
+    sampler.start()
     try:
         procs['slam'] = spawn(['ros2', 'run', 'slam_toolbox', 'localization_slam_toolbox_node', '--ros-args',
                                '--params-file', str(LOC_PARAMS), '-r', '__node:=slam_toolbox',
@@ -69,22 +73,30 @@ def main(argv=None):
                               out / 'slam_toolbox.log')
         procs['monitor'] = spawn([py, '-m', 'ultron.autonomy.localization_monitor', '--map', str(args.map),
                                   '--out', str(out)], out / 'monitor.log')
+        procs['latency'] = spawn([py, '-m', 'ultron.autonomy.latency_probe', str(out / 'latency.csv'),
+                                  '--slam-params', str(LOC_PARAMS)], out / 'latency.log')
+        sampler.add('slam_toolbox', procs['slam'].pid)
+        sampler.add('localization_monitor', procs['monitor'].pid)
         time.sleep(5.0)  # deserialize the pose graph before the first scan
         for name, proc in procs.items():
             if proc.poll() is not None:
                 raise RuntimeError(f'{name} exited early; see {out}')
         print(f'localization: scenario {scenario.name}, guess offset {math.hypot(dx, dy):.2f} m / {dyaw:.0f} deg ...', flush=True)
-        bridge = subprocess.run([py, '-m', 'ultron.autonomy.sim_bridge', '--scenario', str(args.scenario),
-                                 '--rate', str(args.rate), '--out', str(out / 'sim'),
-                                 *(['--seed', str(args.seed)] if args.seed is not None else [])],
-                                stdout=(out / 'bridge.log').open('w'), stderr=subprocess.STDOUT)
-        if bridge.returncode != 0:
-            raise RuntimeError(f'bridge failed ({bridge.returncode}); see {out}/bridge.log')
+        code = run_bridge([py, '-m', 'ultron.autonomy.sim_bridge', '--scenario', str(args.scenario),
+                           '--rate', str(args.rate), '--out', str(out / 'sim'), *bridge_options(args)],
+                          out / 'bridge.log', sampler)
+        if code != 0:
+            raise RuntimeError(f'bridge failed ({code}); see {out}/bridge.log')
         time.sleep(1.0)
     finally:
-        for name in ('monitor', 'slam'):
-            if name in procs:
-                stop(procs[name])
+        try:
+            resources = sampler.stop()
+        finally:
+            for name in ('latency', 'monitor', 'slam'):
+                if name in procs:
+                    stop(procs[name])
+        (out / 'resources.json').write_text(json.dumps({'processes': resources, 'latency': latency_summary(out / 'latency.csv'),
+                                                        'rate': args.rate}, indent=2))
     if not args.no_eval:
         from .eval_localization import evaluate, summary
         result = evaluate(out)

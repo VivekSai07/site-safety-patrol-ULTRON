@@ -204,7 +204,19 @@ def _add_payload(base, mount_xyz, mount_rpy):
     ET.SubElement(base, 'site', name='lidar_link', pos=_fmt(mount_xyz), quat=_fmt(_yaw_quat(yaw)), size='0.02')
 
 
-def build_hall(mount_xyz=(0.342, 0.0, 0.18), mount_rpy=(0.0, 0.0, 0.0), people=True):
+# Walking people (mocap bodies): back-and-forth paths at 1 m/s, >= 0.8 m from the survey route.
+WALKERS = (((6.8, 3.4), (8.6, 3.4)), ((11.3, 1.6), (11.3, 7.4)), ((7.0, 9.3), (9.0, 9.3)))
+WALK_SPEED_M_S = 1.0
+
+
+def _people_mode(people):
+    mode = {True: 'static', False: 'none'}.get(people, people)
+    if mode not in ('static', 'walking', 'none'):
+        raise ValueError(f'people must be static, walking or none, got {people!r}')
+    return mode
+
+
+def build_hall(mount_xyz=(0.342, 0.0, 0.18), mount_rpy=(0.0, 0.0, 0.0), people='static'):
     """Return (mjcf_xml, objects). Hall interior is x in [0, 12], y in [0, 10] metres."""
     root = ET.parse(ASSETS / 'upstream.xml').getroot()
     root.set('model', 'ULTRON_B2_lidar_hall_sim')
@@ -261,7 +273,12 @@ def build_hall(mount_xyz=(0.342, 0.0, 0.18), mount_rpy=(0.0, 0.0, 0.0), people=T
     _geom(world, 'extinguisher', 'cylinder', '.85 .10 .10 1', pos=(11.75, 1.1, 0.3), size=(0.08, 0.3))
     objects.append(HallObject('extinguisher', 'EXTINGUISHER', (11.75, 1.1), 0.0, _footprint((11.75, 1.1), 0.0, 0.08, 0.08)))
     static_box('robot_mat', 'MAT', (1.6, 1.5, 0.008), (0.5, 1.0, 0.008), '.15 .15 .16 1')
-    if people:
+    people = _people_mode(people)
+    if people == 'walking':
+        for i, (a, _) in enumerate(WALKERS):
+            body = ET.SubElement(world, 'body', name=f'walker_{i}', mocap='true', pos=_fmt((*a, 0.9)))
+            _geom(body, f'walker_{i}_body', 'capsule', '.85 .35 .25 1', size=(0.2, 0.7))
+    if people == 'static':
         for i, (x, y) in enumerate(((7.2, 8.6), (11.0, 4.0))):
             _geom(world, f'person_{i}', 'capsule', '.25 .30 .45 1', pos=(x, y, 0.9), size=(0.2, 0.7))
             objects.append(HallObject(f'person_{i}', 'PERSON_STATIC', (x, y), 0.0, _footprint((x, y), 0.0, 0.2, 0.2)))
@@ -316,10 +333,11 @@ def footprint_free(objects, x, y, radius, bounds=(0.0, 0.0, 12.0, 10.0)):
 class HallSim:
     """Kinematic B2 placement in the hall. Not a walking controller."""
 
-    def __init__(self, mount_xyz=(0.342, 0.0, 0.18), mount_rpy=(0.0, 0.0, 0.0), people=True):
+    def __init__(self, mount_xyz=(0.342, 0.0, 0.18), mount_rpy=(0.0, 0.0, 0.0), people='static'):
         import mujoco
         self.mujoco = mujoco
-        self.xml, self.objects = build_hall(mount_xyz, mount_rpy, people)
+        self.people = _people_mode(people)
+        self.xml, self.objects = build_hall(mount_xyz, mount_rpy, self.people)
         self.model = mujoco.MjModel.from_xml_string(self.xml)
         self.data = mujoco.MjData(self.model)
         self.lidar_site = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, 'lidar_link')
@@ -328,8 +346,30 @@ class HallSim:
         self.robot_bodies = {b for b in range(self.model.nbody)
                              if b == base or self._descends(b, base)}
         self.robot_geoms = {g for g in range(self.model.ngeom) if self.model.geom_bodyid[g] in self.robot_bodies}
+        self.walkers = []
+        if self.people == 'walking':
+            for i, (a, b) in enumerate(WALKERS):
+                body = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, f'walker_{i}')
+                self.walkers.append((int(self.model.body_mocapid[body]), a, b))
         self.pose = (1.6, 1.5, math.pi / 2)
         self.place(*self.pose)
+
+    def walker_positions(self, t):
+        """Ping-pong positions at simulation time t (walkers start at different phases)."""
+        out = []
+        for i, (_, a, b) in enumerate(self.walkers):
+            length = math.dist(a, b)
+            s = (WALK_SPEED_M_S * t + i * length / 2) % (2 * length)
+            f = (s if s <= length else 2 * length - s) / length
+            out.append((a[0] + f * (b[0] - a[0]), a[1] + f * (b[1] - a[1])))
+        return out
+
+    def update_people(self, t):
+        if not self.walkers:
+            return
+        for (mocap, _, _), (x, y) in zip(self.walkers, self.walker_positions(t)):
+            self.data.mocap_pos[mocap] = (x, y, 0.9)
+        self.mujoco.mj_forward(self.model, self.data)
 
     def _descends(self, body, ancestor):
         while body > 0:

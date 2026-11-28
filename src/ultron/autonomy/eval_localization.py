@@ -82,7 +82,15 @@ def evaluate(run):
         checks['valid_rmse'] = result['valid_rmse_m'] is not None and result['valid_rmse_m'] <= THRESHOLDS['valid_rmse_m']
         checks['valid_max'] = result['max_error_while_valid_m'] is not None and result['max_error_while_valid_m'] <= THRESHOLDS['valid_max_m']
         checks['valid_yaw'] = result['valid_yaw_rmse_deg'] is not None and result['valid_yaw_rmse_deg'] <= THRESHOLDS['valid_yaw_rmse_deg']
-    fault = next((e for e in events if e['event'] == 'FAULT_START'), None)
+    # Only a blackout (no data) must drive STALE; a dropout (degraded data) must not cause false VALID,
+    # which the global no_false_valid check covers.
+    fault = next((e for e in events if e['event'] == 'FAULT_START' and e.get('fault', 'lidar_blackout') == 'lidar_blackout'), None)
+    dropout = next((e for e in events if e['event'] == 'FAULT_START' and e.get('fault') == 'lidar_dropout'), None)
+    if dropout:
+        window = [i for i, t in enumerate(stamps) if dropout['t'] <= t <= dropout['t'] + dropout['duration_s']]
+        result['dropout'] = {'start': dropout['t'], 'duration_s': dropout['duration_s'], 'probability': dropout.get('probability'),
+                             'valid_fraction_during': float(valid[window].mean()) if window else None,
+                             'max_error_during_m': float(err[window].max()) if window else None}
     if fault:
         t_f, d = fault['t'], fault['duration_s']
         lost = first_transition(transitions, t_f, lambda s: s != 'VALID')
@@ -111,7 +119,7 @@ def evaluate(run):
 def summary(result):
     keys = ('scenario', 'verdict', 'checks', 'time_to_first_valid_s', 'valid_fraction', 'false_valid_samples',
             'valid_rmse_m', 'max_error_while_valid_m', 'valid_yaw_rmse_deg', 'error_all_max_m', 'scan_score_median',
-            'fault', 'kidnap')
+            'fault', 'dropout', 'kidnap')
     return {k: result[k] for k in keys if k in result}
 
 

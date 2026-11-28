@@ -14,6 +14,7 @@ Acceptance thresholds are fixed in docs/SAHIL_SLAM_PLAN.md (Phase 3) before eval
 import argparse
 import csv
 import dataclasses
+import dataclasses
 import json
 import math
 from pathlib import Path
@@ -83,14 +84,26 @@ def load_map(yaml_path):
             'free_cells': int(free.sum()), 'unknown_cells': int((~occupied & ~free).sum())}
 
 
-def reference_surfaces(truth, config, stride_s=0.5):
+def run_config(sim_meta):
+    """Configuration matching a bridge run (lidar profile) and the people mode for the reference."""
+    from .config import load_lidar_profile, load_sim_slam_config
+    config = load_sim_slam_config()
+    path = (sim_meta.get('lidar_profile') or {}).get('path')
+    if path:
+        config = dataclasses.replace(config, lidar=load_lidar_profile(path))
+    # Walking people are transient: a good map should not contain them, so the reference has none.
+    people = 'none' if sim_meta.get('people') == 'walking' else sim_meta.get('people', 'static')
+    return config, people
+
+
+def reference_surfaces(truth, config, stride_s=0.5, people='static'):
     """Noise-free lidar hits along the TRUE trajectory, in the scan band and open sector."""
     from .hall_scene import HallSim
     from .lidar import SimLidar
     from .scan2d import geometry_from
     import mujoco
     exact = dataclasses.replace(config.lidar, range_noise_std_m=0.0, dropout_probability=0.0)
-    sim = HallSim(exact.mount_xyz_m, exact.mount_rpy_rad)
+    sim = HallSim(exact.mount_xyz_m, exact.mount_rpy_rad, people=people)
     lidar = SimLidar(sim, exact, config.self_filter, seed=0)
     stamps = sorted(truth)
     first = lidar.scan(0.0)
@@ -154,7 +167,8 @@ def overlay_png(run_dir, out_png, map_yaml=None, scale=60):
     image = Image.new('RGB', (int((x1 - x0) * scale), int((y1 - y0) * scale)), (255, 255, 255))
     draw = ImageDraw.Draw(image)
     px = lambda x, y: ((x - x0) * scale, (y1 - y) * scale)
-    reference, _ = reference_surfaces(truth, load_sim_slam_config(), stride_s=1.0)
+    config, people = run_config(json.loads((run_dir / 'sim' / 'run_meta.json').read_text()))
+    reference, _ = reference_surfaces(truth, config, stride_s=1.0, people=people)
     for x, y in reference[::3]:
         draw.point(px(x, y), fill=(60, 190, 90))
     grid = load_map(Path(map_yaml) if map_yaml else run_dir / 'map.yaml')
@@ -176,7 +190,6 @@ def overlay_png(run_dir, out_png, map_yaml=None, scale=60):
 
 
 def evaluate(run_dir, map_yaml=None):
-    from .config import load_sim_slam_config
     run_dir = Path(run_dir)
     meta = json.loads((run_dir / 'sim' / 'run_meta.json').read_text())
     start = tuple(meta['start_pose_world'])
@@ -190,10 +203,11 @@ def evaluate(run_dir, map_yaml=None):
               'odometry_only': trajectory_errors(odometry, truth, start)}
     map_yaml = Path(map_yaml) if map_yaml else run_dir / 'map.yaml'
     if map_yaml.exists():
-        config = load_sim_slam_config()
+        config, people = run_config(meta)
         grid = load_map(map_yaml)
         world = np.array([compose(start, (x, y, 0.0))[:2] for x, y in grid['occupied_xy']])
-        reference, walls = reference_surfaces(truth, config)
+        reference, walls = reference_surfaces(truth, config, people=people)
+        result['reference_people'] = people
         result['map'] = {**{k: v for k, v in grid.items() if k != 'occupied_xy'},
                          **map_scores(world, reference, walls, tolerance=THRESHOLDS['tolerance_m'])}
     slam, odo = result['slam_start_anchored'], result['odometry_only']
