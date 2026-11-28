@@ -22,6 +22,7 @@ from .inspection import Inspection
 from .keyframes import KeyframeStore
 from .navigate import ContractNavigator, DashboardNavigator, Operator, Passive, free_space, http_json
 from .objects import ObjectMap
+from .online import OnlinePatrol, stdin_commands
 from .survey import Survey
 from .verify import Verifier
 from ..protocol.__main__ import build_vlm, connect_dashboard
@@ -168,6 +169,28 @@ def command_patrol(args):
     command_status(args)
 
 
+def command_online(args):
+    """One process, objects read as the robot goes: survey every frame; each object found is
+    checked by the vision model, collected until the robot is done with it, then read on a worker
+    thread while the survey goes on to the next one. Leftovers are inspected when the stream ends."""
+    store, mission, vlm = Store(args.data), args.mission or "PATROL-" + uuid.uuid4().hex[:6], build_vlm(args)
+    survey = build_survey(args, store, vlm)
+    publisher = connect_dashboard(store, args, mission)
+    print_events(store)
+    # operator: a person drives by teleop, follows the `focus` events and types n when done with one
+    navigator, is_free = (None, None) if args.navigator == "operator" else build_navigator(args, mission)
+    inspection = Inspection(survey.objects, survey.keyframes, vlm, store, survey, Passive(), is_free=is_free,
+                            mission=mission)
+    online = OnlinePatrol(survey, inspection, store, navigator=navigator, is_free=is_free,
+                          leave_seconds=args.leave_seconds, leave_distance=args.leave_distance,
+                          budget_seconds=args.budget_seconds, max_reads=args.max_reads,
+                          commands=stdin_commands())
+    online.run(open_source(args.source, args.pace))
+    if publisher:
+        publisher.end()
+    command_status(args)
+
+
 def command_calibrate(args):
     """Pick prompt and threshold per kind from sample frames, judged by the vision model."""
     detector = YoloDetector(args.detector.partition(":")[2] or "yoloe-11l-seg.pt", track=False)
@@ -248,6 +271,16 @@ def main(argv=None):
     patrol.add_argument("--survey-seconds", type=float, default=0.0, help="end the survey after this long (0: when the stream ends or on Ctrl-C)")
     patrol.add_argument("--pace", type=float, default=0.0)
     patrol.set_defaults(action=command_patrol)
+
+    live = commands.add_parser("online", parents=[common, moving],
+                               help="survey and read each object while the robot walks on to the next")
+    live.add_argument("--source", required=True, help="relay[:PORT] | bag:PATH | sim:PATH | ros2:... | folder:PATH")
+    live.add_argument("--pace", type=float, default=0.0)
+    live.add_argument("--leave-seconds", type=float, default=6.0, help="an object unseen this long ...")
+    live.add_argument("--leave-distance", type=float, default=3.5, help="... and this far away (m) is read")
+    live.add_argument("--budget-seconds", type=float, default=120.0, help="read an object after this long whatever its views")
+    live.add_argument("--max-reads", type=int, default=2, help="reads per object when the robot comes back with new views")
+    live.set_defaults(action=command_online)
 
     tune = commands.add_parser("calibrate", parents=[common], help="choose detector prompts for this site")
     tune.add_argument("--source", required=True, help="sample frames, for example bag:PATH,rate=1")
