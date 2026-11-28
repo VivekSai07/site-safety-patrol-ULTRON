@@ -114,6 +114,29 @@ class AssessTest(unittest.TestCase):
         result = assess(reading(hidden), 1, TODAY)
         self.assertEqual((result["result"], traffic_light(result)), (form.RESULT_OK, "grey"))
 
+    def test_a_photo_too_coarse_supports_only_the_rows_it_can_show(self):
+        """The first real model run called burrs absent and pictograms present from two metres away."""
+        result = assess(reading(), 1, TODAY, details=[320.0])  # the B2's camera at about 2 m
+        seen = [i for i, c in result["criteria"].items() if c["status"] == form.OK]
+        self.assertEqual(seen, ["1.1", "2.1", "2.2", "3.1", "5.1", "6.1"])
+        self.assertEqual(result["criteria"]["1.3"]["status"], form.NOT_VISIBLE)
+        self.assertEqual(traffic_light(result), "grey")
+        self.assertEqual(result["flags"], [FLAG_NO_STICKER])          # a date cannot be read from there
+        self.assertEqual(result["master"]["hersteller"], None)        # nor a manufacturer
+        self.assertEqual(result["master"]["aufstiegsart"], "Stehleiter")  # the shape can be
+
+    def test_a_close_up_supports_fine_rows_and_label_text(self):
+        result = assess(reading(), 2, TODAY, details=[320.0, 2200.0])
+        self.assertEqual(result["master"]["hersteller"], "Layher")
+        fine = reading({c.id: {"image": 1} for c in form.CRITERIA}, sticker={
+            "present": True, "next_month": 6, "next_year": 2027, "text": "06/2027", "image": 1, "box": None})
+        result = assess(fine, 2, TODAY, details=[320.0, 2200.0])
+        self.assertEqual((result["coverage"], result["flags"]), (1.0, []))
+
+    def test_a_defect_reported_from_afar_is_kept(self):
+        result = assess(reading({"1.2": {"status": "defect", "severity": "critical"}}), 1, TODAY, details=[320.0])
+        self.assertEqual(result["result"], form.RESULT_REMOVE)
+
     def test_missing_and_malformed_model_output_is_never_a_pass(self):
         result = assess({"criteria": [{"id": "1.1", "status": "great"}, "junk", {"id": "9.9"}]}, 1, TODAY)
         self.assertEqual(result["coverage"], 0.0)

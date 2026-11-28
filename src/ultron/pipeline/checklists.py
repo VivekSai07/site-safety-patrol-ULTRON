@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from ..protocol.assess import MIN_CONFIDENCE, clean_box
+from ..protocol.form import READING
 from ..protocol.vlm import NULLABLE_BOX, NULLABLE_INT, _object
 
 YES, NO, OPEN = "ja", "nein", "offen"
@@ -76,8 +77,13 @@ def prompt(kind, count, language="German"):
     return PROMPT.format(kind=kind.replace("_", " "), count=count, last=count - 1, rows=rows, language=language)
 
 
-def assess(kind, answer, photo_count, today=None):
-    """Per-row answers plus an overall status. An answer needs a photo and enough confidence."""
+def assess(kind, answer, photo_count, today=None, details=None, verified=False):
+    """Per-row answers plus an overall status. An answer needs a photo and enough confidence.
+
+    `verified` says the object itself was confirmed as this kind: then it is present, whatever
+    the model answers to the row. `details` gives each photo's pixels per metre on the object;
+    a date is only accepted from a photo fine enough to read a sticker.
+    """
     today = today or date.today()
     given = {r.get("id"): r for r in answer.get("rows") or [] if isinstance(r, dict)}
     rows = {}
@@ -88,9 +94,12 @@ def assess(kind, answer, photo_count, today=None):
         confidence = reading.get("confidence") if isinstance(reading.get("confidence"), (int, float)) else 0.0
         usable = bool(reading.get("visible")) and photo is not None and confidence >= MIN_CONFIDENCE
         result = OPEN
-        if usable and row.check == PRESENCE and isinstance(reading.get("fulfilled"), bool):
+        fine_enough = details is None or photo is None or details[photo] is None or details[photo] >= READING
+        if row.check == PRESENCE and verified:
+            result, photo = YES, photo if photo is not None else 0
+        elif usable and row.check == PRESENCE and isinstance(reading.get("fulfilled"), bool):
             result = YES if reading["fulfilled"] else NO
-        elif usable and row.check == EXPIRY:
+        elif usable and row.check == EXPIRY and fine_enough:
             month, year = reading.get("next_month"), reading.get("next_year")
             if isinstance(year, int) and 2000 <= year <= 2100 and (
                     month is None or (isinstance(month, int) and 1 <= month <= 12)):

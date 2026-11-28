@@ -1,5 +1,6 @@
 """Command line for the site patrol pipeline.
 
+    python -m ultron.pipeline calibrate --source bag:PATH,rate=1          choose detector prompts for this site
     python -m ultron.pipeline survey  --source ros2:/image,pose=/odom,cloud=/points --calibration cal.json
     python -m ultron.pipeline inspect --navigator dashboard --camera ros2:/image,pose=/odom
     python -m ultron.pipeline status
@@ -11,12 +12,14 @@ import json
 import sys
 import uuid
 
-from .detect import ReplayDetector, VlmDetector, YoloDetector
+from . import calibrate
+from .detect import ReplayDetector, VlmDetector, YoloDetector, load_prompts
 from .inspection import Inspection
 from .keyframes import KeyframeStore
 from .navigate import DashboardNavigator, Operator, Passive, http_json
 from .objects import ObjectMap
 from .survey import Survey
+from .verify import Verifier
 from ..protocol.__main__ import build_vlm, connect_dashboard
 from ..protocol.lidar import Calibration
 from ..protocol.sources import open_source
@@ -29,7 +32,7 @@ def build_detector(args, vlm):
     if kind == "vlm":
         return VlmDetector(vlm)
     if kind == "yolo":
-        return YoloDetector(option) if option else YoloDetector()
+        return YoloDetector(option or "yoloe-11l-seg.pt", prompts=load_prompts(args.data))
     if kind == "replay":
         with open(option) as handle:
             return ReplayDetector(json.load(handle))
@@ -47,9 +50,9 @@ def load_calibration(args):
 
 
 def build_survey(args, store, vlm):
-    calibration = load_calibration(args)
     return Survey(build_detector(args, vlm), ObjectMap(args.data), KeyframeStore(args.data), store,
-                  calibration, args.interval, args.min_sharpness)
+                  load_calibration(args), args.interval, args.min_sharpness,
+                  verifier=Verifier(vlm) if vlm and not args.no_verify else None)
 
 
 def print_events(store):
@@ -58,7 +61,7 @@ def print_events(store):
 
 def command_survey(args):
     store, mission = Store(args.data), args.mission or "PATROL-" + uuid.uuid4().hex[:6]
-    survey = build_survey(args, store, build_vlm(args) if args.detector == "vlm" else None)
+    survey = build_survey(args, store, None if args.no_verify and args.detector != "vlm" else build_vlm(args))
     connect_dashboard(store, args, mission)  # the mission stays open for the inspection stage
     print_events(store)
     try:
@@ -86,6 +89,14 @@ def command_inspect(args):
     command_status(args)
 
 
+def command_calibrate(args):
+    """Pick prompt and threshold per kind from sample frames, judged by the vision model."""
+    detector = YoloDetector(args.detector.partition(":")[2] or "yoloe-11l-seg.pt", track=False)
+    frames = list(open_source(args.source))
+    report = calibrate.calibrate(frames, detector, Verifier(build_vlm(args)), per_prompt=args.per_prompt)
+    print(f"{len(frames)} frames; saved {calibrate.save(report, args.data)}")
+
+
 def command_status(args):
     for site_object in ObjectMap(args.data).all():
         result = site_object.result
@@ -111,6 +122,7 @@ def main(argv=None):
     common.add_argument("--language", default="German")
     common.add_argument("--replay", help="recorded model answers instead of a model")
     common.add_argument("--no-cache", action="store_true")
+    common.add_argument("--no-verify", action="store_true", help="survey without the vision model's second opinion")
     commands = parser.add_subparsers(dest="command", required=True)
 
     survey = commands.add_parser("survey", parents=[common], help="stage 1: build the object map")
@@ -122,6 +134,11 @@ def main(argv=None):
     inspect.add_argument("--navigator", choices=["passive", "operator", "dashboard"], default="passive")
     inspect.add_argument("--camera", help="live frame source for views taken during inspection")
     inspect.set_defaults(action=command_inspect)
+
+    tune = commands.add_parser("calibrate", parents=[common], help="choose detector prompts for this site")
+    tune.add_argument("--source", required=True, help="sample frames, for example bag:PATH,rate=1")
+    tune.add_argument("--per-prompt", type=int, default=6, help="boxes per candidate shown to the vision model")
+    tune.set_defaults(action=command_calibrate)
 
     commands.add_parser("status", parents=[common], help="list the object map").set_defaults(action=command_status)
 

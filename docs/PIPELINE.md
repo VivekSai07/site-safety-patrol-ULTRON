@@ -47,8 +47,10 @@ Workspace (`--data`, default `runs/pipeline`): `objects.json`, `keyframes.json`,
 | `coverage.py` | Missing views → goal poses around the object | works; no occlusion or part visibility |
 | `navigate.py` | `Passive`, `Operator`, `DashboardNavigator` (dashboard `/api/goal` → bridge → Nav2) | tested against the dashboard app; **never run with Nav2** |
 | `survey.py` | Stage 1 loop | works |
-| `inspection.py` | Stage 2 loop; ladders → `ultron.protocol` Kontrollblatt → dashboard; other kinds → checklist JSON | works with fake models |
-| `checklists.py` | Fire and first-aid rows quoted from nesseler's form, prompt, answer rules | rules tested; **prompt never run on a model** |
+| `inspection.py` | Stage 2 loop; ladders → `ultron.protocol` Kontrollblatt → dashboard; other kinds → checklist JSON | run on the real recording, passive (no navigation) |
+| `checklists.py` | Fire, alarm and first-aid rows quoted from nesseler's form, prompt, answer rules | run on the real recording with Qwen3-VL |
+| `calibrate.py` | Chooses detector prompt and threshold per kind, judged by the vision model | run on the real recording |
+| `verify.py` | Vision model confirms, relabels or rejects each object | run on the real recording |
 
 `ultron.protocol` (the earlier reader) supplies frames, sources, the vision client, the ladder
 form and rules, the ladder store and the dashboard publisher.
@@ -112,10 +114,41 @@ Limits of this evidence: one recording, one hall. Thresholds and size ranges are
 two ladders stand 3 m apart; two ladders side by side rely on tracking and on being seen in one
 frame at least once, which is tested with synthetic data only.
 
+## Tuning itself: the vision model supervises the detector
+
+A vision-language model (Qwen3-VL 8B through Ollama, any OpenAI-compatible endpoint works) is
+asked a few dozen times per patrol, never per frame.
+
+```bash
+export OPENAI_API_KEY=ollama OPENAI_BASE_URL=http://HOST:11434/v1
+export ULTRON_VLM_MODEL=qwen3-vl:8b-instruct ULTRON_TRIAGE_MODEL=qwen3-vl:8b-instruct
+python -m ultron.pipeline calibrate --source bag:BAG,rate=2,pose=none --detector yolo   # writes prompts.json
+python -m ultron.pipeline survey  --source bag:BAG,rate=8 --calibration bag:BAG --detector yolo --interval 0
+python -m ultron.pipeline inspect --calibration bag:BAG --detector yolo
+```
+
+| Step | File | What happens | On the hall recording |
+|---|---|---|---|
+| Prompt choice | `calibrate.py` | Every candidate prompt of a kind (listed in `catalog.py`) is run on sample frames; the model judges six of its boxes; the prompt expected to deliver the most real boxes wins | 80 s. Picked "ladder" and "red fire extinguisher", as tuned by hand before; refuted all 14 "first aid" boxes (there is no kit in the recording) |
+| Object check | `verify.py`, `Survey.verify` | Each well-seen object is shown to the model in up to three keyframes; a majority confirms, relabels or rejects it | Ladders, extinguisher and alarm box confirmed. The red wall cabinet is called hose cabinet, extinguisher box or alarm box depending on the frame |
+| Resolution rule | `protocol/assess.py`, `form.py` | A form row counts only if the cited photo resolves enough pixels per metre for that kind of finding; label text and sticker dates need a close-up | See below |
+
+**The form reader fabricates when allowed to.** In the first real inspection Qwen3-VL 8B marked all
+23 rows of both ladders fine at 0.86 to 0.99 confidence from blurred frames two to three metres
+away, and invented an inventory number, a manufacturer and an article number. Requiring a photo
+and a confidence does not stop a model that supplies both. With the resolution rule the same run
+gives what the photos support: five shape rows fine (rails and rungs not bent, no rung missing,
+spreader and feet there), twelve rows "close-up needed", sticker not readable, shown grey at 29 %
+coverage. Still wrong after the rule: the leaning ladder is typed "Stehleiter" and both "Stahl".
+
+Reading a label or sticker needs about 1500 pixels per metre: 0.4 m from the object with the B2's
+head camera. The recording has no such view, so no row needing it has ever been filled.
+
 ## Not yet verified
 
-- The inspection stage has not run on real data: no vision-model call has been made (no API key
-  where this was built), so form reading quality is unknown.
+- Form reading has run on real frames only from two to three metres, with one small model. How
+  well any model reads the fine rows and the sticker from a real close-up is unknown.
+- What the red wall cabinet in the hall is: neither the model nor the code knows.
 - Nav2 goals, the live ROS 2 source and the Unitree source have not been exercised.
 - Viewing directions are map bearings in 45° steps; the pipeline does not know a ladder's front.
 - An object seen only without range gets an assumed range of 2.5 m and is marked approximate.

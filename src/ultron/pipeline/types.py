@@ -40,7 +40,8 @@ class SiteObject:
     sightings: int = 0
     first_seen: float = 0.0
     last_seen: float = 0.0
-    status: str = "FOUND"    # FOUND -> INSPECTED (or UNREACHABLE)
+    status: str = "FOUND"    # FOUND -> INSPECTED (or UNREACHABLE); REJECTED if the vision model says it is nothing
+    verified: bool = False   # the vision model looked at a keyframe and agreed with the kind
     result: dict = field(default_factory=dict)  # what the inspection concluded
     apart: list = field(default_factory=list)   # ids seen in the same frame: certainly other objects
 

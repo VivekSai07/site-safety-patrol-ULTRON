@@ -123,6 +123,28 @@ class ObjectMap:
             self._save()
         return merged
 
+    def relabel(self, object_id, kind):
+        """The object turned out to be of another kind. Returns the id it now has: that of a
+        known object of the right kind at the same place, else a fresh id of the right kind."""
+        with self._lock:
+            wrong = self._objects.pop(object_id)
+            near = [o for o in self._objects.values() if o.kind == kind and o.position and wrong.position
+                    and math.dist(o.position, wrong.position) <= KINDS[kind].same_object_radius]
+            if near:
+                target = min(near, key=lambda o: math.dist(o.position, wrong.position))
+                target.sightings += wrong.sightings
+            else:
+                number = sum(o.kind == kind for o in self._objects.values()) + 1
+                while f"{KINDS[kind].prefix}-{number:03}" in self._objects:
+                    number += 1
+                target = SiteObject(f"{KINDS[kind].prefix}-{number:03}", kind, wrong.position, wrong.sightings,
+                                    wrong.first_seen, wrong.last_seen, verified=True)
+                self._objects[target.id] = target
+            for found in self._objects.values():
+                found.apart = [i for i in found.apart if i != object_id]
+            self._save()
+            return target.id
+
     def update(self, object_id, **changes):
         with self._lock:
             found = self._objects[object_id]

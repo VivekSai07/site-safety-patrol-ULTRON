@@ -32,7 +32,12 @@ def _photo_index(value, photo_count):
     return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < photo_count else None
 
 
-def _criterion(criterion, reading, ladder_type, material, photo_count):
+def _resolved(details, photo, needed):
+    """Whether photo number `photo` shows enough detail. Unknown detail is not held against it."""
+    return details is None or photo is None or details[photo] is None or details[photo] >= needed
+
+
+def _criterion(criterion, reading, ladder_type, material, photo_count, details=None):
     if not form.applies(criterion, ladder_type, material):
         return {"status": form.NOT_APPLICABLE, "severity": "none", "remark": "", "confidence": 1.0,
                 "suspected": False, "photo": None, "box": None}
@@ -50,6 +55,10 @@ def _criterion(criterion, reading, ladder_type, material, photo_count):
 
     if status in (form.OK, form.DEFECT) and photo is None:
         status, remark = form.NOT_VISIBLE, (remark + " (ohne Fotobeleg)").strip()
+    elif status == form.OK and not _resolved(details, photo, criterion.detail):
+        # "Nothing wrong" from a photo too coarse to show it is not a finding. A defect the
+        # model reports from afar is kept: a false alarm costs a look, a missed one does not.
+        status, remark = form.NOT_VISIBLE, "Aufnahme zu grob für dieses Kriterium, Nahaufnahme nötig."
     elif status == form.DEFECT and confidence < MIN_CONFIDENCE:
         status, remark, suspected = form.HUMAN_CHECK, ("Verdacht: " + remark).strip(), True
     elif status == form.OK and confidence < MIN_CONFIDENCE:
@@ -62,12 +71,13 @@ def _criterion(criterion, reading, ladder_type, material, photo_count):
             "box": clean_box(reading.get("box")) if photo is not None else None}
 
 
-def _next_inspection(sticker, photo_count, today):
+def _next_inspection(sticker, photo_count, today, details=None):
     sticker = sticker or {}
     month, year = sticker.get("next_month"), sticker.get("next_year")
-    readable = (bool(sticker.get("present")) and isinstance(year, int) and 2000 <= year <= 2100
-                and (month is None or (isinstance(month, int) and 1 <= month <= 12)))
     photo = _photo_index(sticker.get("image"), photo_count)
+    readable = (bool(sticker.get("present")) and isinstance(year, int) and 2000 <= year <= 2100
+                and (month is None or (isinstance(month, int) and 1 <= month <= 12))
+                and photo is not None and _resolved(details, photo, form.READING))
     result = {"present": bool(sticker.get("present")), "month": month if readable else None,
               "year": year if readable else None, "text": sticker.get("text"), "photo": photo,
               "box": clean_box(sticker.get("box")) if photo is not None else None, "overdue": None}
@@ -77,8 +87,12 @@ def _next_inspection(sticker, photo_count, today):
     return result
 
 
-def assess(answer, photo_count, today=None):
-    """One inspection column: per-criterion states, sticker reading and the section 8 verdict."""
+def assess(answer, photo_count, today=None, details=None):
+    """One inspection column: per-criterion states, sticker reading and the section 8 verdict.
+
+    `details` gives each photo's resolution on the ladder in pixels per metre (None where
+    unknown). Rows, the sticker date and label text are only accepted from photos fine enough.
+    """
     today = today or date.today()
     ladder = answer.get("ladder") or {}
     ladder_type = ladder.get("aufstiegsart") if ladder.get("aufstiegsart") in form.LADDER_TYPES else None
@@ -87,8 +101,11 @@ def assess(answer, photo_count, today=None):
     for reading in answer.get("criteria") or []:
         if isinstance(reading, dict) and reading.get("id") in form.BY_ID:
             readings.setdefault(reading["id"], reading)
-    criteria = {c.id: _criterion(c, readings.get(c.id), ladder_type, material, photo_count)
+    criteria = {c.id: _criterion(c, readings.get(c.id), ladder_type, material, photo_count, details)
                 for c in form.CRITERIA}
+    # Text can only be read off a close-up of the label; without one, whatever the model
+    # "read" is discarded. The ladder's type and material are judged from its shape and kept.
+    label_readable = details is None or any(d is None or d >= form.READING for d in details)
 
     defects = [i for i, c in criteria.items() if c["status"] == form.DEFECT]
     if any(criteria[i]["severity"] == "critical" for i in defects):
@@ -98,7 +115,7 @@ def assess(answer, photo_count, today=None):
     else:
         result = form.RESULT_OK
 
-    next_inspection = _next_inspection(answer.get("plakette"), photo_count, today)
+    next_inspection = _next_inspection(answer.get("plakette"), photo_count, today, details)
     flags = []
     if next_inspection["overdue"]:
         flags.append(FLAG_OVERDUE)
@@ -122,8 +139,9 @@ def assess(answer, photo_count, today=None):
         "remarks": str(answer.get("summary") or "").strip(),
         "master": {
             "aufstiegsart": ladder_type, "werkstoff": material,
-            "anzahl_sprossen": ladder.get("anzahl_sprossen") if isinstance(ladder.get("anzahl_sprossen"), int) else None,
-            **{key: (str(ladder[key]).strip() or None) if ladder.get(key) is not None else None
+            "anzahl_sprossen": ladder.get("anzahl_sprossen") if (
+                isinstance(ladder.get("anzahl_sprossen"), int) and label_readable) else None,
+            **{key: (str(ladder[key]).strip() or None) if ladder.get(key) is not None and label_readable else None
                for key in ("leiterlaenge", "hersteller", "artikel_typ_nummer", "inventar_nummer")},
         },
     }

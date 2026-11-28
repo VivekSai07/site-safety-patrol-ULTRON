@@ -4,6 +4,7 @@ import math
 from pathlib import Path
 import tempfile
 import unittest
+import unittest.mock
 
 try:
     import numpy as np
@@ -288,6 +289,175 @@ class SurveyTest(Workspace):
         self.assertEqual(self.store.events()[-1]["message"], "model crashed")
 
 
+class Opinion:
+    """Vision model stand-in: answers by the frame name it is shown, as recorded per keyframe id."""
+
+    def __init__(self, answers, default="none"):
+        self.answers, self.default, self.asked = answers, default, []
+
+    def ask(self, prompt, frames, name, schema, quick=True):
+        self.asked.append(frames[0].name)
+        kind = self.answers.get(frames[0].name, self.default)
+        if kind == "offline":
+            from ultron.protocol.vlm import VlmError
+            raise VlmError("offline")
+        return {"kind": kind, "confidence": 0.9, "remark": "looks like " + kind}
+
+
+class VerifyTest(Workspace):
+    def verified_survey(self, answers, default="none"):
+        from ultron.pipeline.verify import Verifier
+        self.opinion = Opinion(answers, default)
+        self.survey.verifier = Verifier(self.opinion)
+
+    def see_often(self, kind, target, times=3):
+        """Seen from three directions, so three different keyframes exist to vote on."""
+        for stamp in range(times):
+            self.see(kind, target, (0, 1, 7)[stamp % 3], 3.0, float(stamp))
+
+    def test_one_dissenting_view_does_not_overturn_the_detector(self):
+        self.see_often("fire_hydrant", (5.0, 5.0))
+        ids = [k.id for k in self.keyframes.select(self.objects.get("HYD-001"), budget=3)]
+        self.verified_survey({ids[0]: "fire_extinguisher"}, default="fire_hydrant")
+        self.survey.tidy()
+        self.assertEqual([(o.id, o.verified) for o in self.objects.all()], [("HYD-001", True)])
+
+    def test_a_split_vote_changes_nothing_and_says_so(self):
+        self.see_often("fire_hydrant", (5.0, 5.0))
+        ids = [k.id for k in self.keyframes.select(self.objects.get("HYD-001"), budget=3)]
+        self.verified_survey({ids[0]: "fire_extinguisher", ids[1]: "fire_alarm", ids[2]: "none"})
+        self.survey.tidy()
+        self.assertEqual([(o.id, o.status, o.verified) for o in self.objects.all()], [("HYD-001", "FOUND", False)])
+        self.assertEqual(self.store.events()[-1]["kind"], "object_unclear")
+
+    def test_an_agreed_object_is_marked_verified_and_judged_only_once(self):
+        self.verified_survey({}, default="ladder")
+        self.see_often("ladder", (5.0, 5.0))
+        self.survey.tidy()
+        self.survey.tidy()
+        self.assertTrue(self.objects.get("LAD-001").verified)
+        self.assertEqual(len(self.opinion.asked), 3)
+
+    def test_a_look_alike_is_relabelled_under_the_right_kind(self):
+        self.verified_survey({}, default="fire_alarm")
+        self.see_often("fire_extinguisher", (5.0, 5.0))
+        keyframes = len(self.keyframes.for_object("FEX-001"))
+        self.survey.tidy()
+        self.assertEqual([(o.id, o.kind, o.sightings, o.verified) for o in self.objects.all()],
+                         [("ALM-001", "fire_alarm", 3, True)])
+        self.assertEqual(len(self.keyframes.for_object("ALM-001")), keyframes)
+        self.assertEqual(self.store.events()[-1]["kind"], "object_relabelled")
+
+    def test_a_relabelled_object_joins_the_known_one_at_that_place(self):
+        self.see_often("fire_alarm", (5.0, 5.0))
+        self.see_often("fire_extinguisher", (5.1, 5.0))
+        self.verified_survey({}, default="fire_alarm")
+        self.survey.tidy()
+        self.assertEqual([(o.id, o.sightings) for o in self.objects.all()], [("ALM-001", 6)])
+
+    def test_something_that_is_nothing_is_rejected_and_never_inspected(self):
+        self.verified_survey({})
+        self.see_often("ladder", (5.0, 5.0))
+        self.survey.tidy()
+        self.assertEqual(self.objects.get("LAD-001").status, "REJECTED")
+        self.assertEqual((self.objects.pending(), self.keyframes.for_object("LAD-001")), ([], []))
+
+    def test_an_unsure_or_unreachable_model_confirms_nothing(self):
+        from ultron.pipeline.verify import Verifier
+
+        class Unsure:
+            def ask(self, prompt, frames, name, schema, quick=True):
+                return {"kind": "ladder", "confidence": 0.3, "remark": "maybe"}
+        self.assertEqual(Verifier(Unsure()).classify(Image.new("RGB", (64, 64)), CENTRE)[0], "none")
+        self.verified_survey({}, default="offline")
+        self.see_often("ladder", (5.0, 5.0))
+        self.survey.tidy()
+        ladder = self.objects.get("LAD-001")
+        self.assertEqual((ladder.status, ladder.verified), ("FOUND", False))
+
+    def test_rarely_seen_objects_are_not_sent_to_the_model(self):
+        self.verified_survey({}, default="ladder")
+        self.see("ladder", (5.0, 5.0), 0, 3.0)
+        self.survey.tidy()
+        self.assertEqual(self.opinion.asked, [])
+
+
+class CalibrateTest(unittest.TestCase):
+    """A detector whose prompts behave like the real one did: wording decides what is found."""
+
+    class WordingDetector:
+        # prompt -> boxes it produces per frame: (box, score, what the thing really is)
+        BEHAVIOUR = {
+            "red fire extinguisher": [([100, 400, 200, 700], 0.9, "fire_extinguisher"), ([600, 300, 650, 400], 0.5, "fire_alarm")],
+            "fire extinguisher": [([100, 400, 200, 700], 0.2, "fire_extinguisher")],
+            "fire extinguisher standing on the floor": [],
+        }
+
+        def use(self, prompts):
+            self.prompts = prompts
+
+        def detect(self, frame):
+            return [Detection("fire_extinguisher", box, score) for box, score, _ in
+                    self.BEHAVIOUR.get(self.prompts["fire_extinguisher"]["prompt"], [])
+                    if score >= self.prompts["fire_extinguisher"]["min_score"]]
+
+    class Judge:
+        """Knows what each region really is."""
+
+        def classify(self, image, box, name):
+            return ("fire_extinguisher" if box[0] < 300 else "fire_alarm"), ""
+
+    def run_calibration(self, kinds=("fire_extinguisher",)):
+        from ultron.pipeline.calibrate import calibrate
+        detector, lines = self.WordingDetector(), []
+        frames = [frame(f"f{i}") for i in range(4)]
+        return calibrate(frames, detector, self.Judge(), kinds=kinds, log=lines.append), detector
+
+    def test_the_wording_that_finds_most_confirmed_boxes_wins(self):
+        report, detector = self.run_calibration()
+        chosen = report["fire_extinguisher"]
+        self.assertEqual(chosen["prompt"], "red fire extinguisher")
+        self.assertEqual([t["kept"] for t in chosen["tried"]], [4, 0, 0])
+        self.assertEqual(chosen["tried"][0]["precision"], 1.0)
+        self.assertEqual(detector.prompts["fire_extinguisher"]["prompt"], "red fire extinguisher")
+
+    def test_one_wrong_judgement_does_not_throw_away_a_good_prompt(self):
+        from ultron.pipeline.calibrate import _threshold
+        judged = [(0.95, True), (0.9, False), (0.8, True), (0.7, True), (0.6, True), (0.3, False)]
+        self.assertEqual(_threshold(judged), 0.57)
+        self.assertIsNone(_threshold([(0.9, False), (0.5, False)]))
+
+    def test_the_threshold_keeps_confirmed_boxes_and_drops_the_refuted_ones_below(self):
+        report, _ = self.run_calibration()
+        self.assertTrue(0.5 < report["fire_extinguisher"]["min_score"] <= 0.9)
+
+    def test_a_kind_never_seen_keeps_its_default(self):
+        from ultron.pipeline.catalog import DEFAULT_PROMPTS
+        from ultron.pipeline.calibrate import calibrate
+
+        class Blind:
+            def use(self, prompts):
+                pass
+
+            def detect(self, frame):
+                return []
+        report = calibrate([frame("a")], Blind(), self.Judge(), kinds=["ladder"], log=lambda line: None)
+        self.assertEqual((report["ladder"]["prompt"], report["ladder"]["calibrated"]),
+                         (DEFAULT_PROMPTS["ladder"]["prompt"], False))
+
+    def test_saved_prompts_are_picked_up_by_the_detector_setup(self):
+        from ultron.pipeline.calibrate import save
+        from ultron.pipeline.detect import load_prompts
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(load_prompts(folder)["ladder"]["prompt"], "ladder")
+            report, _ = self.run_calibration()
+            save(report, folder)
+            loaded = load_prompts(folder)
+            self.assertEqual(loaded["fire_extinguisher"]["prompt"], "red fire extinguisher")
+            self.assertEqual(set(loaded["fire_extinguisher"]), {"prompt", "min_score"})
+            self.assertEqual(loaded["ladder"]["prompt"], "ladder")
+
+
 class KeyframeTest(Workspace):
     def test_memory_is_bounded_per_view_and_side(self):
         for stamp in range(10):
@@ -325,26 +495,28 @@ class CoverageTest(Workspace):
     def test_a_ladder_seen_once_needs_a_close_view_and_two_more_sides(self):
         self.see("ladder", (5.0, 5.0), 0, 3.0)
         requests = self.requests("LAD-001")
-        self.assertEqual([(r.view, r.side) for r in requests], [("close", 0), ("overview", 1), ("overview", 7)])
+        self.assertEqual([(r.view, r.side) for r in requests],
+                         [("close", 0), ("detail", 0), ("overview", 1), ("overview", 7)])
         close = requests[0]
-        self.assertAlmostEqual(math.dist((close.x, close.y), (5.0, 5.0)), 1.3, delta=0.2)
+        self.assertAlmostEqual(math.dist((close.x, close.y), (5.0, 5.0)), 1.4, delta=0.1)
+        self.assertAlmostEqual(math.dist((requests[1].x, requests[1].y), (5.0, 5.0)), 0.4, delta=0.05)
         self.assertAlmostEqual(close.yaw, math.pi, delta=0.05)  # standing at +x, looking back at the ladder
 
     def test_wall_equipment_needs_one_side_only(self):
         self.see("fire_extinguisher", (5.0, 5.0), 2, 3.0)
-        self.assertEqual([(r.view, r.side) for r in self.requests("FEX-001")], [("close", 2)])
+        self.assertEqual([(r.view, r.side) for r in self.requests("FEX-001")], [("close", 2), ("detail", 2)])
 
     def test_nothing_is_missing_once_every_view_and_side_is_seen(self):
-        for stamp, (side, distance) in enumerate(((0, 3.0), (0, 1.2), (1, 3.0), (7, 3.0))):
+        for stamp, (side, distance) in enumerate(((0, 3.0), (0, 1.2), (0, 0.4), (1, 3.0), (7, 3.0))):
             self.see("ladder", (5.0, 5.0), side, distance, stamp)
         self.assertEqual(self.requests("LAD-001"), [])
 
     def test_blocked_goals_are_dropped_and_unplaced_objects_request_nothing(self):
         self.see("ladder", (5.0, 5.0), 0, 3.0)
         self.assertEqual([(r.view, r.side) for r in self.requests("LAD-001", is_free=lambda x, y: y <= 5.5)],
-                         [("close", 0), ("overview", 7), ("overview", 6)])
+                         [("close", 0), ("detail", 0), ("overview", 7), ("overview", 6)])
         self.assertEqual([(r.view, r.side) for r in self.requests("LAD-001", exclude={("close", 0), ("overview", 1)})],
-                         [("overview", 7), ("overview", 2)])
+                         [("detail", 0), ("overview", 7), ("overview", 2)])
         Survey(SeesEverything(), self.objects, self.keyframes, self.store, interval=0).feed(frame("first_aid_kit"))
         self.assertEqual(self.requests("AID-001"), [])
 
@@ -387,11 +559,11 @@ class InspectionTest(Workspace):
         self.see("ladder", (5.0, 5.0), 0, 3.0)
         navigator, vlm = Teleport(), FormVlm()
         self.inspection(navigator, vlm, (5.0, 5.0)).run()
-        self.assertEqual(navigator.goals[0], ("close", 0))
-        self.assertEqual(len({side for _, side in navigator.goals[1:]}), 2)
+        self.assertEqual(navigator.goals[:2], [("close", 0), ("detail", 0)])
+        self.assertEqual(len({side for _, side in navigator.goals[2:]}), 2)
         ladder = self.objects.get("LAD-001")
         self.assertEqual((ladder.status, ladder.result["form"], ladder.result["missing_views"]), ("INSPECTED", "ladder", []))
-        self.assertEqual(len(vlm.calls[0][1]), 4)  # three overview sides and the close-up
+        self.assertEqual(len(vlm.calls[0][1]), 5)  # three overview sides, the close-up and the detail view
         sheet = self.store.ladder("LAD-001")       # same id in the Kontrollblatt store and the object map
         self.assertEqual((len(sheet["inspections"]), sheet["position"]), (1, [round(v, 2) for v in ladder.position]))
         self.assertEqual(self.objects.pending(), [])
@@ -401,14 +573,14 @@ class InspectionTest(Workspace):
         self.inspection(Passive(), FormVlm(), (5.0, 5.0)).run()
         ladder = self.objects.get("LAD-001")
         self.assertEqual(ladder.status, "INSPECTED")
-        self.assertEqual(len(ladder.result["missing_views"]), 3)
+        self.assertEqual(len(ladder.result["missing_views"]), 4)
         self.assertFalse([e for e in self.store.events() if e["kind"] == "view_requested"])
 
     def test_attempts_per_object_are_bounded_when_no_goal_is_reachable(self):
         self.see("ladder", (5.0, 5.0), 0, 3.0)
         navigator = Teleport(refuse={(view, side) for view in ("overview", "close") for side in range(8)})
         self.inspection(navigator, FormVlm(), (5.0, 5.0)).run()
-        self.assertEqual(len(navigator.goals), 6)
+        self.assertEqual(len(navigator.goals), 8)
         self.assertEqual(self.objects.get("LAD-001").status, "INSPECTED")
 
     def test_an_unreachable_view_is_skipped_and_the_others_are_still_taken(self):
@@ -425,11 +597,13 @@ class InspectionTest(Workspace):
             {"id": "BS-1", "visible": True, "fulfilled": True, "next_month": None, "next_year": None,
              "remark": "Feuerlöscher an der Wand", "image": 0, "box": [300, 200, 700, 900], "confidence": 0.9},
             {"id": "BS-2", "visible": True, "fulfilled": None, "next_month": 3, "next_year": 2020,
-             "remark": "Plakette 03/2020", "image": 1, "box": [400, 400, 600, 600], "confidence": 0.8}],
+             "remark": "Plakette 03/2020", "image": 2, "box": [400, 400, 600, 600], "confidence": 0.8}],
             "summary": "Prüffrist abgelaufen."}
         navigator, vlm = Teleport(), FormVlm(answer)
-        self.inspection(navigator, vlm, (5.0, 5.0), "fire_extinguisher").run()
-        self.assertEqual(navigator.goals, [("close", 2)])
+        # The test camera is coarser than the robot's: let its 0.4 m view count as readable.
+        with unittest.mock.patch("ultron.pipeline.checklists.READING", 1000):
+            self.inspection(navigator, vlm, (5.0, 5.0), "fire_extinguisher").run()
+        self.assertEqual(navigator.goals, [("close", 2), ("detail", 2)])
         result = self.objects.get("FEX-001").result
         self.assertEqual((result["status"], result["open"]), ("MANGEL", []))
         folder = self.root / "objects" / "FEX-001"
@@ -457,6 +631,20 @@ class ChecklistRulesTest(unittest.TestCase):
         self.assertEqual(self.answer("fire_extinguisher", present, self.row(next_year=2026, next_month=10))["status"], "MANGEL")
         unread = self.answer("fire_extinguisher", present, self.row(next_year=None, next_month=None))
         self.assertEqual((unread["status"], unread["open"]), ("OFFEN", ["BS-2"]))
+
+    def test_a_date_read_from_a_photo_too_coarse_for_a_sticker_is_not_accepted(self):
+        present = self.row(id="BS-1", fulfilled=True)
+        def status(details):
+            return checklists.assess("fire_extinguisher", {"rows": [present, self.row()], "summary": ""}, 1,
+                                     date(2026, 11, 28), details=details)["rows"]["BS-2"]["answer"]
+        self.assertEqual((status([400.0]), status([1600.0]), status(None)), ("offen", "ja", "ja"))
+
+    def test_a_verified_object_is_present_whatever_the_model_says_about_the_row(self):
+        absent = self.row(id="EH-2", fulfilled=False)
+        def answer(verified):
+            return checklists.assess("fire_alarm", {"rows": [absent], "summary": ""}, 1, date(2026, 11, 28),
+                                     verified=verified)["rows"]["EH-2"]["answer"]
+        self.assertEqual((answer(True), answer(False)), ("ja", "nein"))
 
     def test_no_photo_low_confidence_or_missing_rows_stay_open(self):
         for bad in ({"image": None}, {"confidence": 0.2}, {"visible": False}, {"fulfilled": None}):

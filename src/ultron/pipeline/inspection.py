@@ -17,7 +17,7 @@ from ..protocol.vlm import VlmError
 
 class Inspection:
     def __init__(self, objects, keyframes, vlm, store, survey=None, navigator=None, camera=None,
-                 is_free=None, max_extra_views=3, max_attempts=6, min_sightings=3, mission=None):
+                 is_free=None, max_extra_views=4, max_attempts=8, min_sightings=3, mission=None):
         self.objects, self.keyframes, self.vlm, self.store = objects, keyframes, vlm, store
         self.survey = survey                  # used to process frames captured at requested views
         self.navigator = navigator or Passive()
@@ -61,30 +61,33 @@ class Inspection:
         frames = [Frame.from_file(self.keyframes.root / k.file, name=k.id, stamp=k.stamp,
                                   pose=tuple(k.pose) if k.pose else None) for k in chosen]
         self.store.emit("inspecting", frames=[f.name for f in frames], object=site_object.id)
+        # Pixels per metre each frame resolves on the object: decides which rows it can support.
+        fy = self.survey.calibration.fy if self.survey and self.survey.calibration else None
+        details = [fy / k.distance if fy and k.distance else None for k in chosen]
         try:
             if KINDS[site_object.kind].checklist == "ladder":
-                result = self._ladder(site_object, frames)
+                result = self._ladder(site_object, frames, details)
             else:
-                result = self._checklist(site_object, frames)
+                result = self._checklist(site_object, frames, details)
         except (VlmError, OSError, ValueError) as error:
             self.store.emit("error", stage="inspection", object=site_object.id, message=str(error))
             return site_object
         result["missing_views"] = still_missing
         return self.objects.update(site_object.id, status="INSPECTED", result=result)
 
-    def _ladder(self, site_object, frames):
-        inspection = assess(self.vlm.inspect(frames), len(frames))
+    def _ladder(self, site_object, frames, details):
+        inspection = assess(self.vlm.inspect(frames), len(frames), details=details)
         sheet = self.store.record(inspection, frames, position=site_object.position, mission=self.mission,
                                   model=getattr(self.vlm, "model", None), ladder_id=site_object.id)
         last = sheet["inspections"][-1]
         return {"form": "ladder", "status": last["result"], "light": last["light"], "open": last["needs_view"],
                 "sheet": f"ladders/{sheet['id']}/sheet.json"}
 
-    def _checklist(self, site_object, frames):
+    def _checklist(self, site_object, frames, details):
         kind = site_object.kind
         answer = self.vlm.ask(checklists.prompt(kind, len(frames)), frames, "checklist", checklists.ANSWER_SCHEMA,
                               quick=False)
-        result = checklists.assess(kind, answer, len(frames))
+        result = checklists.assess(kind, answer, len(frames), details=details, verified=site_object.verified)
         folder = self.store.root / "objects" / site_object.id
         folder.mkdir(parents=True, exist_ok=True)
         for index, frame in enumerate(frames):

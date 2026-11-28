@@ -57,6 +57,17 @@ class KeyframeStore:
                 self._frames.remove(keyframe)
             self._save()
 
+    def reassign(self, object_id, new_id):
+        """Hand an object's keyframes to another id (the object was relabelled)."""
+        with self._lock:
+            for keyframe in self.for_object(object_id):
+                keyframe.object_id = new_id
+            self._save()
+
+    def best(self, object_id):
+        """The single best frame of an object, or None."""
+        return max(self.for_object(object_id), key=quality, default=None)
+
     def offer(self, frame, site_object, sighting, sharpness):
         """Keep this frame if it beats what its cell already holds. Returns the Keyframe or None."""
         view = view_name(site_object.kind, sighting.distance)

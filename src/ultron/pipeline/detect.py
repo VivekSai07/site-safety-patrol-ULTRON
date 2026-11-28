@@ -4,7 +4,10 @@
     YoloDetector    open-vocabulary YOLO (YOLOE / YOLO-World) on a local GPU: fast
     ReplayDetector  recorded answers by frame name, for tests and offline runs
 """
-from .catalog import KIND_OF_PROMPT, KINDS
+import json
+from pathlib import Path
+
+from .catalog import DEFAULT_PROMPTS, KINDS
 from .types import Detection
 from ..protocol.assess import clean_box
 from ..protocol.vlm import NULLABLE_BOX, _object
@@ -47,13 +50,22 @@ class YoloDetector:
     Feed frames in order and several per second, or the tracker cannot follow objects.
     """
 
-    def __init__(self, weights="yoloe-11l-seg.pt", device=None, track=True):
+    def __init__(self, weights="yoloe-11l-seg.pt", device=None, track=True, prompts=None):
+        """`prompts` is {kind: {"prompt": text, "min_score": number}}; default from the catalog."""
         from ultralytics import YOLOE
         self.model = YOLOE(weights)
-        self.prompts = list(KIND_OF_PROMPT)
-        self.model.set_classes(self.prompts, self.model.get_text_pe(self.prompts))
-        self.lowest = min(kind.min_score for kind in KINDS.values())
         self.device, self.track = device, track
+        self.use(prompts or DEFAULT_PROMPTS)
+
+    def use(self, prompts):
+        """Switch the detector to another set of prompts (calibration tries several)."""
+        self.kinds = list(prompts)
+        self.thresholds = {kind: prompts[kind]["min_score"] for kind in self.kinds}
+        texts = [prompts[kind]["prompt"] for kind in self.kinds]
+        self.model.set_classes(texts, self.model.get_text_pe(texts))
+        self.lowest = min(self.thresholds.values())
+        if getattr(self.model, "predictor", None) is not None:
+            self.model.predictor = None  # ultralytics keeps the old classes in a cached predictor
 
     def detect(self, frame):
         options = dict(conf=self.lowest, device=self.device, verbose=False)
@@ -66,15 +78,23 @@ class YoloDetector:
         outlines = result.masks.xy if result.masks is not None else [None] * len(result.boxes)
         found = []
         for box, track, outline in zip(result.boxes, tracks, outlines):
-            kind, score = KIND_OF_PROMPT[self.prompts[int(box.cls[0])]], float(box.conf[0])
+            kind, score = self.kinds[int(box.cls[0])], float(box.conf[0])
             x0, y0, x1, y1 = box.xyxy[0].tolist()
             thousandths = clean_box([1000 * x0 / width, 1000 * y0 / height, 1000 * x1 / width, 1000 * y1 / height])
-            if thousandths and score >= KINDS[kind].min_score:
+            if thousandths and score >= self.thresholds[kind]:
                 points = None
                 if outline is not None and len(outline) >= 3:
                     points = [[round(1000 * x / width), round(1000 * y / height)] for x, y in outline.tolist()]
                 found.append(Detection(kind, thousandths, score, None if track is None else int(track), points))
         return found
+
+
+def load_prompts(workspace):
+    """Calibrated prompts saved in the workspace, laid over the catalog defaults."""
+    path = Path(workspace) / "prompts.json"
+    chosen = json.loads(path.read_text()) if path.is_file() else {}
+    return {kind: {**default, **{k: v for k, v in chosen.get(kind, {}).items() if k in default}}
+            for kind, default in DEFAULT_PROMPTS.items()}
 
 
 class ReplayDetector:

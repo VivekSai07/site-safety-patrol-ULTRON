@@ -32,6 +32,15 @@ VISUAL, HANDS_ON = "visual", "hands_on"
 SPREADER_TYPES = ("Stehleiter", "Mehrzweckleiter", "Podestleitern", "Tritt")
 
 
+# How finely a photo must resolve the ladder before a row can be judged from it, in pixels per
+# metre. A vision model will happily call burrs absent from across the room; physics will not.
+SHAPE = 150        # bent rails, a missing rung, whether a spreader or foot is there at all
+PRESENCE = 500     # pictograms or a label present (not what they say)
+CONDITION = 800    # cracks, wear, corrosion, how a rung sits in the rail
+FINE = 2000        # sharp edges, splinters, burrs
+READING = 1500     # text on the label, the date on the inspection sticker
+
+
 @dataclass(frozen=True)
 class Criterion:
     id: str
@@ -41,6 +50,7 @@ class Criterion:
     mode: str = VISUAL
     only_types: tuple = ()       # empty: applies to every ladder type
     only_materials: tuple = ()   # empty: applies to every material
+    detail: int = CONDITION      # pixels per metre a photo needs to show this
 
 
 SECTIONS = (
@@ -56,20 +66,20 @@ SECTIONS = (
 SECTION_TITLES = {number: title for number, title, _ in SECTIONS}
 
 CRITERIA = (
-    Criterion("1.1", "1", "Verformung", "Rails bent or deformed"),
+    Criterion("1.1", "1", "Verformung", "Rails bent or deformed", detail=SHAPE),
     Criterion("1.2", "1", "Beschädigung (z.B. Risse)", "Rails damaged, e.g. cracks"),
-    Criterion("1.3", "1", "Scharfe Kanten, Splitter, Grat", "Sharp edges, splinters, burrs on rails"),
+    Criterion("1.3", "1", "Scharfe Kanten, Splitter, Grat", "Sharp edges, splinters, burrs on rails", detail=FINE),
     Criterion("1.4", "1", "Abnutzung", "Rails worn"),
     Criterion("1.5", "1", "Schutzbehandlung (bei Holz)", "Protective coating (wood only)",
               only_materials=("Holz",)),
-    Criterion("2.1", "2", "Verformung", "Rungs/steps/platform bent or deformed"),
-    Criterion("2.2", "2", "Beschädigung", "Rungs/steps/platform damaged or missing"),
-    Criterion("2.3", "2", "Scharfe Kanten, Splitter, Grat", "Sharp edges, splinters, burrs on rungs"),
+    Criterion("2.1", "2", "Verformung", "Rungs/steps/platform bent or deformed", detail=SHAPE),
+    Criterion("2.2", "2", "Beschädigung", "Rungs/steps/platform damaged or missing", detail=SHAPE),
+    Criterion("2.3", "2", "Scharfe Kanten, Splitter, Grat", "Sharp edges, splinters, burrs on rungs", detail=FINE),
     Criterion("2.4", "2", "Verbindung zum Holm (z.B. Bördelung, Schraub-/Niet-Verbindung, Schweißnaht)",
               "Joint between rung and rail"),
     Criterion("2.5", "2", "Abnutzung (z.B. Trittfläche, Plattformauflage)", "Tread surface worn"),
     Criterion("3.1", "3", "Vollständigkeit/Befestigung", "Spreader complete and fixed",
-              only_types=SPREADER_TYPES),
+              only_types=SPREADER_TYPES, detail=SHAPE),
     Criterion("3.2", "3", "Funktionsfähigkeit", "Spreader works", HANDS_ON, SPREADER_TYPES),
     Criterion("3.3", "3", "Beschädigung", "Spreader damaged", only_types=SPREADER_TYPES),
     Criterion("4.1", "4", "Beschädigung/Korrosion", "Fittings damaged or rusty"),
@@ -77,11 +87,11 @@ CRITERIA = (
     Criterion("4.3", "4", "Funktionsfähigkeit", "Fittings work", HANDS_ON),
     Criterion("4.4", "4", "Abnutzung", "Fittings worn"),
     Criterion("4.5", "4", "Schmierung (mechanische Teile)", "Mechanical parts greased", HANDS_ON),
-    Criterion("5.1", "5", "Vollständigkeit/Befestigung", "Feet complete and fixed"),
+    Criterion("5.1", "5", "Vollständigkeit/Befestigung", "Feet complete and fixed", detail=SHAPE),
     Criterion("5.2", "5", "Abnutzung/Beschädigung", "Feet worn or damaged"),
     Criterion("5.3", "5", "Funktionsfähigkeit", "Feet/rollers work", HANDS_ON),
-    Criterion("6.1", "6", "Vollständigkeit/Befestigung", "Accessories complete and fixed"),
-    Criterion("7.1", "7", "Betriebsanleitung (z.B. Piktogramm)", "Instructions / pictograms present"),
+    Criterion("6.1", "6", "Vollständigkeit/Befestigung", "Accessories complete and fixed", detail=SHAPE),
+    Criterion("7.1", "7", "Betriebsanleitung (z.B. Piktogramm)", "Instructions / pictograms present", detail=PRESENCE),
 )
 BY_ID = {c.id: c for c in CRITERIA}
 

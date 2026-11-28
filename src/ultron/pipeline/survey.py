@@ -3,10 +3,15 @@
 Feed it frames at any rate. It keeps no state of its own beyond the rate limit: objects
 and keyframes are on disk after every frame, so pausing is simply not feeding it.
 """
+from PIL import Image
+
 from .catalog import KINDS
 from .lift import lift
+from .verify import NONE
 
 
+EDGE = 10               # thousandths: a box this close to the top or bottom of the image is cut off
+VERIFY_VIEWS = 3        # keyframes of an object shown to the vision model, one call each
 SAME_BOX_OVERLAP = 0.5  # boxes of one kind overlapping this much (intersection over union) are one object
 PART_OF_BOX = 0.7       # a box of one kind lying this much inside a better one is a part of it
 
@@ -33,8 +38,10 @@ def distinct(detections):
 
 
 class Survey:
-    def __init__(self, detector, objects, keyframes, store, calibration=None, interval=1.0, min_sharpness=0.0):
+    def __init__(self, detector, objects, keyframes, store, calibration=None, interval=1.0, min_sharpness=0.0,
+                 verifier=None):
         self.detector, self.objects, self.keyframes, self.store = detector, objects, keyframes, store
+        self.verifier = verifier            # optional second opinion from the vision model, one call per object
         self.calibration = calibration
         self.interval = interval            # seconds between processed frames
         self.min_sharpness = min_sharpness  # frames blurrier than this are skipped
@@ -59,7 +66,9 @@ class Survey:
         for detection in sorted(detections, key=lambda d: d.track not in self._tracks):
             sighting = lift(frame, detection, self.calibration)
             low, high = KINDS[detection.kind].size
-            if sighting.height is not None and not low <= sighting.height <= high:
+            # A box cut off by the image edge shows only part of the object: it may be any size or larger.
+            cut_off = detection.box[1] <= EDGE or detection.box[3] >= 1000 - EDGE
+            if sighting.height is not None and not ((cut_off or low <= sighting.height) and sighting.height <= high):
                 continue  # wrong size for its kind: a look-alike
             site_object = self.objects.observe(sighting, frame.stamp, exclude={o.id for o in seen},
                                                known=self._tracks.get(detection.track))
@@ -83,14 +92,57 @@ class Survey:
                         note=", ".join(sorted({o.id for o in seen})) or "nothing found")
         return seen
 
+    def _replace(self, old, new):
+        self._tracks = {track: new if i == old else i for track, i in self._tracks.items()}
+
     def tidy(self, min_sightings=3):
-        """Merge fragments into the objects they belong to. Call when a survey pass ends."""
+        """Merge fragments into the objects they belong to, then have the vision model check
+        what is left. Call when a survey pass ends, or now and then during a long one."""
         merged = self.objects.consolidate(min_sightings)
         for removed, target in merged.items():
             self.keyframes.drop(removed)
-            self._tracks = {track: target if i == removed else i for track, i in self._tracks.items()}
+            self._replace(removed, target)
             self.store.emit("object_merged", object=removed, into=target)
+        self.verify(min_sightings)
         return merged
+
+    def verify(self, min_sightings=3):
+        """Ask the vision model about every well-seen object it has not judged yet."""
+        if self.verifier is None:
+            return
+        for site_object in self.objects.pending(min_sightings):
+            views = self.keyframes.select(site_object, budget=VERIFY_VIEWS)
+            if site_object.verified or not views:
+                continue
+            opinions = []
+            for view in views:
+                with Image.open(self.keyframes.root / view.file) as image:
+                    opinion = self.verifier.classify(image.convert("RGB"), view.box, view.id)
+                if opinion is not None:
+                    opinions.append(opinion)
+            if not opinions:
+                continue  # model unreachable: the object stays unverified and is tried again next time
+            kinds = [kind for kind, _ in opinions]
+            kind = max(set(kinds), key=kinds.count)
+            remark = next(text for answer, text in opinions if answer == kind)
+            # One glance must not overturn the detector: a different verdict needs a majority of
+            # at least two views. Anything less leaves the object as it is, unverified.
+            if kind != site_object.kind and (kinds.count(kind) < 2 or kinds.count(kind) * 2 <= len(kinds)):
+                self.store.emit("object_unclear", object=site_object.id, opinions=kinds)
+                continue
+            if kind == site_object.kind:
+                self.objects.update(site_object.id, verified=True)
+                self.store.emit("object_verified", object=site_object.id, remark=remark)
+            elif kind == NONE:
+                self.objects.update(site_object.id, status="REJECTED", result={"reason": remark})
+                self.keyframes.drop(site_object.id)
+                self.store.emit("object_rejected", object=site_object.id, was=site_object.kind, remark=remark)
+            else:
+                new_id = self.objects.relabel(site_object.id, kind)
+                self.keyframes.reassign(site_object.id, new_id)
+                self._replace(site_object.id, new_id)
+                self.store.emit("object_relabelled", object=site_object.id, was=site_object.kind,
+                                now=kind, into=new_id, remark=remark)
 
     def run(self, source):
         try:
