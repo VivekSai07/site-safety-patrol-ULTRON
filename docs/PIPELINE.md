@@ -33,6 +33,9 @@ python -m ultron.pipeline patrol --source relay:5600 --detector yolo --interval 
 python3 scripts/ros_relay.py --to GPU_MACHINE:5600
 ```
 
+Add `--record DIR` to the relay to also keep a ROS 2 bag of the run on the robot (camera,
+depth, lidar, TF, IMU; about 7 GB a minute). Costs and options: [RECORDING.md](RECORDING.md).
+
 The survey runs until the relay stops, `--survey-seconds` pass or Ctrl-C is pressed once; then
 the objects are checked and inspected and the mission is closed. `--navigator` chooses how missing
 views are reached: `passive` (not at all), `operator` (a person drives), `dashboard` (goal through

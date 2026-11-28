@@ -41,6 +41,8 @@ const I18N = {
     'h.title': 'Verlauf', 'h.patrols': 'Patrouillen', 'h.ladders': 'Leitern', 'h.open': 'Offene Mängel', 'h.changed': 'Verändert',
     'h.patrol': 'Patrouille', 'h.date': 'Datum', 'h.flagged': 'Mängel', 'h.alerts': 'Meldungen', 'h.data': 'Daten', 'h.change': 'Änderung',
     'h.worse': 'Verschlechtert', 'h.still': 'Weiter offen', 'h.same': 'Unverändert', 'h.first': 'Erstprüfung', 'site': 'Baustelle',
+    'h.matrix': 'Leitern über alle Patrouillen', 'h.running': 'Läuft', 'h.none': 'Keine Leiter in dieser Patrouille geprüft.',
+    'h.empty': 'Noch keine Patrouille auf dieser Baustelle.', 'h.type': 'Art', 'h.reason': 'Befund', 'h.ladder': 'Leiter',
     'result': 'Ergebnis', 'photo': 'Foto', 'person_only': '„Leiter i. O.“ setzt nur der Sachkundige.',
   },
   en: {
@@ -83,6 +85,8 @@ const I18N = {
     'h.title': 'History', 'h.patrols': 'Patrols', 'h.ladders': 'Ladders', 'h.open': 'Open flags', 'h.changed': 'Changed',
     'h.patrol': 'Patrol', 'h.date': 'Date', 'h.flagged': 'Flagged', 'h.alerts': 'Alerts', 'h.data': 'Data', 'h.change': 'Change',
     'h.worse': 'Got worse', 'h.still': 'Still open', 'h.same': 'No change', 'h.first': 'First inspection', 'site': 'Site',
+    'h.matrix': 'Ladders across all patrols', 'h.running': 'Running', 'h.none': 'No ladder was inspected on this patrol.',
+    'h.empty': 'No patrol on this site yet.', 'h.type': 'Type', 'h.reason': 'Finding', 'h.ladder': 'Ladder',
     'result': 'Result', 'photo': 'Photo', 'person_only': 'Only the qualified person can mark a ladder OK for use.',
   },
 };

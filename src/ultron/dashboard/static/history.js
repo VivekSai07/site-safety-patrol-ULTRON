@@ -46,15 +46,46 @@ function render() {
         el('td', {}, el('a', {href: `/api/sites/${encodeURIComponent(H.site)}/ladders/${id}/report.pdf`, target: '_blank'}, t('report'))));
     })));
 
-  fill($('patrols'),
-    el('thead', {}, el('tr', {}, [t('h.patrol'), t('h.date'), t('h.ladders'), t('h.flagged'), t('h.alerts'), t('h.data')].map(x => el('th', {}, x)))),
-    el('tbody', {}, H.missions.map(m => el('tr', {},
-      el('td', {class: 'mono', style: 'font-weight:600'}, m.id),
-      el('td', {}, new Date(m.started).toLocaleString(LANG === 'de' ? 'de-DE' : 'en-GB', {dateStyle: 'short', timeStyle: 'short'})),
-      el('td', {}, m.inspections.length),
-      el('td', {style: 'color:var(--flag-fg);font-weight:700'}, m.inspections.filter(i => i.status === 'FLAGGED').length),
-      el('td', {}, m.alerts.length),
-      el('td', {}, el('a', {href: `/api/missions/${m.id}/export.csv`}, 'CSV'), ' · ', el('a', {href: `/api/missions/${m.id}/export.json`, target: '_blank'}, 'JSON'))))));
+  // One card per patrol, newest first (the API's order), with the ladders it inspected underneath.
+  // The newest card starts open; which cards are open survives a re-render (language or theme switch).
+  if (!H.open) H.open = new Set(H.missions.slice(0, 1).map(m => m.id));
+  fill($('patrols'), H.missions.length ? H.missions.map(m => patrolCard(m, H.open.has(m.id))) : el('p', {class: 'sub'}, t('h.empty')));
+}
+
+const SEVERITY = {FLAGGED: 0, MANUAL_REVIEW: 1, INSPECTING: 2, AUTOMATED_PASS: 3};
+
+// What changed for this ladder on this patrol, compared with its previous patrol on the site.
+function changeAt(assetId, missionId) {
+  const h = H.ladders[assetId] || [];
+  const at = h.findIndex(e => e.mission_id === missionId);
+  return at < 0 ? '' : change(h.slice(0, at + 1));
+}
+
+function patrolCard(m, open) {
+  const flagged = m.inspections.filter(i => i.status === 'FLAGGED').length;
+  const started = new Date(m.started).toLocaleString(LANG === 'de' ? 'de-DE' : 'en-GB', {dateStyle: 'short', timeStyle: 'short'});
+  const ladders = m.inspections.slice().sort((a, b) =>
+    (SEVERITY[a.status] ?? 9) - (SEVERITY[b.status] ?? 9) || a.asset_id.localeCompare(b.asset_id));
+  const counts = [[t('h.ladders'), m.inspections.length, ''], [t('h.flagged'), flagged, flagged ? 'color:var(--flag-fg);font-weight:700' : ''],
+    [t('h.alerts'), m.alerts.length, '']];
+  return el('details', {class: `card patrol${flagged ? ' has-flag' : ''}`, open: open || null,
+    ontoggle: e => { if (e.target.open) H.open.add(m.id); else H.open.delete(m.id); }},
+    el('summary', {},
+      el('span', {class: 'mono', style: 'font-weight:700'}, m.id),
+      el('span', {class: 'sub'}, started),
+      m.status === 'RUNNING' ? el('span', {class: 'pill s-INSPECTING'}, t('h.running')) : null,
+      el('span', {class: 'counts'}, counts.map(([label, n, style]) => el('span', {style}, `${n} ${label}`)))),
+    ladders.length ? el('div', {class: 'table-box'}, el('table', {},
+      el('thead', {}, el('tr', {}, [t('h.ladder'), t('h.type'), t('result'), t('h.reason'), t('h.change'), ''].map(x => el('th', {}, x)))),
+      el('tbody', {}, ladders.map(r => el('tr', {class: r.status === 'FLAGGED' ? 'flagged' : ''},
+        el('td', {}, el('a', {class: 'mono', style: 'font-weight:700', href: `/ladder?${new URLSearchParams({site: H.site, id: r.asset_id})}`}, r.asset_id)),
+        el('td', {}, ascentLabel(r)),
+        el('td', {}, statusPill(r.status)),
+        el('td', {}, reasonText(r)),
+        el('td', {}, changeAt(r.asset_id, m.id)),
+        el('td', {}, el('a', {href: reportUrl(H.site, r), target: '_blank'}, t('report')))))))) : el('p', {class: 'sub'}, t('h.none')),
+    el('div', {class: 'sub'}, `${t('h.data')}: `, el('a', {href: `/api/missions/${m.id}/export.csv`}, 'CSV'), ' · ',
+      el('a', {href: `/api/missions/${m.id}/export.json`, target: '_blank'}, 'JSON')));
 }
 
 initChrome(render);

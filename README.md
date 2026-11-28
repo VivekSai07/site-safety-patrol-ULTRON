@@ -1,5 +1,7 @@
 # ULTRON · Site Safety Patrol
 
+> **Recording data on the real B2?** Follow [RECORD_ON_B2.md](RECORD_ON_B2.md).
+
 A Unitree B2 walks a construction site, finds every ladder and the fire and first-aid equipment, and fills in nesseler's checklists with a photo as evidence for each point. Results arrive on a live dashboard while the robot is still walking.
 
 ```
