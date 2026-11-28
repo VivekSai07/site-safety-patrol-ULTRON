@@ -7,8 +7,8 @@ All ports, rates and limits are PROPOSED, sim-measured values. Verify them on th
 
 | `viz:=` | Starts (in the stack namespace `/ultron/<mode>`) |
 |---|---|
-| `none` (live default) | nothing |
-| `foxglove` (sim/replay default) | `viz_throttle` + `foxglove_bridge` on `127.0.0.1:8765` |
+| `none` (default) | nothing |
+| `foxglove` | `viz_throttle` + `foxglove_bridge` on `127.0.0.1:8765` |
 | `rviz_bridge` | `viz_throttle` + `domain_bridge` (stack domain → 42) |
 | `both` | all three |
 
@@ -17,7 +17,8 @@ the configs with `ros2 run ultron_b2_viz gen_viz_configs`. A test checks that th
 
 ## Why there is no shared DDS over Wi-Fi
 
-The stack runs on the Orin in domain 71 (sim), 72 (replay) or 0 (live), with loopback-only DDS.
+Sim and replay use domains 71 and 72 with loopback-only DDS. Live mode uses domain 0 on the
+robot network and requires separate authorization and hardware-readiness checks; it is untested.
 DDS discovery over Wi-Fi is unreliable and multicast-heavy. Joining the laptop to the stack
 domain would also give it a path to command topics. Instead:
 
@@ -28,7 +29,7 @@ domain would also give it a path to command topics. Instead:
 
 ## Option 1: Foxglove (recommended)
 
-On the Orin, start the stack with `viz:=foxglove` (sim and replay default to it):
+On the Orin, start the stack with `viz:=foxglove` (visualization defaults to `none`):
 
 ```bash
 ros2 launch ultron_b2_bringup sim.launch.py mode:=mapping viz:=foxglove

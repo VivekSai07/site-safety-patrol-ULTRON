@@ -399,3 +399,22 @@ domain-0 bridge, laptop-side RViz display check (no display), Orin, and the full
 
 ## M6 — Full-system simulation acceptance
 _Not assembled. Reviewer decision: pending (human)._
+
+### Integration checkpoint (not accepted)
+
+- Simulation branch `om/b2-ros-stack`, revision `f7182d1`: scan buffering reduced observed
+  SLAM filter overflows from 20 to zero in the measured run, but the permanent TF freeze's
+  root cause is unproven. Navigation passed 8/12 cases; the full mission failed after a
+  `GOAL_ALREADY_ACTIVE` cancellation race and captured no ladders. The final simulation-only
+  launch scoping passed 13 tests but has not been rerun in the integrated stack. Localization
+  and gate tests passed 48. Artifacts remain local and uncommitted in
+  `ros2_ws/sim_tf_blocker_20261128/`.
+- Replay is separately checkpointed, **not merged**, at `7d7444f` on
+  `om/b2-ros-stack-replay-accept`. Its 32 tests passed; the replay clock guard reports stale
+  localization when the clock stops, and measured queue-overflow drops fell to zero. One
+  startup scan lacked TF; MOLA worker-busy drops, looping, and LOST/DEGRADED states remain
+  unresolved. See that branch's `docs/b2_ros_stack/REPLAY_ACCEPTANCE.md` for evidence.
+- Complete integration, repeat end-to-end acceptance and investigate the above failures before
+  considering M6. Simulation uses kinematic motion and ORACLE detections; neither establishes
+  physical walking, real perception, or hardware readiness. Real motion remains NO-GO without
+  the independently verified safety prerequisites and explicit authorization.

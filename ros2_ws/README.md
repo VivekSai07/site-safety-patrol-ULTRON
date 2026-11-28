@@ -13,9 +13,16 @@ docker build -f ros2_ws/docker/Dockerfile.dev -t ultron-b2-dev:humble ros2_ws/do
 ros2_ws/scripts/dev.sh bash -lc "scripts/import_deps.sh && colcon build --symlink-install"
 ros2_ws/scripts/dev.sh bash -lc "source install/setup.bash && colcon test --packages-select-regex '^ultron_b2_' && colcon test-result --verbose"
 ros2_ws/scripts/dev.sh scripts/ci.sh                    # full CI: deps, build, test, repo unittests
-ros2_ws/scripts/dev.sh bash -lc "source install/setup.bash && scripts/ultron_launch.sh sim mode:=mapping"
-ULTRON_MODE=replay ULTRON_BAG_DIR=/abs/bag ros2_ws/scripts/dev.sh bash -lc "source install/setup.bash && scripts/ultron_launch.sh replay bag:=/abs/bag"
+ros2_ws/scripts/dev.sh bash -lc "source install/setup.bash && scripts/ultron_launch.sh sim mode:=mapping odom_source:=mola"
+ULTRON_MODE=replay ULTRON_BAG_DIR=/abs/bag ros2_ws/scripts/dev.sh bash -lc \
+  "source install/setup.bash && scripts/ultron_launch.sh replay mode:=mapping odom_source:=mola bag:=/abs/bag"
 ```
+
+For simulation navigation or mission, load a saved map using `map:=<map-directory>` and launch
+`sim mode:=nav` or `sim mode:=mission`. Without a map, localization remains INITIALIZING.
+Launching mission mode starts its nodes; it does not by itself start a mission or grant operator
+enable. The sim ladder detector uses labelled ground-truth **ORACLE** detections, not real perception.
+See `docs/b2_ros_stack/VALIDATION.md` for measured results and outstanding integration checks.
 
 `dev.sh` mounts the repo at the same absolute path, runs as your uid/gid with
 `HOME=ros2_ws/.dev_home`, and sets `ROS_LOCALHOST_ONLY=1`, `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`,
@@ -37,16 +44,15 @@ and the default index limit (9) refuses participants once the stack plus CLI too
 | `ultron_b2_interfaces` | A | msgs/srvs/actions + `ultron_b2_contracts` JSON converters |
 | `ultron_b2_description` | A | B2 xacro, `calibration/{sim,real}.yaml`, `config/footprint.yaml` |
 | `ultron_b2_bringup` | A | `{sim,replay,live}.launch.py`, preflight, `tf_authority_check` (C++), DDS profiles |
-| `ultron_b2_preprocess`, `ultron_b2_tools` | B | stub |
-| `ultron_b2_localization` | C | stub |
-| `ultron_b2_navigation`, `ultron_b2_control` | D | stub |
-| `ultron_b2_perception`, `ultron_b2_mission` | E | stub |
-| `ultron_b2_sim`, `ultron_b2_viz` | F | stub |
+| `ultron_b2_preprocess`, `ultron_b2_tools` | B | replay inputs, cloud filtering and scan conversion |
+| `ultron_b2_localization` | C | lidar odometry, SLAM, localization monitoring and map storage |
+| `ultron_b2_navigation`, `ultron_b2_control` | D | Nav2, command safety chain and disabled-by-default B2 bridge |
+| `ultron_b2_perception`, `ultron_b2_mission` | E | ladder detection interfaces, tracking and mission logic |
+| `ultron_b2_sim`, `ultron_b2_viz` | F | kinematic simulation, visualization and recording |
 
-Each sub-launch in `ultron_b2_bringup/launch/sub/<name>.launch.py` (drivers, preprocess,
-state_estimation, slam, nav, control, mission, viz, record) currently starts a silent
-`<name>_placeholder` node. Owners replace the body of their sub-launch; bringup already pushes the
-mode namespace (`/ultron/{sim,replay,live}`) and `use_sim_time`, and passes the launch arguments
+Bringup includes the sub-launches in `ultron_b2_bringup/launch/sub/` and pushes the mode namespace
+(`/ultron/{sim,replay,live}`) and `use_sim_time`. Some components are inactive or placeholders
+outside their applicable mode. The shared sub-launch arguments are
 `run_mode, mode, odom_source, viz, record, bag, hardware_enable, use_sim_time, calibration_profile,
 publish_description`. Use relative topic
 names. `replay` never includes `nav`, `control` or `mission`.
@@ -54,7 +60,7 @@ names. `replay` never includes `nav`, `control` or `mission`.
 ### Bringup arguments
 
 `mode:={mapping,localization,nav,mission}`, `odom_source:={sim,mola,kiss,b2}`,
-`viz:={none,foxglove,rviz_bridge,both}`, `record:={none,minimal,debug}`, `hardware_enable:=false`,
+`viz:={none,foxglove,rviz_bridge,both}`, `record:={none,minimal,debug,full}`, `hardware_enable:=false`,
 `bag:=<path>`, `namespace` (must equal the mode's), `publish_description`, `tf_check`.
 Replay only: `replay_rate` (1.0), `replay_loop` (false), `replay_start_offset` (0.0 s),
 `replay_delay` (2.0 s), `replay_cameras` (true). The bag player runs `ros2 bag play --clock 100`
@@ -65,16 +71,37 @@ tree. Large clouds/images need **reliable** subscribers on this host: best-effor
 
 Preflight refuses (exit 2, nothing else starts) when `ROS_DOMAIN_ID`, `ROS_LOCALHOST_ONLY`,
 namespace or `odom_source` do not match the mode table, when `hardware_enable:=true` outside
-`live`, or in `live` without a valid operator token at `/etc/ultron/ULTRON_HW_AUTHORIZED`
+`live`, or when enabling hardware in `live` without a valid operator token at `/etc/ultron/ULTRON_HW_AUTHORIZED`
 (or `$ULTRON_HW_AUTHORIZED_FILE`; YAML `operator`, `plan`, timezone-aware `expires`). Agents never
-create this token. `ros2 launch` opens a DDS participant before the in-launch preflight runs, so
-use `scripts/ultron_launch.sh`, which checks the environment first.
+create this token. Even with hardware disabled, live mode joins the robot network; do not launch it
+without explicit authorization. `ros2 launch` opens a DDS participant before the in-launch
+preflight runs, so use `scripts/ultron_launch.sh`, which checks the environment first.
 
 `tf_authority_check` watches `/tf` and `/tf_static` and reports (diagnostics ERROR; exits 1 when
 `duration_s` > 0 or `fail_on_violation`) any child frame with more than one publisher, a frame on
 both static and dynamic TF, a child with two parents, or a ground-truth frame
 (`ultron_sim_world`). In sim, `robot_state_publisher` (description) owns `base_link → sensor`
-frames; the legacy `sim_bridge` static `base_link → lidar_link` must be disabled by its wrapper.
+frames; the sim wrapper disables the legacy `sim_bridge` static `base_link → lidar_link`.
+
+## Visualization
+
+Set `viz:=foxglove`, `viz:=rviz_bridge` or `viz:=both` explicitly; the default is `none`.
+Foxglove binds to loopback on port 8765 and exposes an allow-list of throttled, read-only data.
+The default private Docker network isolates that loopback from the host; for local viewing,
+`ULTRON_DEV_NET=host` shares host loopback and its port with other local users. Laptop RViz uses
+the separate visualization domain 42; the Zenoh option is not yet validated. Setup, SSH tunnels,
+topic restrictions and limits are in `docs/b2_ros_stack/VIZ_GUIDE.md`.
+
+## Hardware boundary
+
+The real B2 bridge is disabled by default and has only been exercised against a mock. No launch
+example here authorizes hardware connection or motion. Complete-system hardware deployment remains
+NO-GO until full-system simulation acceptance and independent real-world checks are documented.
+Missing or stale robot responses and sport-state messages are diagnostic information, not an
+independent hardware watchdog or an arming interlock.
+Any real motion also requires a responsible operator, verified RC priority, an independently tested
+watchdog and a functional physical E-stop; see `docs/HARDWARE_READINESS.md` and
+`docs/SIM_TO_HARDWARE.md`.
 
 ## Dependencies (`deps.repos`)
 
