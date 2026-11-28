@@ -103,11 +103,9 @@ class MapMatcher:
         grid = load_map(path)
         return cls(grid['occupied_xy'], grid['resolution'], tolerance_m)
 
-    def score(self, pose, endpoints_base):
-        """Fraction of base_link endpoints (N,2) near occupied cells after placing them at ``pose``."""
+    def match_endpoints(self, pose, endpoints_base):
+        """Return map-frame endpoints and a mask of those near occupied cells."""
         pts = np.asarray(endpoints_base, dtype=float)
-        if not len(pts):
-            return 0.0
         x, y, yaw = pose
         c, s = math.cos(yaw), math.sin(yaw)
         world = np.column_stack((x + c * pts[:, 0] - s * pts[:, 1], y + s * pts[:, 0] + c * pts[:, 1]))
@@ -115,6 +113,13 @@ class MapMatcher:
         inside = (cells[:, 0] >= 0) & (cells[:, 1] >= 0) & (cells[:, 0] < self.mask.shape[1]) & (cells[:, 1] < self.mask.shape[0])
         hits = np.zeros(len(pts), dtype=bool)
         hits[inside] = self.mask[cells[inside, 1], cells[inside, 0]]
+        return world, hits
+
+    def score(self, pose, endpoints_base):
+        """Fraction of base_link endpoints (N,2) near occupied cells after placing them at ``pose``."""
+        if not len(endpoints_base):
+            return 0.0
+        _, hits = self.match_endpoints(pose, endpoints_base)
         return float(hits.mean())
 
 

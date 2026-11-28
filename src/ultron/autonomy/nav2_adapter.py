@@ -4,11 +4,13 @@ Wraps the Nav2 action with pre-checks (map, localization, operator, target footp
 active goal, timeout cancellation, cancellation when the motion gate inhibits, late-result
 rejection and a settle criterion for capture readiness. It never publishes velocity itself.
 """
+from collections import deque
 import json
 import math
 from pathlib import Path
 
 from .localization_state import accept_pose
+from .live_grid import TOPIC, grid_is_fresh, grid_stamp_ns
 from .motion_gate_node import state_from_json
 from .navigation_contract import GoalTracker, MapFootprint, check_goal
 
@@ -20,12 +22,15 @@ class Nav2Adapter:
         from rclpy.action import ActionClient
         from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
         from nav2_msgs.action import NavigateToPose
-        from nav_msgs.msg import Odometry
+        from nav_msgs.msg import OccupancyGrid, Odometry
         from std_msgs.msg import Bool, String
         self.node, self.config = node, config
         meta = json.loads((Path(map_dir) / 'map_meta.json').read_text())
         self.map_id, self.map_version = meta['map_id'], int(meta['map_version'])
-        self.footprint = MapFootprint(Path(map_dir) / 'map.yaml')
+        self.live_map = meta.get('live_map', False)
+        self.grid_stamp_ns = 0
+        self.grid_history = deque(maxlen=8)  # More than the fresh window at the mapping publish rate.
+        self.footprint = None if self.live_map else MapFootprint(Path(map_dir) / 'map.yaml')
         self.NavigateToPose = NavigateToPose
         self.client = ActionClient(node, NavigateToPose, ACTION)
         self.tracker = GoalTracker(config.navigation)
@@ -43,6 +48,30 @@ class Nav2Adapter:
         node.create_subscription(String, t['gate_status'], self._on_gate, latched)
         node.create_subscription(Bool, t['operator_enable'], self._on_operator, qos)
         node.create_subscription(Odometry, t['odom'], self._on_odom, qos)
+        if self.live_map:
+            node.create_subscription(OccupancyGrid, TOPIC, self._on_grid, latched)
+
+    def _on_grid(self, msg):
+        stamp = grid_stamp_ns(msg)
+        if stamp <= self.grid_stamp_ns:
+            return
+        try:
+            self.footprint = MapFootprint.from_grid(msg)
+            self.grid_history.append(stamp)
+        except ValueError:
+            self.footprint = None
+        self.grid_stamp_ns = stamp
+
+    def _live_target(self, goal, now, displayed_grid):
+        if not grid_is_fresh(self.grid_stamp_ns, now) or self.footprint is None:
+            return False, 'LIVE_MAP_UNAVAILABLE_OR_STALE'
+        if displayed_grid <= 0 or displayed_grid > self.grid_stamp_ns:
+            return False, 'LIVE_MAP_REVISION_UNAVAILABLE'
+        if not grid_is_fresh(displayed_grid, now):
+            return False, 'LIVE_MAP_REVISION_STALE'
+        if displayed_grid not in self.grid_history:
+            return False, 'LIVE_MAP_REVISION_UNAVAILABLE'
+        return self.footprint.check(goal.x, goal.y, self.config.navigation['target_clearance_m'])
 
     def now(self):
         return self.node.get_clock().now().nanoseconds * 1e-9
@@ -75,12 +104,13 @@ class Nav2Adapter:
         self.speed, self.yaw_rate = msg.twist.twist.linear.x, msg.twist.twist.angular.z
 
     # --- goal lifecycle ----------------------------------------------------------------
-    def submit(self, goal):
+    def submit(self, goal, *, displayed_grid=0):
         """Pre-check and send. Returns a terminal NavigationResult if rejected, else None."""
         now = self.now()
+        target_check = (lambda: self._live_target(goal, now, displayed_grid)) if self.live_map else None
         ok, reason = check_goal(goal, map_id=self.map_id, map_version=self.map_version, localization=self.localization,
                                 now=now, operator_enabled=self.operator_allowed(now), footprint=self.footprint,
-                                clearance_m=self.config.navigation['target_clearance_m'])
+                                clearance_m=self.config.navigation['target_clearance_m'], target_check=target_check)
         if ok and not self.client.server_is_ready():
             ok, reason = False, 'NAV2_ACTION_SERVER_NOT_READY'
         rejected = self.tracker.submit(goal, ok, reason, now)
@@ -88,6 +118,9 @@ class Nav2Adapter:
             self.results.append(rejected)
             return rejected
         self.handle = None
+        if self.live_map:
+            self.node.get_logger().info(
+                f'Accepted {goal.goal_id} using live grid {self.grid_stamp_ns} (displayed {displayed_grid})')
         msg = self.NavigateToPose.Goal()
         msg.pose.header.frame_id = goal.frame_id
         msg.pose.header.stamp = self.node.get_clock().now().to_msg()
@@ -152,6 +185,10 @@ class Nav2Adapter:
             self.handle.cancel_goal_async()
         if self.tracker.status in ('ACCEPTED', 'ACTIVE') and not self.operator_allowed(now):
             self.cancel('OPERATOR_MOTION_NOT_ENABLED')
+        if self.live_map and self.tracker.status in ('ACCEPTED', 'ACTIVE'):
+            ok, reason = self._live_target(self.tracker.goal, now, self.grid_stamp_ns)
+            if not ok:
+                self.cancel(reason)
         if (self.tracker.status in ('ACCEPTED', 'ACTIVE') and self.gate.get('inhibited')
                 and self.gate.get('reason') not in (None, 'NO_COMMAND', 'COMMAND_STALE')):
             self.cancel(f'MOTION_GATE: {self.gate.get("reason")}')

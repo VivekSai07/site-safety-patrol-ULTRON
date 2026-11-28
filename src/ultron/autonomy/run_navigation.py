@@ -13,12 +13,14 @@ import math
 from pathlib import Path
 import sys
 import time
+import uuid
 
 from .config import CONFIG_DIR, load_sim_slam_config
 from .eval_slam import compose
+from .live_grid import TOPIC as LIVE_MAP_TOPIC
 from .navigation_contract import make_goal
 from .run_localization import LOC_PARAMS, inverse
-from .run_mapping import ensure_no_running_stack, sha256, spawn, stop, terminate_cleanly
+from .run_mapping import SLAM_PARAMS, ensure_no_running_stack, sha256, spawn, stop, terminate_cleanly
 from .sim_bridge import check_isolation
 
 NAV2_PARAMS = CONFIG_DIR / 'nav2_params.yaml'
@@ -280,6 +282,9 @@ class Runner:
                 raise RuntimeError(f'Dashboard goal {request["seq"]} timed out: {result}')
             return result
 
+        if self.nav.live_map:
+            return self.dashboard_live(dashboard, send, wait, terminal)
+
         t0 = self.now()
         target = (2.5, 5.5, 0.0)
         self.operator = False
@@ -327,24 +332,78 @@ class Runner:
                            'sdk_move_and_stop': not sdk_path.exists() or (any(
                                row['method'] == 'Move' for row in sdk_calls) and sdk_calls[-1]['method'] == 'StopMove')}}
 
+    def dashboard_live(self, dashboard, send, wait, terminal):
+        candidates = [(1.6, 3.0), (1.6, 2.7), (1.6, 2.5), (2.6, 1.5), (1.9, 2.5),
+                      (1.4, 2.6), (2.0, 2.6)]
+        clearance = self.config.navigation['target_clearance_m']
+        target = next(((*xy, math.pi / 2) for xy in candidates
+                       if self.nav.footprint.check(*self.to_map((*xy, 0.0))[:2], clearance)[0]), None)
+        if target is None:
+            raise RuntimeError('No test goal has known clearance on the initial live grid')
+        initial = dashboard.live()['grid']
+        subscriptions = self.node.get_subscriptions_info_by_topic(LIVE_MAP_TOPIC)
+        costmap_uses_live_grid = any(info.node_name == 'global_costmap' for info in subscriptions)
+        t0 = self.now()
+        future_stamp = initial['grid_stamp_ns'] + 60_000_000_000
+        future = wait(send(target, grid_stamp_ns=future_stamp), terminal)
+        stale = wait(send(target, grid_stamp_ns=1), terminal)
+        outside = wait(send((50.0, 50.0, 0.0)), terminal)
+        outside_motion = self.moved_after(t0)
+
+        # Submit against the grid displayed at click time after a newer grid has arrived.
+        displayed = dashboard.live()['grid']
+        if not self.spin(until=lambda: self.nav.grid_stamp_ns > displayed['grid_stamp_ns'], wall_limit=10.0):
+            raise RuntimeError('The live grid never updated')
+        forwarded_from = self.nav.grid_stamp_ns
+        request = send(target, map_id=displayed['map_id'], map_version=displayed['map_version'],
+                       grid_stamp_ns=displayed['grid_stamp_ns'])
+        result = wait(request, terminal)
+        tx, ty, tyaw = self.true_pose()
+        error = math.dist((tx, ty), target[:2])
+        yaw_error = abs(math.remainder(tyaw - target[2], math.tau))
+        after = dashboard.live()['grid']
+        return {
+            'future_grid': future, 'stale_grid': stale, 'outside': outside, 'goal': result, 'target_world': target,
+            'displayed_grid_stamp_ns': displayed['grid_stamp_ns'],
+            'grid_stamp_before_submission_ns': forwarded_from, 'grid_stamp_after_goal_ns': after['grid_stamp_ns'],
+            'true_error_xy_m': round(error, 3), 'true_error_yaw_rad': round(yaw_error, 3),
+            'checks': {
+                'live_grid_and_valid_pose': initial['source'] == 'live_navigation',
+                'nav2_costmap_subscribes_to_live_grid': costmap_uses_live_grid,
+                'future_revision_rejected': future['status'] == 'REJECTED' and 'REVISION_UNAVAILABLE' in future['detail'],
+                'stale_revision_rejected': stale['status'] == 'REJECTED' and 'REVISION_STALE' in stale['detail'],
+                'outside_rejected_without_motion': outside['status'] == 'REJECTED'
+                and 'OUTSIDE_MAP' in outside['detail'] and outside_motion <= ACCEPT['still_m'],
+                'reached_on_newer_grid': result['status'] == 'SUCCEEDED' and error <= ACCEPT['arrive_xy_m']
+                and yaw_error <= ACCEPT['arrive_yaw_rad'],
+                'mapping_continued_during_goal': after['grid_stamp_ns'] > forwarded_from,
+            },
+        }
+
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Nav2 bring-up and failure cases on a saved map (simulation)')
+    parser = argparse.ArgumentParser(description='Nav2 bring-up and failure cases in simulation')
     parser.add_argument('out', type=Path)
-    parser.add_argument('--map', type=Path, required=True)
-    parser.add_argument('--cases', default=','.join(ALL_CASES))
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument('--map', type=Path)
+    source.add_argument('--live-map', action='store_true')
+    parser.add_argument('--cases')
     parser.add_argument('--rate', type=float, default=1.0)
     parser.add_argument('--dashboard-url', help='Local dashboard URL for dashboard goals')
     parser.add_argument('--serve-dashboard', action='store_true', help='Wait for interactive dashboard goals')
     parser.add_argument('--sdk-stand-in', action='store_true', help='Log motion gate output as stand-in SDK calls')
     args = parser.parse_args(argv)
-    cases = [] if args.serve_dashboard else [c for c in args.cases.split(',') if c]
+    default_cases = 'dashboard' if args.live_map else ','.join(ALL_CASES)
+    requested_cases = default_cases if args.cases is None else args.cases
+    cases = [] if args.serve_dashboard else [c for c in requested_cases.split(',') if c]
     available = [*ALL_CASES, 'dashboard']
     unknown = set(cases) - set(available)
     if unknown:
         parser.error(f'Unknown cases {sorted(unknown)}; choose from {available}')
     if (args.serve_dashboard or 'dashboard' in cases) and not args.dashboard_url:
         parser.error('Dashboard mode requires --dashboard-url')
+    if args.live_map and set(cases) - {'dashboard'}:
+        parser.error('Live mapping supports the dashboard navigation case')
     if args.dashboard_url:
         try:
             from ultron_nav_interfaces.action import NavigateDashboard  # noqa: F401
@@ -354,34 +413,46 @@ def main(argv=None):
     check_isolation(config)
     terminate_cleanly()
     ensure_no_running_stack()
-    out = args.out
+    out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=False)
-    map_dir = args.map.resolve()
+    map_dir = out if args.live_map else args.map.resolve()
+    if args.live_map:
+        meta = {'map_id': f'ultron-live-{uuid.uuid4().hex[:12]}', 'map_version': 1, 'live_map': True,
+                'frame_id': 'map', 'provenance': 'ONLINE_SLAM_SIMULATION',
+                'sim_run': {'start_pose_world': START_WORLD}}
+        (out / 'map_meta.json').write_text(json.dumps(meta, indent=2) + '\n')
     py = sys.executable
     procs = {}
     ros = lambda *a: ['ros2', 'run', *a]
     remap_cmd = ['-r', f'cmd_vel:={config.topics["nav_cmd_raw"]}']
     remap_odom = ['-r', f'odom:={config.topics["odom"]}']
     try:
-        procs['slam'] = spawn(ros('slam_toolbox', 'localization_slam_toolbox_node') + [
-            '--ros-args', '--params-file', str(LOC_PARAMS), '-r', '__node:=slam_toolbox',
-            '-p', f'map_file_name:={map_dir / "map"}', '-p', 'map_start_pose:=[0.0,0.0,0.0]'], out / 'slam_toolbox.log')
+        slam_node = 'async_slam_toolbox_node' if args.live_map else 'localization_slam_toolbox_node'
+        slam_args = ['--ros-args', '--params-file', str(SLAM_PARAMS if args.live_map else LOC_PARAMS),
+                     '-r', '__node:=slam_toolbox']
+        if not args.live_map:
+            slam_args += ['-p', f'map_file_name:={map_dir / "map"}', '-p', 'map_start_pose:=[0.0,0.0,0.0]']
+        procs['slam'] = spawn(ros('slam_toolbox', slam_node) + slam_args, out / 'slam_toolbox.log')
         procs['monitor'] = spawn([py, '-m', 'ultron.autonomy.localization_monitor', '--map', str(map_dir), '--out', str(out)],
                                  out / 'monitor.log')
         procs['gate'] = spawn([py, '-m', 'ultron.autonomy.motion_gate_node', '--map', str(map_dir),
                                '--log', str(out / 'gate.json')], out / 'gate.log')
-        procs['map_server'] = spawn(ros('nav2_map_server', 'map_server') + [
-            '--ros-args', '-p', 'use_sim_time:=true', '-p', f'yaml_filename:={map_dir / "map.yaml"}',
-            '-p', 'topic_name:=' + NAV_MAP_TOPIC, '-r', 'map:=' + NAV_MAP_TOPIC], out / 'map_server.log')
+        lifecycle_nodes = NAV2_NODES[1:] if args.live_map else NAV2_NODES
+        if not args.live_map:
+            procs['map_server'] = spawn(ros('nav2_map_server', 'map_server') + [
+                '--ros-args', '-p', 'use_sim_time:=true', '-p', f'yaml_filename:={map_dir / "map.yaml"}',
+                '-p', 'topic_name:=' + NAV_MAP_TOPIC, '-r', 'map:=' + NAV_MAP_TOPIC], out / 'map_server.log')
         for name in ('planner_server', 'controller_server', 'behavior_server', 'bt_navigator'):
             package = {'planner_server': 'nav2_planner', 'controller_server': 'nav2_controller',
                        'behavior_server': 'nav2_behaviors', 'bt_navigator': 'nav2_bt_navigator'}[name]
             extra = (remap_cmd if name in ('controller_server', 'behavior_server') else []) + remap_odom
+            if args.live_map and name == 'planner_server':
+                extra += ['-r', f'{NAV_MAP_TOPIC}:={LIVE_MAP_TOPIC}']
             procs[name] = spawn(ros(package, name) + ['--ros-args', '--params-file', str(NAV2_PARAMS), *extra],
                                 out / f'{name}.log')
         procs['lifecycle'] = spawn(ros('nav2_lifecycle_manager', 'lifecycle_manager') + [
             '--ros-args', '-r', '__node:=lifecycle_manager_navigation', '-p', 'use_sim_time:=true', '-p', 'autostart:=true',
-            '-p', 'node_names:=' + json.dumps(NAV2_NODES).replace('"', "'")], out / 'lifecycle.log')
+            '-p', 'node_names:=' + json.dumps(lifecycle_nodes).replace('"', "'")], out / 'lifecycle.log')
         time.sleep(5.0)
         procs['bridge'] = spawn([py, '-m', 'ultron.autonomy.sim_bridge', '--rate', str(args.rate), '--duration', '3000',
                                  '--out', str(out / 'sim')], out / 'bridge.log')
@@ -429,6 +500,8 @@ def main(argv=None):
             (out / 'nav_cases.json').write_text(json.dumps(summary, indent=2, default=str))
             print(json.dumps({r['case']: r['verdict'] for r in runner.results}, indent=1))
             print('navigation verdict:', summary['verdict'])
+            if args.live_map and summary['verdict'] != 'PASS':
+                raise SystemExit(1)
         finally:
             rclpy.shutdown()
     finally:

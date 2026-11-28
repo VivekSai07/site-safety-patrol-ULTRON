@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from .localization_state import LocalizationMonitor, MapMatcher, TransformHistory
+from .live_grid import TOPIC, LiveMapMatcher, grid_is_fresh, grid_stamp_ns
 
 SCORE_DELAY_S = 0.15  # let the SLAM backend apply a scan before scoring the pose at its stamp
 
@@ -42,6 +43,7 @@ class MonitorNode:
         from rclpy.parameter import Parameter
         from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
         from nav_msgs.msg import Odometry
+        from nav_msgs.msg import OccupancyGrid
         from sensor_msgs.msg import LaserScan
         from std_msgs.msg import String
         from tf2_ros import Buffer, TransformListener
@@ -49,7 +51,10 @@ class MonitorNode:
         self.clock_id = meta.get('clock_id', 'ros_sim_time')
         self.config = config
         self.monitor = LocalizationMonitor(config.localization, meta['map_id'], meta['map_version'])
-        self.matcher = MapMatcher.from_map_yaml(Path(map_dir) / 'map.yaml', config.localization['match_tolerance_m'])
+        self.live_map = meta.get('live_map', False)
+        self.grid_stamp_ns = 0
+        self.matcher = None if self.live_map else MapMatcher.from_map_yaml(
+            Path(map_dir) / 'map.yaml', config.localization['match_tolerance_m'])
         self.history = TransformHistory()
         self.node = Node('ultron_localization_monitor', parameter_overrides=[Parameter('use_sim_time', value=True)])
         self.buffer = Buffer()
@@ -60,6 +65,8 @@ class MonitorNode:
         self.pub = self.node.create_publisher(String, config.topics['localization_state'], latched)
         self.node.create_subscription(LaserScan, config.topics['scan'], lambda m: self.pending_scans.append(m), qos)
         self.node.create_subscription(Odometry, config.topics['odom'], lambda m: self.pending_odom.append(m.header.stamp), qos)
+        if self.live_map:
+            self.node.create_subscription(OccupancyGrid, TOPIC, self._on_grid, latched)
         self.pending_scans, self.pending_odom = [], []
         self.scored = []          # (scan stamp, state after scoring), increasing stamps
         self.mount = config.lidar.mount_xyz_m
@@ -72,6 +79,16 @@ class MonitorNode:
 
     def _now(self):
         return self.node.get_clock().now().nanoseconds * 1e-9
+
+    def _on_grid(self, msg):
+        stamp = grid_stamp_ns(msg)
+        if stamp <= self.grid_stamp_ns:
+            return
+        try:
+            self.matcher = LiveMapMatcher(msg, self.config.localization['match_tolerance_m'])
+        except ValueError:
+            self.matcher = None
+        self.grid_stamp_ns = stamp
 
     def _lookup(self, stamp):
         from rclpy.time import Time
@@ -101,7 +118,8 @@ class MonitorNode:
         self.pending_scans = waiting
         for msg in ready:
             t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-            pose = self._lookup(msg.header.stamp)
+            grid_ready = self.matcher is not None and (not self.live_map or grid_is_fresh(self.grid_stamp_ns, now))
+            pose = self._lookup(msg.header.stamp) if grid_ready else None
             self.monitor.update_scan(t, pose, scan_endpoints_base(msg, self.mount, self.mount_yaw), self.matcher)
             self.scored.append((t, self.monitor.state))
             state = self._publish(now)

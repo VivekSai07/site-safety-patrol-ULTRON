@@ -76,6 +76,7 @@ class Goal(BaseModel):
     frame_id: str = 'map'
     map_id: str | None = Field(default=None, min_length=1, max_length=128)
     map_version: int | None = Field(default=None, ge=1, le=2_147_483_647)
+    grid_stamp_ns: int | None = Field(default=None, ge=1, le=9_007_199_254_740_991)
 
 
 class GoalStatus(str, Enum):

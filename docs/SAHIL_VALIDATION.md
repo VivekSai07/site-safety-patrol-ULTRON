@@ -311,3 +311,29 @@ unverified.
 The local run folders contain `map.ply`, `slam.csv`, `odometry.csv`,
 `submaps.g2o`, `config.json` and `summary.json`. The optional
 `slam3d_kiss_02/map_view.html` shows a cropped view around the route.
+
+## Dashboard navigation on the live SLAM grid
+
+On 28 November 2026, `runs/live-nav-05` started SLAM Toolbox in mapping mode
+and Nav2 1.1.20 on ROS 2 Humble. The launch used an empty map. The ROS graph
+confirmed that Nav2's global costmap subscribed to the live `/map`, the same
+topic used by the dashboard and the goal checker.
+
+| Check | Result |
+|---|---|
+| Dashboard goal on a changing map | The HTTP request specified the grid displayed at 13.5 simulated seconds. The checked action logged that it validated the target on the 14.5 s grid and forwarded it to Nav2. The dashboard had received the 17.5 s grid by the time the goal completed. |
+| Goal outcome | Nav2 reported `SUCCEEDED`. The simulated pose was 0.172 m and 0.004 rad from the goal, within the existing 0.25 m and 0.35 rad limits. |
+| Rejections | Future and stale grid revisions and an out-of-map target were refused. The simulator stayed within 2 cm of its initial position during the rejection cases. |
+| Active target revalidation | A focused test verified that an occupied cell in the latest grid causes the adapter to request cancellation of an active goal. |
+| Saved-map regression | `runs/live-nav-saved-regression` passed the existing dashboard navigation case. |
+
+The first run stayed in `INITIALIZING` because the saved-map scan matcher
+counted returns in unmapped space as mismatches. The live matcher requires at
+least 55% of scan endpoints to be in mapped space or near a mapped obstacle.
+It then applies the existing agreement threshold to that supported subset,
+where returns in mapped free space count against agreement. This is a
+simulation check on scan-to-map consistency. The run does not establish
+independent pose accuracy, performance across a large loop closure, or
+physical B2 operation.
+
+[Launch instructions](dashboard_nav_goal.md#navigate-while-mapping)

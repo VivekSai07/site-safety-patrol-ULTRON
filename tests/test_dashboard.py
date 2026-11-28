@@ -479,6 +479,22 @@ class NavigationTest(unittest.TestCase):
         self.assertEqual(client.post('/api/goal/status', json={'seq': 2, 'status': 'BOGUS'}).status_code, 422)
         self.assertEqual(client.get('/api/goal').json()['seq'], 2)
 
+    def test_live_navigation_preserves_clicked_grid_revision(self):
+        client, _ = self.make()
+        url = ('/api/map?resolution=0.05&origin_x=0&origin_y=0'
+               '&map_id=session-1&map_version=1&source=live_navigation')
+        headers = {'content-type': 'image/png'}
+        for stamp in (101, 102):
+            self.assertEqual(client.post(url + f'&grid_stamp_ns={stamp}', content=self.png(),
+                                         headers=headers).status_code, 204)
+        body = {'x': 1, 'y': 2}
+        response = client.post('/api/goal', json=body)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()['grid_stamp_ns'], 102)
+        response = client.post('/api/goal', json=body | {'map_id': 'session-1', 'map_version': 1, 'grid_stamp_ns': 101})
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()['grid_stamp_ns'], 101)
+
     def test_nav_goal_keeps_map_identity_and_reports_rejection(self):
         client, _ = self.make()
         q = '/api/map?resolution=0.05&origin_x=0&origin_y=0&map_id=hall&map_version=2'

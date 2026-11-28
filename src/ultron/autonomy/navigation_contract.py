@@ -79,7 +79,7 @@ def make_goal(x, y, yaw, *, mission_id, map_id, map_version, params, reason, now
 
 
 class MapFootprint:
-    """Saved occupancy grid: is a circular footprint at (x, y) fully free and known?"""
+    """Is a circular footprint at (x, y) fully free and known?"""
 
     def __init__(self, yaml_path):
         import yaml
@@ -95,6 +95,17 @@ class MapFootprint:
         self.res = float(meta['resolution'])
         self.origin = np.array(meta['origin'][:2], dtype=float)
         self.height, self.width = image.shape
+
+    @classmethod
+    def from_grid(cls, msg):
+        from .live_grid import grid_cells
+        cells, resolution, origin = grid_cells(msg)
+        footprint = cls.__new__(cls)
+        footprint.free = cells[::-1] == 0
+        footprint.occupied = cells[::-1] > 0
+        footprint.res, footprint.origin = resolution, origin
+        footprint.height, footprint.width = cells.shape
+        return footprint
 
     def _cell(self, x, y):
         col = int(math.floor((x - self.origin[0]) / self.res))
@@ -122,7 +133,8 @@ class MapFootprint:
         return True, 'OK'
 
 
-def check_goal(goal, *, map_id, map_version, localization, now, operator_enabled, footprint, clearance_m):
+def check_goal(goal, *, map_id, map_version, localization, now, operator_enabled, footprint, clearance_m,
+               target_check=None):
     """Pre-checks before a goal may reach the backend. Returns (ok, reason)."""
     if goal.frame_id != 'map':
         return False, f'UNKNOWN_FRAME: {goal.frame_id}'
@@ -133,6 +145,8 @@ def check_goal(goal, *, map_id, map_version, localization, now, operator_enabled
     ok, reason = accept_pose(localization, map_id, map_version, now)
     if not ok:
         return False, f'LOCALIZATION: {reason}'
+    if target_check is not None:
+        return target_check()
     if footprint is None:
         return False, 'NO_MAP_FOR_TARGET_CHECK'
     return footprint.check(goal.x, goal.y, clearance_m)

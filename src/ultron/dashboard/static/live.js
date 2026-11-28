@@ -182,7 +182,7 @@ function renderMap() {
   const b = mapBounds();
   const pad = S.grid ? 0 : 0.4, w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad;
   const X = x => x - b[0] + pad, Y = y => b[3] + pad - y;
-  S.frame = {b, pad};
+  S.frame = {b, pad, grid: S.grid};
   map.setAttribute('viewBox', `0 0 ${w} ${h}`);
   map.replaceChildren();
   if (S.grid) {
@@ -225,10 +225,11 @@ function renderMap() {
   const done = S.goal && ['SUCCEEDED', 'REJECTED', 'FAILED', 'CANCELED'].includes(S.goal.status);
   const liveMapping = S.grid?.source === 'live_slam';
   if (S.goal && !done && !liveMapping) map.append(arrow(X(S.goal.x), Y(S.goal.y), S.goal.yaw, 0.7, 'stroke: var(--accent); fill: var(--accent)'));
-  if (S.drag) map.append(arrow(S.drag.sx, S.drag.sy, S.drag.yaw, 0.7, 'stroke: var(--accent); fill: var(--accent); opacity: .6'));
+  if (S.drag) map.append(arrow(X(S.drag.x), Y(S.drag.y), S.drag.yaw, 0.7, 'stroke: var(--accent); fill: var(--accent); opacity: .6'));
   map.classList.toggle('picking', S.picking);
   const dimensions = `${(b[2] - b[0]).toFixed(1)} × ${(b[3] - b[1]).toFixed(1)} m`;
-  $('map-info').textContent = liveMapping ? `${t('map.live')} · ${dimensions}` : dimensions;
+  $('map-info').textContent = liveMapping || S.grid?.source === 'live_navigation'
+    ? `${t('map.live')} · ${dimensions}` : dimensions;
   $('goal-btn').hidden = !S.goalsEnabled || liveMapping;
   $('goal-btn').disabled = !S.grid?.map_id;
   $('explore-btn').hidden = !S.goalsEnabled || liveMapping;  // live mode only, like Set goal
@@ -254,10 +255,12 @@ function initExplore() {
 
 // 2D Goal Pose, as in RViz: press "Set goal", press on the map for the position, drag toward the
 // heading, release to send. One goal per button press; Escape cancels picking.
-function svgPoint(event) {
+function mapPoint(event) {
   const pt = $('map').createSVGPoint();
   pt.x = event.clientX; pt.y = event.clientY;
-  return pt.matrixTransform($('map').getScreenCTM().inverse());
+  const p = pt.matrixTransform($('map').getScreenCTM().inverse());
+  const {b, pad} = S.frame;
+  return {x: p.x + b[0] - pad, y: b[3] + pad - p.y};
 }
 
 function initGoalPicking() {
@@ -265,25 +268,22 @@ function initGoalPicking() {
   $('goal-btn').addEventListener('click', () => { S.picking = !S.picking; S.drag = null; scheduleRender(); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.picking) { S.picking = false; S.drag = null; scheduleRender(); } });
   map.addEventListener('pointerdown', e => {
-    if (!S.picking) return;
+    if (!S.picking || !S.frame?.grid?.map_id) return;
     e.preventDefault();
     map.setPointerCapture(e.pointerId);
-    const p = svgPoint(e);
-    S.drag = {sx: p.x, sy: p.y, yaw: 0, frame: S.frame,
-      map_id: S.grid?.map_id, map_version: S.grid?.map_version};
+    const p = mapPoint(e), grid = S.frame.grid;
+    S.drag = {...p, yaw: 0, map_id: grid.map_id, map_version: grid.map_version, grid_stamp_ns: grid.grid_stamp_ns};
     scheduleRender();
   });
   map.addEventListener('pointermove', e => {
     if (!S.drag) return;
-    const p = svgPoint(e), dx = p.x - S.drag.sx, dy = S.drag.sy - p.y;  // flip y: SVG down, map up
+    const p = mapPoint(e), dx = p.x - S.drag.x, dy = p.y - S.drag.y;
     if (Math.hypot(dx, dy) > 0.05) S.drag.yaw = Math.atan2(dy, dx);
     scheduleRender();
   });
   map.addEventListener('pointerup', async () => {
     if (!S.drag) return;
-    const d = S.drag, {b, pad} = d.frame;
-    const goal = {x: d.sx + b[0] - pad, y: b[3] + pad - d.sy, yaw: d.yaw, frame_id: 'map',
-      map_id: d.map_id, map_version: d.map_version};
+    const goal = {...S.drag, frame_id: 'map'};
     S.drag = null; S.picking = false;
     const response = await fetch('/api/goal', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(goal)}).catch(() => null);
     if (response && response.ok) S.goal = await response.json();
