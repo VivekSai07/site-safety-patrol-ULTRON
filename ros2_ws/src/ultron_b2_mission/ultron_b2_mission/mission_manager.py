@@ -1,13 +1,17 @@
 """mission_manager node: RunMission server around MissionCore. Never publishes velocities.
 
-Motion only through Agent D's ``nav/navigate_to_view`` (NavigateToView). HOLD = publish
-``ops/hold`` (std_msgs/Bool twist_mux lock, true at ``hold_publish_hz``) + cancel the active goal.
+Motion only through Agent D's ``nav/navigate_to_view`` (NavigateToView). HOLD = cancel the active goal and
+send no new one (the mission has no velocity output; the gate then zeroes on COMMAND_STALE).
+``ops/hold`` is the single OPERATOR-owned twist_mux lock (integration decision): by default
+(``assert_hold_lock: false``) the mission only reads it as an external hold and never writes it, so a
+mission release can never clear an operator's hold. ``assert_hold_lock: true`` restores E's original
+behaviour (true at ``hold_publish_hz``, one false on release) for single-writer test setups only.
 
 Inputs: ``state/localization`` (LocalizationState: VALID, map id/version, pose in map),
 ``map`` (OccupancyGrid, transient local), ``perception/ladder_candidates`` (latched),
 ``ops/operator_enable`` (OperatorEnable heartbeat), ``ops/hold`` (external holds).
 Outputs: ``mission/status``, ``mission/events``, ``mission/coverage``, ``mission/frontiers``,
-``ops/hold``. Services: ``mission/hold`` (SetBool), ``mission/resume``/``mission/abort`` (Trigger),
+``ops/hold`` (only with ``assert_hold_lock``). Services: ``mission/hold`` (SetBool), ``mission/resume``/``mission/abort`` (Trigger),
 ``mission/set_patrol_zone`` (SetPatrolZone). Capture via ``mission/capture_views`` (CaptureViews).
 """
 import json
@@ -87,6 +91,7 @@ def main(argv=None):
             self.run_root = p('run_dir', os.path.expanduser('~/.ultron/missions')).value
             self.map_frame = p('map_frame', 'map').value
             hold_topic = p('hold_topic', 'ops/hold').value
+            self.assert_hold_lock = bool(p('assert_hold_lock', False).value)
             self.hold_period = 1.0 / max(0.5, float(p('hold_publish_hz', 5.0).value))
             tick_hz = float(p('tick_hz', 10.0).value)
 
@@ -400,6 +405,8 @@ def main(argv=None):
             self.last_hold_pub = time.monotonic()
 
         def _cmd_hold(self, d):
+            if not self.assert_hold_lock:
+                return  # ops/hold is operator-owned; the mission HOLD is the goal cancel only
             self.asserting_hold = bool(d['on'])
             self._publish_hold(d['on'])  # release: a single false (see CONTRACT_CHANGES on lock ownership)
 

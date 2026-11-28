@@ -3,7 +3,7 @@
   ros__parameters:
     zone_file: ''                 # set by the launch (config/hall_zone.yaml)
     route_file: ''                # optional survey route (fallback / SURVEY_ROUTE / PATROL modes)
-    map_origin_in_world: [1.6, 1.5, 1.5707963]   # for world-frame routes; TO_VERIFY with Agent C
+    map_origin_in_world: [1.6, 1.5, 1.5707963]   # = sim DEFAULT_START = map frame (test_map_origin.py)
     default_mode: EXPLORE
     max_duration_s: 900.0
     detect_dwell_s: 2.0
@@ -19,5 +19,6 @@
     clearance_m: 0.45
     use_candidate_yaw: false      # tracker yaw is not estimated yet; plan views on a full ring
     hold_topic: ops/hold
+    assert_hold_lock: false   # ops/hold is operator-owned (read-only here); see CONTRACT_CHANGES integration
     hold_publish_hz: 5.0
     tick_hz: 10.0

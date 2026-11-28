@@ -4,13 +4,16 @@
 Relative topic names; numeric parameters are **PROPOSED** (`config/mission_sim.yaml`).
 
 The mission **never publishes velocities**. It moves the robot only through Agent D's
-`nav/navigate_to_view` (`ultron_b2_interfaces/action/NavigateToView`). HOLD = latch `ops/hold`
-(`std_msgs/Bool`, twist_mux lock) **and** cancel the active nav/capture goal.
+`nav/navigate_to_view` (`ultron_b2_interfaces/action/NavigateToView`). HOLD = cancel the active
+nav/capture goal and send no new one. `ops/hold` (`std_msgs/Bool`, twist_mux lock) is the single
+**operator-owned** lock (integration decision, CONTRACT_CHANGES): the mission reads it as an external
+hold and does not write it (`assert_hold_lock: false`), so a mission release can never clear an
+operator hold.
 
 ## Nodes
 * `mission_manager` — `mission/run` (RunMission), services `mission/hold` (SetBool), `mission/resume`,
   `mission/abort` (Trigger), `mission/set_patrol_zone`; publishes `mission/status`, `mission/events`,
-  `mission/coverage`, `mission/frontiers`, `ops/hold`. Consumes `state/localization`, `map`,
+  `mission/coverage`, `mission/frontiers` (`ops/hold` only with `assert_hold_lock: true`). Consumes `state/localization`, `map`,
   `perception/ladder_candidates`, `ops/operator_enable`, `ops/hold`.
 * `capture_coordinator` — `mission/capture_views` (CaptureViews); stores frames as `.npy` + JSON manifest
   under `evidence_dir` (local only, never committed) and returns `sha256:<hex>:<path>` refs.

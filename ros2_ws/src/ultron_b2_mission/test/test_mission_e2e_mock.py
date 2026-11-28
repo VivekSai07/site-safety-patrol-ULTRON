@@ -4,7 +4,7 @@ Runs the real ``mission_manager`` and ``capture_coordinator`` executables as sub
 mock world in this process: latched OccupancyGrid, LocalizationState (VALID, pose teleported on
 REACHED), OperatorEnable heartbeat, latched ORACLE ladder candidates, synthetic camera frames and
 a mock ``nav/navigate_to_view`` server. Checks: ladders captured, evidence written, registry and
-events.jsonl updated, HOLD on operator-enable loss cancels the active goal and publishes ops/hold,
+events.jsonl updated, HOLD on operator-enable loss cancels the active goal and never writes the operator-owned ops/hold,
 resume continues to the end, no velocity publisher on the mission nodes. This is not a navigation
 or perception result; the mock teleports the robot.
 """
@@ -213,7 +213,7 @@ def test_mission_end_to_end_against_mock_nav_server(artifacts):
             assert held_goal in world.cancels, 'active goal was not cancelled on HOLD'
             assert len(world.goals) == n_goals, 'goal sent while operator enable was lost'
         assert 'HOLD' in world.states
-        assert any(on for _, on in world.holds), 'ops/hold true never published'
+        assert not world.holds, 'mission wrote the operator-owned ops/hold lock (assert_hold_lock defaults false)'
         with world.lock:
             world.operator_enabled = True
 
