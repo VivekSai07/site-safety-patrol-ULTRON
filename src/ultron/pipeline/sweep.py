@@ -41,12 +41,17 @@ class Sweep:
                    or abs(math.remainder(pose[2] - f.pose[2], math.tau)) >= self.turn for f, _, _ in self.taken)
 
     def offer(self, frame, detections):
-        """Keep `frame` (as the survey placed it) if it looks from somewhere new. Returns True if kept."""
+        """Keep `frame` (pose in this run's own frame) if it looks from somewhere new. Returns True if kept."""
         if (len(self.taken) >= self.max_frames or frame.pose is None
                 or frame.depth is None and frame.points is None or not self.distinct(frame.pose)):
             return False
         self.taken.append((frame, list(detections), self._pool.submit(self.detector.detect, frame)))
         return True
+
+    def cancel(self):
+        """End the sweep without its answers: calls not started are dropped."""
+        self._pool.shutdown(wait=False, cancel_futures=True)
+        self.taken = []
 
     def results(self):
         """[(frame, fast detections, vision-model detections)] for the calls that answered, and the

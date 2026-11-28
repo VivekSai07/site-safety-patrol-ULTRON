@@ -314,10 +314,21 @@ model (offline robot, `--no-sweep`, `--no-verify`) the survey runs as before.
 | Hall recording, YOLOE ladder threshold 0.99 (ladders "missed") | 3/5, no ladder | 5/5: both ladders added (0.16-0.19 m from where YOLOE places them), verified and announced |
 | Simulated yard patrol A (sim evidence) | 14 ladders; first-aid point A01 and ladder L03 missed | 16: A01 (0.00 m) and L03 (0.32 m) added, nothing else; no duplicates, same ids |
 
+On a stored map (repeat patrols) the sweep frames are placed with the patrol's final line-up. Hall
+run 2 on run 1's map: anchored, same 5 ids, nothing added; with YOLOE's ladders switched off the sweep
+saw both stored ladders, so a detector miss is not reported as "ladder gone". With 2° + 0.5 m pose
+error: anchored, same ids, nothing added; with 3° + 0.8 m: suspect, nothing kept (as without the
+sweep). Simulated yard B, C, D on A's map (sim evidence): nothing added, no duplicates; L49 still
+reported moved and found at its new place, the twins L52/L53 still two objects.
+
 A sweep box is placed by its rectangle as outline: on the hall recording that lands on the object
 segmentation finds for all wall boxes and 88 % of ladders (median 1-2 cm off); the rest land up to
 3 m off, which the two-frame rule keeps out. Single-frame candidates are listed in the
-`vision_sweep` event, not added. Not yet measured with gpt-5 (box precision may differ).
+`vision_sweep` event, not added: Qwen proposes 1-5 such false "fire alarm" boxes per hall run, and
+once (before poses were corrected as above) two frames agreed on one; verification rejected it, so it
+was never announced. The sweep needs the vision model during the patrol: on an offline robot every
+call fails and the survey is as without it (stand-in container: 5/5, 16 calls failed, no delay).
+Not yet measured with gpt-5 (box precision may differ).
 
 **The form reader fabricates when allowed to.** In the first real inspection Qwen3-VL 8B marked all
 23 rows of both ladders fine at 0.86 to 0.99 confidence from blurred frames two to three metres

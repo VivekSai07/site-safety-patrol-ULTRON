@@ -170,6 +170,7 @@ class Survey:
             self._warned = True  # objects from earlier runs line up only if this run started where they did
             self.store.emit("localisation_unconfirmed", reason="pose from odometry, not localisation in the map",
                             map_id=self.map_id)
+        raw = frame  # pose in this run's frame: the sweep places it with the final line-up
         if self.anchoring and self.anchoring.transform and frame.pose:
             frame = copy.copy(frame)
             frame.pose = self.anchoring.to_map(frame.pose)  # this run's drift against the stored objects
@@ -179,7 +180,7 @@ class Survey:
             self.store.emit("error", stage="detect", message=str(error))
             return []
         if self.sweep and not (self.anchoring and self.anchoring.state == Anchoring.SUSPECT):
-            self.sweep.offer(frame, detections)
+            self.sweep.offer(raw, detections)
         seen = []
         # Detections the tracker already knows go first, so a newcomer cannot take their object.
         for detection in sorted(detections, key=lambda d: d.track not in self._tracks):
@@ -367,6 +368,7 @@ class Survey:
         """Merge fragments into the objects they belong to, then have the vision model check
         what is left. Call when a survey pass ends, or now and then during a long one."""
         if self.anchoring and self.anchoring.state == Anchoring.SUSPECT:
+            self.apply_sweep()  # ends it without placing anything
             self.announce(min_sightings, settled=True)
             return {}  # positions of this patrol are not to be trusted: merge and relabel nothing
         merged = self.objects.consolidate(min_sightings, keep=self.announced)
@@ -391,13 +393,17 @@ class Survey:
         sweep frames placing it at one spot; it is announced once verification confirms it."""
         if self.sweep is None:
             return
-        answered, failed = self.sweep.results()
-        self.sweep = None
+        sweep, self.sweep = self.sweep, None
         if self.anchoring and self.anchoring.state == Anchoring.SUSPECT:
-            self.store.emit("vision_sweep", frames=len(answered), failed=failed, skipped="localisation suspect")
+            sweep.cancel()
+            self.store.emit("vision_sweep", skipped="localisation suspect")
             return
+        answered, failed = sweep.results()
         confirmed, new = set(), []  # map objects the sweep saw; (frame, sighting) of objects not on the map
         for frame, fast, found in answered:
+            if self.anchoring and self.anchoring.transform:
+                frame = copy.copy(frame)
+                frame.pose = self.anchoring.to_map(frame.pose)
             for detection in distinct(found):
                 if any(overlap(detection.box, d.box) > SWEEP_OVERLAP if d.kind == detection.kind
                        else iou(detection.box, d.box) > SWEEP_DISPUTE for d in fast):
