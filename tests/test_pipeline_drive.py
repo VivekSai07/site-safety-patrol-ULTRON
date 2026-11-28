@@ -346,3 +346,26 @@ class RealDashboardTest(Workspace):
         self.assertIn(("pipeline", "SUCCEEDED"), self.goal_log)
         self.assertEqual(self.call("GET", "/api/exploration")[1]["state"], "EXPLORING")
         self.assertEqual(self.objects.get("LAD-001").status, "INSPECTED")
+
+
+class RelayCloudTest(unittest.TestCase):
+    def test_a_map_cloud_from_the_relay_rides_on_the_next_frame_once(self):
+        import socket
+        from ultron.protocol.relay_wire import cloud_message, frame_message, thin
+        from ultron.protocol.sources import relay
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        frames = relay(port, host="127.0.0.1", log=lambda line: None)
+        color = np.zeros((48, 64, 3), dtype=np.uint8)
+        depth = np.full((48, 64), 2500, dtype=np.uint16)
+        cloud = thin(np.array([[1.0, 2.0, 0.1], [1.01, 2.01, 0.11], [3.0, 4.0, 1.5]]))
+        self.assertEqual(len(cloud), 2)  # the two points 1 cm apart share a 5 cm voxel
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as robot:
+            robot.sendall(cloud_message(0.9, cloud, frame="map"))
+            for stamp in (1.0, 1.1):
+                robot.sendall(frame_message(stamp, color, depth, (60, 60, 32, 24), (60, 60, 32, 24), np.eye(3),
+                                            [0, 0, 0], pose=(1.0, 2.0, 0.5)))
+        got = list(frames)
+        self.assertEqual(got[0].cloud.tolist(), cloud.tolist())
+        self.assertIsNone(getattr(got[1], "cloud", None))

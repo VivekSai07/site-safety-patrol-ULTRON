@@ -37,7 +37,7 @@ from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from tf2_ros import Buffer, TransformException, TransformListener
 
-from ultron.protocol.relay_wire import cloud_message, frame_message
+from ultron.protocol.relay_wire import cloud_message, frame_message, thin
 from ultron.recording import add_arguments as add_record_arguments, recorder_from_args
 
 MAX_DEPTH_AGE = 0.1  # seconds: an older depth image is not sent with a colour frame
@@ -60,6 +60,7 @@ class Relay(Node):
         self.args, self.socket = args, None
         self.color_k = self.depth_k = self.depth = self.depth_stamp = self.depth_frame = None
         self.extrinsics, self.last_sent, self.sent, self.pose_seen = None, 0.0, 0, False
+        self.last_map_cloud = -1e9
         self.tf = Buffer()
         self.listener = TransformListener(self.tf, self)
         self.create_subscription(CameraInfo, args.color_info, lambda m: setattr(self, "color_k", self.intrinsics(m)), qos_profile_sensor_data)
@@ -133,15 +134,31 @@ class Relay(Node):
             self.last_sent, self.sent = stamp, self.sent + 1
 
     def on_cloud(self, message):
-        if self.pose_seen:
-            return  # localisation gives the pose: no need to ship clouds
+        stamp = stamp_seconds(message.header)
+        if self.pose_seen and (not self.args.map_cloud_rate or stamp - self.last_map_cloud < 1.0 / self.args.map_cloud_rate):
+            return  # localisation gives the pose: clouds only now and then, for discovery
         offsets = {field.name: field.offset for field in message.fields}
         if not {"x", "y", "z"} <= set(offsets) or (offsets["y"], offsets["z"]) != (offsets["x"] + 4, offsets["x"] + 8):
             self.get_logger().warn("point cloud without consecutive float32 x, y, z: not forwarded", once=True)
             return
         cloud = np.frombuffer(message.data, np.uint8).reshape(-1, message.point_step)
         points = np.ascontiguousarray(cloud[:, offsets["x"]:offsets["x"] + 12]).view(np.float32).reshape(-1, 3)
-        self.send(cloud_message(stamp_seconds(message.header), points[np.isfinite(points).all(axis=1)]))
+        points = points[np.isfinite(points).all(axis=1)]
+        if not self.pose_seen:
+            self.send(cloud_message(stamp, points))  # for lidar odometry on the other side
+            return
+        # In the map, for discovery (a ladder lying on the floor): within reach, thinned to 5 cm.
+        try:
+            t = self.tf.lookup_transform(self.args.map_frame, message.header.frame_id, Time(), Duration(seconds=0.0)).transform
+        except TransformException as error:
+            self.get_logger().warn(f"no TF {self.args.map_frame} <- {message.header.frame_id}: {error}",
+                                   throttle_duration_sec=10.0)
+            return
+        self.last_map_cloud = stamp
+        near = points[np.hypot(points[:, 0], points[:, 1]) <= self.args.map_cloud_reach]
+        rotation = rotation_matrix(t.rotation)
+        moved = near @ rotation.T + np.array([t.translation.x, t.translation.y, t.translation.z])
+        self.send(cloud_message(stamp, thin(moved), frame="map"))
 
 
 def main():
@@ -152,7 +169,11 @@ def main():
     parser.add_argument("--color-info", default="/camera_depth/head/color/camera_info")
     parser.add_argument("--depth", default="/camera_depth/head/depth/image_rect_raw")
     parser.add_argument("--depth-info", default="/camera_depth/head/depth/camera_info")
-    parser.add_argument("--cloud", default="/scan_cloud", help="lidar cloud for odometry; empty to disable")
+    parser.add_argument("--cloud", default="/scan_cloud",
+                        help="lidar cloud: for odometry without a TF pose, else for discovery; empty to disable")
+    parser.add_argument("--map-cloud-rate", type=float, default=2.0,
+                        help="clouds per second sent in the map frame once TF has a pose (0: none)")
+    parser.add_argument("--map-cloud-reach", type=float, default=8.0, help="metres around the lidar sent in them")
     parser.add_argument("--map-frame", default="map")
     parser.add_argument("--base-frame", default="base_link")
     parser.add_argument("--record", metavar="DIR", default=None,

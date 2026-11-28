@@ -9,7 +9,9 @@ One TCP connection carries length-prefixed messages:
 
 frame  colour image (rgb8) and depth image (uint16 millimetres) taken together, both cameras'
        intrinsics, the depth-to-colour transform, and the robot pose in the map if TF has one
-cloud  lidar points (float32 x, y, z in the lidar frame), for odometry when TF has no pose
+cloud  lidar points, float32 x, y, z. "frame": "sensor" (the lidar frame, default) for odometry
+       when TF has no pose; "map" (moved into the map with TF, cropped, thinned) for discovery
+       (ladders lying on the floor) once localisation runs
 """
 import json
 import struct
@@ -64,6 +66,16 @@ def frame_message(stamp, color, depth_mm, color_k, depth_k, rotation, translatio
                 {"color": color.tobytes(), "depth": depth_mm.tobytes()})
 
 
-def cloud_message(stamp, points):
+def cloud_message(stamp, points, frame="sensor"):
     points = np.ascontiguousarray(points, np.float32).reshape(-1, 3)
-    return pack({"kind": "cloud", "stamp": float(stamp), "count": len(points)}, {"points": points.tobytes()})
+    return pack({"kind": "cloud", "stamp": float(stamp), "count": len(points), "frame": frame},
+                {"points": points.tobytes()})
+
+
+def thin(points, voxel=0.05):
+    """One point per `voxel` metre cube: a 32-ring sweep shrinks several times, the shape stays."""
+    points = np.asarray(points, np.float32).reshape(-1, 3)
+    if not len(points):
+        return points
+    _, first = np.unique(np.floor(points / voxel).astype(np.int64), axis=0, return_index=True)
+    return points[np.sort(first)]

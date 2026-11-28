@@ -196,13 +196,19 @@ def relay(port, host="0.0.0.0", log=print):
     def serve():
         connection, peer = server.accept()
         log(f"Relay connected from {peer[0]}")
-        odometry, lidar_pose, count = None, None, 0
+        odometry, lidar_pose, count, cloud = None, None, 0, None
         try:
             while True:
                 header, blobs = unpack(connection.recv)
                 if header["kind"] == "cloud":
+                    points = np.frombuffer(blobs["points"], np.float32).reshape(-1, 3)
+                    if header.get("frame") == "map":
+                        cloud = points  # moved into the map by the relay: for discovery
+                        continue
                     odometry = odometry or LidarOdometry()
-                    lidar_pose = odometry.update(np.frombuffer(blobs["points"], np.float32).reshape(-1, 3))
+                    lidar_pose = odometry.update(points)
+                    from ..pipeline.discover import world_cloud
+                    cloud = world_cloud(points, odometry.matrix)  # in the odometry frame, like the poses
                     continue
                 color = np.frombuffer(blobs["color"], np.uint8).reshape(header["color_shape"])
                 depth = np.frombuffer(blobs["depth"], np.uint16).reshape(header["depth_shape"]).astype(np.float32) / 1000
@@ -211,10 +217,13 @@ def relay(port, host="0.0.0.0", log=print):
                                             np.asarray(header["rotation"]).reshape(3, 3), np.asarray(header["translation"]))
                 count += 1
                 pose = header["pose"] or lidar_pose  # a pose in the SLAM map beats local odometry
-                mailbox.put(Frame(Image.fromarray(color), name=f"live-{count:05}", stamp=header["stamp"],
-                                  pose=tuple(pose) if pose else None, depth=registered,
-                                  pose_frame="map" if header["pose"] else ("odometry" if pose else None),
-                                  camera=Calibration(header["color_k"], size)))
+                frame = Frame(Image.fromarray(color), name=f"live-{count:05}", stamp=header["stamp"],
+                              pose=tuple(pose) if pose else None, depth=registered,
+                              pose_frame="map" if header["pose"] else ("odometry" if pose else None),
+                              camera=Calibration(header["color_k"], size))
+                if cloud is not None:  # each cloud goes with one frame: discovery accumulates them
+                    frame.cloud, cloud = cloud, None
+                mailbox.put(frame)
         except (EOFError, OSError, ValueError) as error:
             log(f"Relay stream ended: {error}")
         finally:
