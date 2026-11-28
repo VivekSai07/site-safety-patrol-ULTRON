@@ -156,7 +156,7 @@ def _sample(cls, depth=0):
 ALL_TYPES = [getattr(msg, n) for n in ('LocalizationState', 'MotionGateStatus', 'OperatorEnable', 'LadderDetection',
                                        'LadderDetectionArray', 'LadderCandidate', 'LadderCandidateArray',
                                        'MissionStatus', 'MissionEvent', 'CoverageReport', 'MapInfo')]
-for _srv in (srv.Arm, srv.SaveMap, srv.LoadMap, srv.SetPatrolZone):
+for _srv in (srv.Arm, srv.SaveMap, srv.LoadMap, srv.SetPatrolZone, srv.SimScenario):
     ALL_TYPES += [_srv.Request, _srv.Response]
 for _act in (action.NavigateToView, action.CaptureViews, action.RunMission):
     ALL_TYPES += [_act.Goal, _act.Result, _act.Feedback]

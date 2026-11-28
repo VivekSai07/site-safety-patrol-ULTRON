@@ -25,6 +25,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SaveMap.srv"
   "srv/LoadMap.srv"
   "srv/SetPatrolZone.srv"
+  "srv/SimScenario.srv"
   "action/NavigateToView.action"
   "action/CaptureViews.action"
   "action/RunMission.action"

@@ -31,7 +31,7 @@ def test_choices_match_brief():
     assert args['mode'].choices == ['mapping', 'localization', 'nav', 'mission']
     assert args['odom_source'].choices == ['sim', 'mola', 'kiss', 'b2']
     assert args['viz'].choices == ['none', 'foxglove', 'rviz_bridge', 'both']
-    assert args['record'].choices == ['none', 'minimal', 'debug']
+    assert args['record'].choices == ['none', 'minimal', 'debug', 'full']
 
 
 def test_every_sub_launch_exists_and_loads():

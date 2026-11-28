@@ -53,7 +53,8 @@ def _quat(yaw):
 
 class SimBridge:
     def __init__(self, config, route=None, rate=1.0, out=None, scenario=None, people='static',
-                 distortion=False, odom_scale=1.0, lidar_profile_path=None):
+                 distortion=False, odom_scale=1.0, lidar_profile_path=None, publish_static_tf=True,
+                 publish_odom_tf=True):
         import rclpy
         from rclpy.node import Node
         from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
@@ -73,6 +74,9 @@ class SimBridge:
             raise ValueError('rate must be in (0, 10]')
         lidar_profile = config.lidar
         self.people, self.distortion, self.odom_scale = people, bool(distortion), float(odom_scale)
+        # Wrappers whose robot_state_publisher owns base_link -> lidar_link, or whose odom->base_link
+        # comes from another estimator, disable these so each TF edge keeps a single authority.
+        self.publish_static_tf, self.publish_odom_tf = bool(publish_static_tf), bool(publish_odom_tf)
         self.lidar_profile_path = lidar_profile_path
         self.sim = HallSim(lidar_profile.mount_xyz_m, lidar_profile.mount_rpy_rad, people=people)
         if route and scenario:
@@ -132,8 +136,9 @@ class SimBridge:
         # Simulation test hook (obstacles, lidar faults) for navigation tests; never a robot interface.
         self.node.create_subscription(String, topics['sim_control'], self._on_control, qos)
         self.tf = TransformBroadcaster(self.node)
-        self.static_tf = StaticTransformBroadcaster(self.node)
-        self._publish_static()
+        self.static_tf = StaticTransformBroadcaster(self.node) if self.publish_static_tf else None
+        if self.static_tf:
+            self._publish_static()
         self.fields = [PointField(name=n, offset=CLOUD_DTYPE.fields[n][1], count=1,
                                   datatype=PointField.UINT16 if n == 'ring' else PointField.FLOAT32)
                        for n in CLOUD_DTYPE.names]
@@ -187,6 +192,7 @@ class SimBridge:
                               'angle_increment': g.angle_increment, 'bins': g.bins,
                               'z_band_base_link': [g.z_min, g.z_max]},
             'ground_truth': 'EVALUATION_ONLY: ground_truth.csv / topic; never on TF or estimator input',
+            'tf_published': {'base_to_lidar_static': self.publish_static_tf, 'odom_to_base': self.publish_odom_tf},
         }
         (self.out / 'run_meta.json').write_text(json.dumps(meta, indent=2))
 
@@ -306,7 +312,8 @@ class SimBridge:
     def _publish_state(self, stamp):
         f = self.config.frames
         x, y, yaw = self.odom.x, self.odom.y, self.odom.yaw
-        self.tf.sendTransform(self._transform(f['odom'], f['base'], (x, y, 0.0), yaw, stamp))
+        if self.publish_odom_tf:
+            self.tf.sendTransform(self._transform(f['odom'], f['base'], (x, y, 0.0), yaw, stamp))
         odom = self.msg['Odometry']()
         odom.header.stamp, odom.header.frame_id, odom.child_frame_id = stamp, f['odom'], f['base']
         odom.pose.pose.position.x, odom.pose.pose.position.y = x, y
@@ -422,6 +429,10 @@ def main(argv=None):
     parser.add_argument('--odom-scale', type=float, default=1.0, help='Multiply all odometry error terms')
     parser.add_argument('--lidar-profile', type=Path, help='Alternative lidar profile YAML')
     parser.add_argument('--control-hz', type=float, help='Override control/odometry rate (default from config)')
+    parser.add_argument('--no-static-tf', action='store_true',
+                        help='Do not publish base_link -> lidar_link (robot_state_publisher owns it)')
+    parser.add_argument('--no-odom-tf', action='store_true',
+                        help='Do not publish odom -> base_link (another estimator owns it)')
     args = parser.parse_args(argv)
     config = load_sim_slam_config(args.config)
     if args.control_hz:
@@ -437,7 +448,8 @@ def main(argv=None):
     rclpy.init()
     try:
         bridge = SimBridge(config, route, args.rate, args.out, scenario, args.people, args.motion_distortion,
-                           args.odom_scale, str(args.lidar_profile) if args.lidar_profile else None)
+                           args.odom_scale, str(args.lidar_profile) if args.lidar_profile else None,
+                           publish_static_tf=not args.no_static_tf, publish_odom_tf=not args.no_odom_tf)
         bridge.run(args.duration)
         bridge.node.destroy_node()
     except KeyboardInterrupt:

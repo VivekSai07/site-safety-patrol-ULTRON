@@ -3,10 +3,13 @@ import time
 
 from _graph import node_list, ros_env, start, stop
 
-EXPECTED_SIM = {'robot_state_publisher', 'tf_authority_check', 'drivers_placeholder', 'preprocess_placeholder',
+# viz/record start nothing with their defaults (viz:=none, record:=none). In sim the drivers
+# sub-launch runs the MuJoCo contract bridge (Agent F); replay keeps B's drivers placeholder.
+EXPECTED_SIM = {'robot_state_publisher', 'tf_authority_check', 'ultron_sim_bridge', 'preprocess_placeholder',
                 'state_estimation_placeholder', 'slam_placeholder', 'nav_placeholder', 'control_placeholder',
-                'mission_placeholder', 'viz_placeholder', 'record_placeholder'}
+                'mission_placeholder'}
 CONTROL = {'nav_placeholder', 'control_placeholder', 'mission_placeholder'}
+EXPECTED_REPLAY = (EXPECTED_SIM - CONTROL - {'ultron_sim_bridge'}) | {'drivers_placeholder'}
 
 
 def _launch(run_mode, domain, *args, wait_s=6.0, expect=None):
@@ -39,12 +42,12 @@ def test_sim_mapping_starts_all_stubs_under_namespace():
 
 
 def test_replay_starts_no_control_nodes():
-    proc, nodes, _ = _launch('replay', 72, 'mode:=localization', expect=EXPECTED_SIM - CONTROL)
+    proc, nodes, _ = _launch('replay', 72, 'mode:=localization', expect=EXPECTED_REPLAY)
     alive = proc.poll() is None
     out = stop(proc)
     assert alive, out
     started = _stack_nodes(nodes, '/ultron/replay')
-    assert started == EXPECTED_SIM - CONTROL, (nodes, out)
+    assert started == EXPECTED_REPLAY, (nodes, out)
     assert 'Traceback' not in out and '[ERROR]' not in out, out
 
 

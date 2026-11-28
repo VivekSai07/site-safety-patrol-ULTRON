@@ -20,7 +20,7 @@ VIZ_DOMAIN_ID = 42
 STACK_MODES = ('mapping', 'localization', 'nav', 'mission')
 ODOM_SOURCES = ('sim', 'mola', 'kiss', 'b2')
 VIZ_OPTIONS = ('none', 'foxglove', 'rviz_bridge', 'both')
-RECORD_OPTIONS = ('none', 'minimal', 'debug')
+RECORD_OPTIONS = ('none', 'minimal', 'debug', 'full')
 
 # Sub-launch files in launch order, with the owning fleet agent.
 SUB_LAUNCHES = (

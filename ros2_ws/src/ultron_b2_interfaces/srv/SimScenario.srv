@@ -1,0 +1,19 @@
+# SIMULATION ONLY scenario hook served by ultron_b2_sim under /ultron/sim (never in replay/live).
+# Commands (values):
+#   obstacle        target=<index 0..2>  values=[x, y] place | [] park
+#   lidar_blackout  values=[duration_s]
+#   lidar_dropout   values=[duration_s, probability]
+#   kidnap          values=[x, y, yaw]   true pose jumps; odometry is not told
+#   ladder_move     target=<ladder name> values=[x, y, yaw]  (world frame ultron_sim_world)
+#   ladder_hide     target=<ladder name>
+#   ladder_show     target=<ladder name> (last visible pose)
+string SCHEMA_VERSION = "ultron.sim_scenario/v1"
+string schema_version
+string command
+string target
+float64[] values
+---
+string schema_version
+bool accepted
+string message
+string event_json

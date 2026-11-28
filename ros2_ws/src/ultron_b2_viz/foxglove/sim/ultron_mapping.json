@@ -1,0 +1,104 @@
+{
+  "_ultron": {
+    "generated_by": "ultron_b2_viz.gen_configs",
+    "kind": "mapping",
+    "mode": "sim",
+    "note": "Only whitelisted, throttled topics. Ground truth and raw sensors are not served."
+  },
+  "configById": {
+    "3D!main": {
+      "cameraState": {
+        "distance": 18,
+        "far": 5000,
+        "fovy": 45,
+        "near": 0.5,
+        "perspective": true,
+        "phi": 50,
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "thetaOffset": 0
+      },
+      "followMode": "follow-position",
+      "followTf": "base_link",
+      "imageMode": {},
+      "layers": {
+        "grid": {
+          "divisions": 40,
+          "frameId": "map",
+          "layerId": "foxglove.Grid",
+          "size": 40,
+          "visible": true
+        }
+      },
+      "publish": {
+        "type": "point"
+      },
+      "scene": {},
+      "topics": {
+        "/ultron/sim/map": {
+          "visible": false
+        },
+        "/ultron/sim/robot_description": {
+          "visible": true
+        },
+        "/ultron/sim/sensors/scan": {
+          "colorMode": "flat",
+          "flatColor": "#ff4040ff",
+          "visible": true
+        },
+        "/ultron/sim/viz/map": {
+          "visible": true
+        },
+        "/ultron/sim/viz/map_cloud": {
+          "visible": false
+        },
+        "/ultron/sim/viz/points": {
+          "colorField": "z",
+          "colorMode": "colormap",
+          "pointSize": 2,
+          "visible": true
+        }
+      },
+      "transforms": {}
+    },
+    "Image!cam": {
+      "cameraState": {},
+      "imageMode": {
+        "imageTopic": "/ultron/sim/viz/cam_head/color/image/compressed"
+      }
+    },
+    "RawMessages!a": {
+      "diffEnabled": false,
+      "expansion": "auto",
+      "topicPath": "/ultron/sim/state/localization"
+    },
+    "RawMessages!b": {
+      "diffEnabled": false,
+      "expansion": "auto",
+      "topicPath": "/ultron/sim/state/odom"
+    }
+  },
+  "globalVariables": {},
+  "layout": {
+    "direction": "row",
+    "first": "3D!main",
+    "second": {
+      "direction": "column",
+      "first": "Image!cam",
+      "second": {
+        "direction": "column",
+        "first": "RawMessages!a",
+        "second": "RawMessages!b"
+      },
+      "splitPercentage": 40
+    },
+    "splitPercentage": 65
+  },
+  "playbackConfig": {
+    "speed": 1
+  },
+  "userNodes": {}
+}

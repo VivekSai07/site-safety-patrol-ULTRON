@@ -2,13 +2,27 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>ultron_b2_sim</name>
-  <version>0.0.1</version>
-  <description>STUB (owner: Agent F). Wrapper launching ultron.autonomy.sim_bridge with contract topics under /ultron/sim, MuJoCo RGB-D head camera, scenario hooks; later Isaac.</description>
+  <version>0.1.0</version>
+  <description>Agent F: wraps ultron.autonomy.sim_bridge (MuJoCo, kinematic base) on the B2 topic contract under /ultron/sim, with a MuJoCo RGB-D head camera, synthetic IMU, ladder ground truth/oracle labels and scenario hooks. Isaac backend is an UNRUN stub. SIMULATION ONLY.</description>
   <maintainer email="ultron@example.invalid">ULTRON team</maintainer>
   <license>Apache-2.0</license>
 
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>rosgraph_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
   <exec_depend>ultron_b2_interfaces</exec_depend>
+  <exec_depend>ultron_b2_description</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
 
   <export>
     <build_type>ament_python</build_type>
