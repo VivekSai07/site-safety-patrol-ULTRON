@@ -132,6 +132,7 @@ class LocalizationMonitor:
         self.good_run = self.lost_run = 0
         self.degraded_since = None
         self.last_scan_stamp = None
+        self.last_rx_stamp = None
         self.last_pose = None
         self.last_pose_stamp = None
         self.last_score = None
@@ -149,6 +150,11 @@ class LocalizationMonitor:
             if state == 'STALE':
                 self.good_run = 0
         self.state, self.reason = state, reason
+
+    def note_scan(self, stamp):
+        """A scan with ``stamp`` arrived (it may be scored later, once its TF is available)."""
+        if self.last_rx_stamp is None or stamp > self.last_rx_stamp:
+            self.last_rx_stamp = stamp
 
     def update_scan(self, stamp, pose, endpoints_base, matcher):
         """Process one scan whose estimated pose (map frame) at ``stamp`` is ``pose`` or None."""
@@ -190,12 +196,14 @@ class LocalizationMonitor:
 
     def tick(self, now):
         """Age checks; call periodically with the current clock."""
-        if self.last_scan_stamp is None:
+        stamps = [t for t in (self.last_scan_stamp, self.last_rx_stamp) if t is not None]
+        if not stamps:
             if self.state != 'INITIALIZING':
                 self._set('STALE', 'No scan received', now)
             return self.state
-        if now - self.last_scan_stamp > self.p['scan_age_limit_s']:
-            self._set('STALE', f'No scan for {now - self.last_scan_stamp:.2f} s (> {self.p["scan_age_limit_s"]} s)', now)
+        last_scan = max(stamps)
+        if now - last_scan > self.p['scan_age_limit_s']:
+            self._set('STALE', f'No scan for {now - last_scan:.2f} s (> {self.p["scan_age_limit_s"]} s)', now)
         elif self.last_pose_stamp is None or now - self.last_pose_stamp > self.p['pose_age_limit_s']:
             if self.state != 'INITIALIZING':
                 self._set('STALE', 'No map->base_link transform within the age limit', now)

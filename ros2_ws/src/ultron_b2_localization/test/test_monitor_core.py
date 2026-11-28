@@ -89,6 +89,19 @@ def test_missing_transform_degrades_then_stale(matcher):
     assert m.state == 'STALE'
 
 
+def test_received_unscored_scans_keep_scan_fresh_but_not_pose(matcher):
+    m = LocalizationMonitor(DEFAULT_PARAMS, 'm', 1)
+    t = _drive(m, matcher, 0.0, 10, lambda t: (0.0, 0.0, 0.0))
+    assert m.state == 'VALID'
+    last_scored = t - 0.1
+    for k in range(1, 10):  # scans keep arriving while their transform is still pending
+        m.note_scan(last_scored + 0.1 * k)
+        m.tick(last_scored + 0.1 * k + 0.05)
+        if 0.1 * k + 0.05 <= DEFAULT_PARAMS['pose_age_limit_s']:
+            assert m.state == 'VALID'
+    assert m.state == 'STALE' and 'transform' in m.reason
+
+
 def test_kidnap_leaves_valid_on_next_scan_and_goes_lost(matcher):
     m = LocalizationMonitor(DEFAULT_PARAMS, 'm', 1)
     true_pose = lambda t: (0.0, 0.0, 0.0) if t < 0.95 else (3.0, 2.5, 1.2)    # teleported at t = 1 s

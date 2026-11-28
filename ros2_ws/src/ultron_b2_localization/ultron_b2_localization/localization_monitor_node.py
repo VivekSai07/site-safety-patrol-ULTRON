@@ -19,7 +19,13 @@ import numpy as np
 
 from .monitor_core import DEFAULT_PARAMS, LocalizationMonitor, MapMatcher, PARAM_KEYS, confirm_label, scan_endpoints
 
-SCORE_DELAY_S = 0.15  # let the SLAM backend apply a scan before scoring the pose at its stamp
+# Minimum scan age before scoring. slam_toolbox future-dates map->odom (transform_timeout) and processes scans
+# at most every minimum_time_interval, so the limiting link is odom->base_link at the scan stamp: a scan whose
+# map->base_link is not yet in the TF buffer (odometry latency under load) waits up to SCORE_MAX_WAIT_S before it
+# is scored as 'No map->base_link transform'. Integration: was a fixed 0.15 s, which used ~0.15-0.25 s of the
+# 0.5 s pose-age budget of the motion gate on every scan. Age limits and the gate are unchanged.
+SCORE_DELAY_S = 0.05
+SCORE_MAX_WAIT_S = 0.4
 
 
 def grid_occupied_xy(info, data, occupied_min=65):
@@ -162,14 +168,16 @@ class LocalizationMonitorNode:
             if now - self.last_heartbeat >= self.heartbeat_s:
                 self._publish(now)
             return
-        ready, waiting = [], []
-        for m in self.pending_scans:
-            age = now - (m.header.stamp.sec + m.header.stamp.nanosec * 1e-9)
-            (ready if age >= SCORE_DELAY_S else waiting).append(m)
-        self.pending_scans = waiting
+        pending = sorted(self.pending_scans, key=lambda m: (m.header.stamp.sec, m.header.stamp.nanosec))
+        self.pending_scans = []
+        for m in pending:
+            self.monitor.note_scan(m.header.stamp.sec + m.header.stamp.nanosec * 1e-9)
         published = False
-        for msg in ready:
+        for i, msg in enumerate(pending):
             t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+            if now - t < SCORE_DELAY_S:
+                self.pending_scans = pending[i:]
+                break
             try:
                 sensor_xy, sensor_yaw = self._sensor(msg.header.frame_id)
             except Exception as exc:
@@ -177,6 +185,9 @@ class LocalizationMonitorNode:
                                             throttle_duration_sec=5.0)
                 continue
             pose = self._lookup(msg.header.stamp)
+            if pose is None and now - t < SCORE_MAX_WAIT_S:
+                self.pending_scans = pending[i:]  # keep scan order; retry on the next tick
+                break
             endpoints = scan_endpoints(msg.ranges, msg.angle_min, msg.angle_increment, msg.range_min, msg.range_max,
                                        sensor_xy, sensor_yaw)
             self.monitor.update_scan(t, pose, endpoints, self.matcher)
