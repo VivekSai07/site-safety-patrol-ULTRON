@@ -17,6 +17,15 @@ import numpy as np
 
 from .hall_scene import BASE_HEIGHT_M, LIDAR_HOUSING_GROUP, ROBOT_GROUP
 
+
+def multi_ray(mujoco, model, data, origin, directions, geomgroup, geom, dist, cutoff):
+    """`mujoco.mj_multiRay` across MuJoCo versions: newer releases take an extra `normal`
+    output before the ray count (validated here with 3.3.7, which has none)."""
+    try:
+        mujoco.mj_multiRay(model, data, origin, directions, geomgroup, 1, -1, geom, dist, len(geom), cutoff)
+    except TypeError:
+        mujoco.mj_multiRay(model, data, origin, directions, geomgroup, 1, -1, geom, dist, None, len(geom), cutoff)
+
 TIME_SLICES = 10  # sweep divided into 36-degree slices; each can be cast from its own pose
 
 
@@ -163,8 +172,8 @@ class SimLidar:
             for t_mid, local, world, flat, geom, dist in group:
                 origin, R_world = fixed if pose_at is None else self._lidar_pose(pose_at(t_mid))
                 rotate(local, R_world, out=world)
-                mujoco.mj_multiRay(model, worker_data, origin, flat, self.geomgroup, 1, -1, geom, dist,
-                                   len(geom), self.profile.range_max_m)
+                multi_ray(mujoco, model, worker_data, origin, flat, self.geomgroup, geom, dist,
+                          self.profile.range_max_m)
 
         if self._pool is None:
             cast(self._groups[0], self._datas[0])
