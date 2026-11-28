@@ -11,10 +11,10 @@ from .inspection import REQUIRED, fuse, verdict
 from .memory import Registry
 from .mujoco_sim import Simulation
 from .planning import Grid
-from .scene import scenarios
+from .scene import scenarios, safety_assets as default_safety_assets
 
 
-def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, viewer=False, motion='smooth', view_policy='bounded', detector='oracle', weights=None, inspector='oracle', qwen=None, allow_download=False, device='cpu', detector_family='yoloe'):
+def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, viewer=False, motion='smooth', view_policy='bounded', detector='oracle', weights=None, inspector='oracle', qwen=None, allow_download=False, device='cpu', detector_family='yoloe', safety=False):
     from .runtime_perception import RuntimePerception
     perception=RuntimePerception(detector=detector,weights=weights,inspector=inspector,qwen=qwen,allow_download=allow_download,device=device,family=detector_family)
     output=Path(output)
@@ -36,7 +36,9 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                 ladders[0]['defect']='bottom_feet'
                 if variant=='missing':
                     ladders=ladders[:-1]
-            sim=Simulation(ladders,output,viewer,clear_clutter=variant=='open-orbit')
+            sim=Simulation(ladders,output,viewer,clear_clutter=variant=='open-orbit',
+                           safety_assets=default_safety_assets() if safety else [])
+            safety_list=sim.safety_assets
             sim.frames=len(all_frames)
             sim.t=clock
             obstacles=[] if variant=='open-orbit' else [(4.2,2.45,5.0,3.55),(10.4,2.6,11.4,4.2)]
@@ -230,6 +232,43 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
                         emit('INSPECTION_COMMITTED',asset_id=asset,status=payload['status'],retry_count=retry_count,reason=payload['reason'],
                              evidence=[view['rgb'] for view in views],checks=checks)
                         emit('ROUTE_RESUME',asset_id=asset)
+                if safety_list and patrol == 0:
+                    from .site_safety import sweep_manifest
+                    sweep_views = []
+                    for sa in safety_list:
+                        ax, ay, _ = sa['position']
+                        candidates = [(ax + dx, ay + dy) for dx, dy in
+                                      ((0, -1.8), (0, -2.4), (1.8, 0), (-1.8, 0), (0, 1.8), (0, 2.4), (-2.4, 0), (2.4, 0))]
+                        goal = next((g for g in candidates if grid.free(g)), None)
+                        emit('SAFETY_TARGET', asset_id=sa['key'], asset_kind=sa['kind'],
+                             goal=list(goal) if goal else None)
+                        if goal is None or not move(goal, 'SAFETY_APPROACH', yaw=math.atan2(ay - goal[1], ax - goal[0])):
+                            emit('SAFETY_CHECK_INCOMPLETE', asset_id=sa['key'], reason='APPROACH_BLOCKED')
+                            continue
+                        confirmed = None
+                        for _ in range(2):
+                            sim.t += .2
+                            frame, rgb, depth, seg = capture('SAFETY_INSPECT')
+                            for det in sim.oracle_safety_detections(frame, depth, seg):
+                                if det['oracle_key'] == sa['key']:
+                                    confirmed = det
+                        if not confirmed:
+                            emit('SAFETY_CHECK_INCOMPLETE', asset_id=sa['key'], reason='NOT_VISIBLE')
+                            continue
+                        emit('SAFETY_ASSET_CONFIRMED', asset_id=sa['key'], asset_kind=sa['kind'], observation=confirmed)
+                        sweep_views.append({'image_id': f"safety-{sa['key']}-{frame['index']:05}",
+                                            'path': frame['rgb'], 'path_abs': str(output / frame['rgb'])})
+                        emit('SAFETY_EVIDENCE_CAPTURED', asset_id=sa['key'], asset_kind=sa['kind'], rgb=frame['rgb'])
+                        if sa['kind'] == 'person':
+                            for flag, violation in (('helmet', 'PPE_HELMET_MISSING'), ('vest', 'PPE_VEST_MISSING')):
+                                if not confirmed[flag]:
+                                    emit('SAFETY_VIOLATION', asset_id=sa['key'], violation=violation,
+                                         evidence=frame['rgb'], source='SIMULATION_ORACLE',
+                                         note='Scene ground truth, not visual inference')
+                    if sweep_views:
+                        payload = sweep_manifest(mid, sweep_views, date.today().isoformat(), [*sim.pose[:2], 0.])
+                        (output / 'safety_sweep.json').write_text(json.dumps(payload, indent=2))
+                        emit('SAFETY_SWEEP_SAVED', views=len(sweep_views))
                 missing=db.missing(mid)
                 from .supervisor import decide
                 decision=decide([a for a in db.assets() if a['map_version']=='ultron_mock_site_v1'],

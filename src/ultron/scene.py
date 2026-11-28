@@ -16,7 +16,7 @@ def scenarios():
 
 def safety_assets():
     return [
-        dict(key="ext_01", kind="extinguisher", position=[11.5, 8.4, 0.]),
+        dict(key="ext_01", kind="extinguisher", position=[10.8, 8.4, 0.]),
         dict(key="fa_01", kind="firstaid", position=[1.2, 8.4, 0.]),
         dict(key="es_01", kind="escape_sign", position=[0.4, 1.6, 0.]),
         dict(key="person_ok", kind="person", position=[10.5, 5.2, 0.], helmet=True, vest=True),
