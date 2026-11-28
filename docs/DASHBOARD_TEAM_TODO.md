@@ -29,7 +29,7 @@ Still open:
       `/map_fenced`**. The default (`ros2 launch explore_lite explore.launch.py use_sim_time:=false`) reads
       the package params, `costmap_topic: map`: **the unfenced map, so it would chase the space behind the
       windows.** A working example without a params file is in EXPLORATION_CONTRACT.md. Set it with
-      `-p explore_command:="..."` on the bridge.
+      `-p explore_command:="..."` on the bridge, or `EXPLORE_COMMAND="..." scripts/dashboard.sh live`.
 - [ ] **Namespace**, if the explore node runs in one (bridge parameters `explore_resume_topic`,
       `explore_status_topic`; defaults `explore/resume`, `explore/status`).
 - [ ] **`explore_lite_msgs` installed** where the bridge runs, so it reads `explore/status`. Without it the

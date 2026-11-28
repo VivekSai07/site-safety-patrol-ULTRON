@@ -212,11 +212,28 @@ def main():
     time.sleep(2)
     check('no old goal replayed', goal()['seq'] == seq_goal and goal()['status'] == 'SUCCEEDED', goal())
 
+    try:  # built from stub_explore_lite_msgs/ when explore_check.sh runs with STATUS=1
+        import explore_lite_msgs  # noqa: F401
+        have_status = True
+    except ImportError:
+        have_status = False
+    print(f"explore/status path: {'on (explore_lite_msgs)' if have_status else 'off (no explore_lite_msgs)'}", flush=True)
+    if have_status:
+        # nothing left to explore: explore_lite says complete and returning in one burst; the page must say MAPPED
+        call('PUT', '/api/fence', {'frame_id': 'map', 'polygon': [[50, 50], [51, 50], [51, 51]]})  # off the map
+        time.sleep(3)
+        ask('start')
+        ex = wait_state('MAPPED', 30)
+        check('no frontiers: MAPPED by the explorer, from explore/status', (ex['state'], ex['by'], ex['detail']) ==
+              ('MAPPED', 'explorer', 'no frontiers left'), ex)
+        check('a goal is accepted after the explorer finished', set_goal()[0] == 201)
+        wait_goal({'SUCCEEDED'})
+
     # Nav2 absent
     os.kill(int(open(f'{LOG}/nav2.pid').read()), signal.SIGINT)
     time.sleep(2)
     status, g = set_goal()
-    g = wait_goal({'FAILED', 'SUCCEEDED'}, 10)
+    g = wait_goal({'FAILED', 'SUCCEEDED'}, 12)
     check('Nav2 absent -> FAILED navigation not available', (g['status'], g['detail']) == ('FAILED', 'navigation not available'), g)
 
     bridge.send_signal(signal.SIGINT)

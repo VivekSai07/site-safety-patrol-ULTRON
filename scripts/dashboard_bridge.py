@@ -82,7 +82,7 @@ class DashboardBridge(Node):
             ('base_frame', 'base_link'), ('action_name', 'navigate_to_pose'), ('pose_rate_hz', 5.0),
             ('map_min_period_s', 2.0),
             # a missing Nav2 is a FAILED goal after this long, never a goal that hangs in SENT
-            ('nav_wait_s', 3.0), ('nav_accept_timeout_s', 10.0),
+            ('nav_wait_s', 3.0), ('nav_accept_timeout_s', 5.0),
             # explore_lite's own launch file reads its package params (costmap_topic: map, i.e. unfenced);
             # point it at /map_fenced with a params file or `ros2 run` (docs/dashboard_nav_goal.md)
             ('explore_command', 'ros2 launch explore_lite explore.launch.py use_sim_time:=false'),
@@ -121,14 +121,14 @@ class DashboardBridge(Node):
 
         # exploration: requests run one at a time on their own thread, they wait for the explorer
         self.resume_pub = self.create_publisher(Bool, p['explore_resume_topic'], 10)
-        self.explore_status = None  # (count, text) of the latest explore/status
+        self.explore_statuses = []  # every explore/status text, oldest first (a few per pause)
         if ExploreStatus is not None:
             self.create_subscription(ExploreStatus, p['explore_status_topic'], self.on_explore_status, QoSProfile(
                 depth=10, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.explorer = Explorer(p['explore_command'], self.publish_resume, self.resume_pub.get_subscription_count,
                                  self.report_exploration, self.get_explore_status if ExploreStatus else None,
                                  ready_wait_s=p['explore_ready_wait_s'],
-                                 interrupted=lambda: not self.explore_jobs.empty(), nav_ready=self.nav.server_is_ready)
+                                 interrupted=self.newer_request, nav_ready=self.nav.server_is_ready)
         self.explore_jobs = queue.Queue()
         self.exploration = {'seq': 0, 'state': 'IDLE'}  # newest dashboard state seen
         self.explore_seq = None  # newest request handled; None until the first connect (nothing is replayed)
@@ -200,7 +200,7 @@ class DashboardBridge(Node):
             self.sent_at = None
             with self.lock:
                 self.cancelled.add(seq)  # if Nav2 accepts it after all, on_accepted cancels it
-            self.report(seq, 'FAILED', 'navigation did not answer')
+            self.report(seq, 'FAILED', 'navigation not available')  # discovered, but gone: same to the pipeline
         retry, self.waiting = self.waiting, None
         if goal is None:  # nothing new: try the goal still waiting for Nav2, if any
             if retry is None:
@@ -285,16 +285,19 @@ class DashboardBridge(Node):
             self.get_logger().info(f"exploration {data['seq']}: {request} (by {data.get('by') or '?'})")
             self.explorer.handle(request, data['seq'], data.get('by', ''))
 
+    def newer_request(self):
+        """A newer exploration request is queued (a stream reconnect or a renewal is not one)."""
+        return any(kind == 'event' and explore_request(data, self.explore_seq) for kind, data in list(self.explore_jobs.queue))
+
     def publish_resume(self, flag):
         self.resume_pub.publish(Bool(data=flag))
 
     def on_explore_status(self, msg):
-        count = self.explore_status[0] + 1 if self.explore_status else 1
-        self.explore_status = (count, msg.status)
+        self.explore_statuses.append(msg.status)
         self.get_logger().info(f'explore/status: {msg.status}')
 
     def get_explore_status(self):
-        return self.explore_status or (0, '')
+        return self.explore_statuses
 
     def report_exploration(self, seq, state, detail='', by=''):
         self.get_logger().info(f'exploration {seq}: {state} {detail}'.rstrip())

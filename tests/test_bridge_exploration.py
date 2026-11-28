@@ -175,24 +175,25 @@ class ExplorerProcessTest(unittest.TestCase):
         self.assertIsNone(e.proc)
 
     def test_status_drives_confirmations(self):
-        status = [0, '']
-
-        def say(text):
-            status[0] += 1
-            status[1] = text
-
-        e = self.make(status=lambda: tuple(status), listeners=0, ready_wait_s=1.0)
+        log = []
+        say = log.append
+        e = self.make(status=lambda: log, listeners=0, ready_wait_s=1.0)
         import threading
         threading.Timer(0.2, say, ['exploration_started']).start()
         e.handle('start', 1)
         self.assertEqual(self.reports[-1][:2], (1, 'EXPLORING'))
         self.listening = 1
+        threading.Timer(0.05, say, ['exploration_paused']).start()
         e.handle('pause', 2)
-        self.assertEqual(self.reports[-1][:2], (2, 'PAUSED'))   # no status came: still confirmed, it was heard
+        self.assertEqual(self.reports[-1][:2], (2, 'PAUSED'))
         e.handle('resume', 3)
+        self.assertEqual(self.reports[-1][:2], (3, 'EXPLORING'))   # no status came: still confirmed, it was heard
+        # explore_lite says complete and, with return_to_init, returning in the same breath
         say('exploration_complete')
+        say('returning_to_origin')
         e.watch(3, 'EXPLORING')
         self.assertEqual(self.reports[-1], (3, 'MAPPED', 'no frontiers left', 'explorer'))
+        say('returned_to_origin')
         e.watch(3, 'MAPPED')
         self.assertEqual(len([r for r in self.reports if r[1] == 'MAPPED']), 1)
         self.assertTrue(e.running())   # left idle (it may drive back to its start); the next Start replaces it
@@ -201,6 +202,23 @@ class ExplorerProcessTest(unittest.TestCase):
         e.handle('start', 4)
         self.assertIsNotNone(old.poll())
         self.assertEqual(self.reports[-1][:2], (4, 'EXPLORING'))
+
+    def test_start_on_a_mapped_room_completes_at_once(self):
+        # started, then at once complete (nothing left to explore): up, then MAPPED, not a 30 s FAILED
+        log = []
+        e = self.make(status=lambda: log, listeners=0, ready_wait_s=1.0)
+        import threading
+        threading.Timer(0.1, log.extend, [['exploration_started', 'exploration_complete']]).start()
+        e.handle('start', 1)
+        self.assertEqual(self.reports[-1][:2], (1, 'EXPLORING'))
+        e.watch(1, 'EXPLORING')
+        self.assertEqual(self.reports[-1], (1, 'MAPPED', 'no frontiers left', 'explorer'))
+
+    def test_status_topic_we_cannot_hear(self):
+        # msgs package present but no status arrives (QoS or namespace mismatch): listening + Nav2 still counts
+        e = self.make(status=lambda: [], listeners=1)
+        e.handle('start', 1)
+        self.assertEqual(self.reports[-1][:2], (1, 'EXPLORING'))
 
     def test_a_newer_request_cuts_a_slow_start_short(self):
         e = self.make(listeners=0, ready_wait_s=30.0, interrupted=lambda: True)

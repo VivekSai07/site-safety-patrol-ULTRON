@@ -4,8 +4,9 @@
 Acts like explore_lite where the bridge can tell: it waits for its first costmap (costmap_topic, default
 /map_fenced) before it subscribes to explore/resume; while exploring it sends a NavigateToPose goal to a
 free cell inside the costmap every few seconds; explore/resume false cancels its goal and stops, true
-resumes. It has no explore_lite_msgs, so it publishes no explore/status; it says what it does on
-/fake_explore/state (std_msgs/String) for scripts/b2_standin/explore_check.py.
+resumes. When explore_lite_msgs imports (stub_explore_lite_msgs/), it publishes explore/status as explore_lite
+does, including "complete" and "returning to origin" in one burst when no free cell is left. It says what it
+does on /fake_explore/state (std_msgs/String) for scripts/b2_standin/explore_check.py.
 """
 import random
 
@@ -17,6 +18,11 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, String
 
+try:
+    from explore_lite_msgs.msg import ExploreStatus
+except ImportError:
+    ExploreStatus = None
+
 
 class FakeExplore(Node):
     def __init__(self):
@@ -26,6 +32,9 @@ class FakeExplore(Node):
         self.state_pub = self.create_publisher(String, '/fake_explore/state', QoSProfile(
             depth=10, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.costmap, self.resume_sub, self.exploring, self.goal_handle = None, None, False, None
+        self.started = self.finished = False
+        self.status_pub = ExploreStatus and self.create_publisher(ExploreStatus, 'explore/status', QoSProfile(
+            depth=10, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         # explore_lite's costmap subscription: default QoS (volatile), so latched maps from before it started are missed
         self.create_subscription(OccupancyGrid, self.costmap_topic, self.on_costmap, 10)
         self.nav = ActionClient(self, NavigateToPose, 'navigate_to_pose')
@@ -35,6 +44,10 @@ class FakeExplore(Node):
     def say(self, text):
         self.get_logger().info(text)
         self.state_pub.publish(String(data=text))
+
+    def status(self, text):
+        if self.status_pub:
+            self.status_pub.publish(ExploreStatus(status=text))
 
     def on_costmap(self, msg):
         first = self.costmap is None
@@ -49,6 +62,7 @@ class FakeExplore(Node):
     def on_resume(self, msg):
         if msg.data:
             self.exploring = True
+            self.status('exploration_in_progress')
             self.say('resumed')
             self.plan()
         else:  # explore_lite's stop(): cancel all goals on the action server, stop planning
@@ -57,16 +71,23 @@ class FakeExplore(Node):
             if self.goal_handle is not None:
                 self.goal_handle.cancel_goal_async()
                 self.goal_handle = None
+            if not self.finished:
+                self.status('exploration_paused')
             self.say('stopped')
 
     def plan(self):
         if not self.exploring or self.costmap is None or not self.nav.server_is_ready():
             return
+        if not self.started:  # explore_lite: after its costmap and the Nav2 action server
+            self.started = True
+            self.status('exploration_started')
         info, data = self.costmap.info, self.costmap.data
         free = [i for i in range(0, len(data), 7) if data[i] == 0]
         if not free:
             self.say('no frontiers left')
-            self.exploring = False
+            self.exploring, self.finished = False, True
+            self.status('exploration_complete')
+            self.status('returning_to_origin')  # with return_to_init, in the same call
             return
         i = random.choice(free)
         goal = NavigateToPose.Goal()

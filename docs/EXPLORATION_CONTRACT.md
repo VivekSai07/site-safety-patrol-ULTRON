@@ -93,8 +93,9 @@ subscribe to. **Owner: navigation stack (Sahil); not done.**
 
 Implemented in `ultron.dashboard` (app, models, live page) and `scripts/dashboard_bridge.py`, with the
 ROS-free half in `ultron/dashboard/ros_link.py`. Checked by unit tests and by
-`scripts/b2_standin/explore_check.sh` (real bridge against a fake explorer and a fake Nav2, Jazzy, network
-off); **not yet with explore_lite, Nav2 or the robot.** Where the contract above was silent or could not be
+`scripts/b2_standin/explore_check.sh` (real bridge against a fake explorer and a fake Nav2, ROS 2 Jazzy,
+network off, both with and without a stub `explore_lite_msgs`); **not yet with explore_lite, Nav2, Humble
+or the robot.** Where the contract above was silent or could not be
 followed exactly:
 
 - **`lease_until`** (and `since`) are ISO 8601 UTC strings to the second, e.g. `2026-11-28T14:03:10+00:00`;
@@ -118,7 +119,8 @@ followed exactly:
 - **Fence extras:** `DELETE /api/fence` clears it; `python -m ultron.dashboard --fence FILE` loads one at
   start-up (the dashboard keeps it in memory only, so pass it again after a restart). `/api/live` carries
   it and the live page draws it. The fence's `frame_id` must equal the SLAM map's frame; otherwise the
-  bridge warns and publishes the map unfenced. With no fence, `/map_fenced` is the map unchanged and
+  bridge warns and publishes the map unfenced. `scripts/dashboard.sh live` passes `EXPLORE_COMMAND` from the
+  environment to the bridge. With no fence, `/map_fenced` is the map unchanged and
   `/keepout_mask` all 0, so an explorer reading `/map_fenced` still works.
 - **The explorer must be pointed at `/map_fenced`; the default command does not do it.** The bridge's
   `explore_command` defaults to `ros2 launch explore_lite explore.launch.py use_sim_time:=false`, whose
@@ -126,7 +128,10 @@ followed exactly:
   file, or e.g.
   `ros2 run explore_lite explore --ros-args -p use_sim_time:=false -p costmap_topic:=/map_fenced -p costmap_updates_topic:=/map_fenced_updates -p return_to_init:=false`
   (`costmap_updates_topic` set to an unused topic, so no partial update of the raw map lands on the fenced one).
-- **explore_lite facts the bridge relies on** (read from robo-friends/m-explore-ros2 `main`, 2026-11-28):
+- **explore_lite facts the bridge relies on** (read from robo-friends/m-explore-ros2 `main` on 2026-11-28
+  through a summarising web fetch, not a line-by-line read; still assumed: the status publisher's
+  reliability and depth, `wait_for_action_server()`'s default timeout, whether slam_toolbox publishes
+  `map_updates`):
   `explore/resume` is a relative `std_msgs/Bool` subscription, depth 10; false calls `stop()` (cancels all
   Nav2 goals, publishes `exploration_paused`), true calls `resume()` (publishes `exploration_in_progress`,
   replans). `explore/status` is `explore_lite_msgs/ExploreStatus` (`status` string), transient-local,
@@ -135,9 +140,13 @@ followed exactly:
   until the first costmap arrives, so the bridge repeats `/map_fenced` every 2 s (`fenced_period_s`).
   The node subscribes to `explore/resume` after its costmap arrived, then waits for the Nav2 action server
   with no timeout, then publishes `exploration_started`. Action name `navigate_to_pose`.
-- **Confirmations.** With `explore_lite_msgs`: EXPLORING on `exploration_started`; PAUSED / EXPLORING
-  after `explore/resume` was heard (the matching status is awaited up to 3 s). Without it: EXPLORING once
-  the node listens on `explore/resume` and the Nav2 action server is up, and the process has lived 1 s.
+- **Confirmations.** Start: EXPLORING once the process has lived 1 s and either `explore/status` said
+  `exploration_started` / `in_progress` / `complete` (with `explore_lite_msgs`), or the node listens on
+  `explore/resume` and the Nav2 action server is up (always accepted, so a status topic the bridge cannot
+  hear does not fail a working explorer); else FAILED after `explore_ready_wait_s` (30 s). Pause / Resume:
+  PAUSED / EXPLORING once a listener heard `explore/resume` (the matching status is awaited up to 3 s).
+  Statuses are kept as a log, not only the latest, because explore_lite publishes `exploration_complete`
+  and `returning_to_origin` in the same call.
   Whenever the bridge reports FAILED it has stopped the explorer, so FAILED never leaves it driving.
   `exploration_complete` gives MAPPED with `by: explorer`; the node is left running (with
   `return_to_init` it drives back) and the next Start replaces it.

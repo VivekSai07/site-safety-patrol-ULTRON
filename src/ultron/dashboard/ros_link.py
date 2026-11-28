@@ -194,7 +194,8 @@ class Explorer:
     ROS-free so it is tested without ROS; the bridge hands in:
       publish_resume(flag)   publish std_msgs/Bool on explore/resume
       listeners()            subscriptions matched on explore/resume (0: nobody would hear it)
-      status()               (count, text) of the latest explore/status, or None without explore_lite_msgs
+      status()               every explore/status text so far, oldest first, or None without explore_lite_msgs
+                             (a log, not the latest: explore_lite says "complete" and "returning" in one go)
       report(seq, state, detail, by)   tell the dashboard
       interrupted()          a newer request is waiting: stop waiting for this one
       nav_ready()            the Nav2 action server is up (explore_lite waits for it, with no timeout, before planning)
@@ -211,7 +212,7 @@ class Explorer:
         self.settle_s = settle_s  # alive at least this long before it counts as started (a stale listener may answer)
         self.proc = None
         self.paused = False
-        self.done_seen = 0     # status count of the last exploration_complete already reported
+        self.seen = 0          # statuses watch() has looked at
 
     def running(self):
         return self.proc is not None and self.proc.poll() is None
@@ -242,13 +243,14 @@ class Explorer:
             self.report(seq, 'FAILED', f'could not start the explorer: {error}'[:200], '')
             return
         self.paused = False
-        before = self._status_count()
-        # Ready when it says it started (explore_lite_msgs), or else when it listens on explore/resume and Nav2 is
-        # up: it subscribes only after its first costmap arrived, then waits for Nav2, then plans.
+        before = self.seen = self._status_count()
+        # Ready when it says it started (explore_lite_msgs; "complete" right away counts too: nothing left to
+        # explore), or when it listens on explore/resume and Nav2 is up: it subscribes only after its first
+        # costmap arrived, then waits for Nav2, then plans. The second also covers a status topic we cannot hear.
         settled = time.monotonic() + self.settle_s
         ready = self._wait(lambda: time.monotonic() >= settled and (
-            self._status_since(before) in STATUS_RUNNING if self.status else self.listeners() > 0 and self.nav_ready()),
-            self.ready_wait_s)
+            bool(self._status_since(before) & (STATUS_RUNNING | {STATUS_COMPLETE}))
+            or self.listeners() > 0 and self.nav_ready()), self.ready_wait_s)
         if not self.running():
             self._report_exit(seq, 'during start-up')
         elif not ready:
@@ -288,7 +290,7 @@ class Explorer:
         # explore_lite says "paused" or "in progress"; without the msgs package there is nothing to wait for.
         # Either way a listener heard us: confirm unless the explorer died meanwhile.
         if status and self.status:
-            self._wait(lambda: self._status_since(before) == status, self.confirm_wait_s)
+            self._wait(lambda: status in self._status_since(before), self.confirm_wait_s)
         if not self.running():
             self._report_exit(seq, '')
             return
@@ -302,9 +304,8 @@ class Explorer:
                 self._report_exit(seq, '')
             self.proc = None
             return
-        count = self._status_count()
-        if self.status and count > self.done_seen and self.status()[1] == STATUS_COMPLETE:
-            self.done_seen = count
+        new, self.seen = self._status_since(self.seen), self._status_count()
+        if STATUS_COMPLETE in new:
             if state in ('EXPLORING', 'RESUMING'):
                 # the node stays up (it may drive back to its start with return_to_init); the next Start replaces it
                 self.report(seq, 'MAPPED', 'no frontiers left', 'explorer')
@@ -331,11 +332,10 @@ class Explorer:
         self.report(seq, 'FAILED', f'explorer exited with code {code} {when}'.strip(), '')
 
     def _status_count(self):
-        return self.status()[0] if self.status else 0
+        return len(self.status()) if self.status else 0
 
     def _status_since(self, count):
-        n, text = self.status()
-        return text if n > count else None
+        return set(self.status()[count:]) if self.status else set()
 
     def _wait(self, ready, timeout_s):
         end = time.monotonic() + timeout_s
