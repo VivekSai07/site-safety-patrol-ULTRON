@@ -27,13 +27,14 @@ or stale `control/active_source` is treated as autonomy. It publishes `safety/mo
 | `zone_masks_tool` | Offline PatrolZone → mask PGM/YAML. |
 | `config/nav2_{sim,real}.yaml` | NavFn + RotationShim/RPP, keepout + speed filters, optional STVL (`use_stvl`). In real, spin/backup are not loaded. |
 | `config/collision_monitor.yaml` | Stop polygon plus footprint APPROACH circle (PROPOSED, sim footprint; real TO_VERIFY). |
-| `sim_glue`, `sim_nav_cases` | **TEMPORARY** legacy-sim glue and the N1/N2 full-chain case runner (until Agents F/C deliver). |
+| `sim_nav_cases` | N1/N2 full-chain case runner: starts the integrated `sim.launch.py mode:=nav map:=<saved map>` (F's ultron_b2_sim, default `odom_source:=mola`) and scores cases against `sim/ground_truth/base_pose`. The temporary legacy `sim_glue` was removed at integration. |
 
-Run the sim cases (dev image, non-zero domain, localhost; the map comes from `scripts/sim-slam.sh` / `run_mapping`):
+Run the sim cases (dev image, domain 71, localhost; the map is a C map-store version saved by a
+`sim.launch.py mode:=mapping` run from the default start pose, e.g. `$ULTRON_MAP_ROOT/<map_id>/v1`):
 
 ```bash
 ROS_LOCALHOST_ONLY=1 PYTHONPATH=$REPO/src:$PYTHONPATH \
-  install/ultron_b2_navigation/lib/ultron_b2_navigation/sim_nav_cases ../runs/b2_stack/d/nav_X --map ../runs/b2_stack/d/map_seed7
+  install/ultron_b2_navigation/lib/ultron_b2_navigation/sim_nav_cases runs/integration/nav_X --map $ULTRON_MAP_ROOT/<map_id>/v1
 ```
 
 Simulation results are not hardware evidence. Polygons, limits and the real footprint are PROPOSED or TO_VERIFY.

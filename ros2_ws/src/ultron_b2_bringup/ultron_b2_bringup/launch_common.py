@@ -120,3 +120,24 @@ def placeholder_launch(component, owner):
 
 
 OWNERS = dict(SUB_LAUNCHES)
+
+
+def saved_map_paths(cfg):
+    """(map_yaml, map_meta) for nav/control from ``map:=`` (C's map store) unless given explicitly.
+
+    Keeps Nav2's static map, the zone masks and the gate's map id on the same saved map that slam_toolbox
+    localizes against. Returns empty strings when no ``map:=`` is set (Nav2 then uses the live ``map``).
+    """
+    map_yaml, map_meta, ref = cfg.get('map_yaml', ''), cfg.get('map_meta', ''), cfg.get('map', '')
+    if ref and not (map_yaml and map_meta):
+        import os
+        from ultron_b2_localization import map_store
+        from ultron_b2_localization.map_manager_node import default_map_root, parse_map_ref
+        map_id, version, path = parse_map_ref(ref)
+        if path and os.path.isdir(path):
+            path = os.path.join(path, 'map.yaml')
+        root = os.path.expanduser(cfg.get('map_root', '') or default_map_root())
+        directory = map_store.resolve(root, map_id, version, path)
+        map_yaml = map_yaml or str(directory / 'map.yaml')
+        map_meta = map_meta or str(directory)
+    return map_yaml, map_meta

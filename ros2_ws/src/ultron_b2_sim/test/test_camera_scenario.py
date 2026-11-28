@@ -109,7 +109,7 @@ def test_contract_topics():
     base = {'clock': '/clock', 'points': '/ultron/sim/lidar/points', 'localization_state': 'x'}
     sim = contract_topics(base, 'sim')
     assert sim['points'] == 'sensors/lidar/points' and sim['odom'] == 'state/odom'
-    assert sim['cmd_vel'] == 'cmd_vel' and sim['scan'] == 'sensors/scan'
+    assert sim['cmd_vel'] == 'sim/cmd_vel' and sim['scan'] == 'sensors/scan'
     assert sim['ground_truth'].startswith('sim/ground_truth/')
     mola = contract_topics(base, 'mola', scan_on_contract=False)
     assert mola['odom'] == 'sim/leg_odom' and mola['scan'] == 'sim/scan'

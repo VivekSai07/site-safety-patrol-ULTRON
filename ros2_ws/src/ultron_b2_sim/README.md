@@ -19,7 +19,7 @@ walking, real perception or inspection results.
 | `sim/ground_truth/base_pose` | PoseStamped | 50 Hz | frame `ultron_sim_world`, EVALUATION ONLY, never on TF |
 | `sim/ground_truth/ladders` | String JSON (latched) | on change + 1 Hz | `ultron.sim_ladder_truth/v1`; includes `odom_origin_world` |
 | `sim/bridge_status` | String JSON (latched) | 1 Hz | includes camera render stats |
-| `cmd_vel` (input) | Twist | — | gated command; motion_gate is the sole publisher in the stack |
+| `sim/cmd_vel` (input) | Twist | — | from the control `sim_driver`, which forwards motion_gate's gated `cmd_vel`; nothing else feeds the sim |
 | `sim/scenario` (service) | ultron_b2_interfaces/srv/SimScenario | — | obstacle, lidar_blackout, lidar_dropout, kidnap, ladder_move/hide/show |
 | `sim/sim_control` (input) | String JSON | — | the base bridge's original test hook |
 

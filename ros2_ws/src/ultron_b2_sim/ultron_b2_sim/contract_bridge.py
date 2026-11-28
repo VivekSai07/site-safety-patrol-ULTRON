@@ -11,7 +11,8 @@ contract topic names of docs/b2_ros_stack/PLAN.md §3.2 and adds:
 * ``sim/scenario`` (``ultron_b2_interfaces/srv/SimScenario``) obstacle / blackout / dropout /
   kidnap / ladder move-hide-show hooks
 
-Velocity input is the gated ``cmd_vel`` only (``motion_gate`` is its sole publisher in the stack).
+Velocity input is ``sim/cmd_vel`` only, published by the control ``sim_driver`` from the gated ``cmd_vel``
+(``motion_gate`` is the sole ``cmd_vel`` publisher in the stack; nothing else feeds the simulator).
 ``base_link -> sensor`` TF belongs to robot_state_publisher, so the bridge's own static
 ``base_link -> lidar_link`` is disabled; ``odom -> base_link`` is published only when
 ``--odom-source sim``. Kinematic base motion, not validated walking.
@@ -51,7 +52,7 @@ def contract_topics(base_topics, odom_source='sim', scan_on_contract=True):
         # Simulated leg odometry is the contract odometry only when it is the selected authority.
         'odom': 'state/odom' if odom_source == 'sim' else 'sim/leg_odom',
         'ground_truth': 'sim/ground_truth/base_pose',
-        'cmd_vel': 'cmd_vel',
+        'cmd_vel': 'sim/cmd_vel',
         'status': 'sim/bridge_status',
         'sim_control': 'sim/sim_control',
     })

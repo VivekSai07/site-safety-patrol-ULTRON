@@ -1,7 +1,7 @@
 """Sub-launch `control` (Agent D): twist_mux -> collision_monitor -> motion_gate (sole cmd_vel publisher)
 -> sim_driver (sim) | b2_sport_bridge (live; hardware_enable from the stack, default false).
 
-Runs inside the mode namespace pushed by the parent. Optional parent launch arguments: map_meta,
+Runs inside the mode namespace pushed by the parent. Optional parent launch arguments: map_meta (default: the `map:=` directory),
 teleop_requires_localization (default true, fail-closed).
 """
 from ament_index_python.packages import get_package_share_directory
@@ -9,7 +9,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 
-from ultron_b2_bringup.launch_common import SUB_ARGS
+from ultron_b2_bringup.launch_common import SUB_ARGS, saved_map_paths
 from ultron_b2_bringup.modes import MODES
 
 
@@ -26,7 +26,7 @@ def _include(context):
         'hardware_enable': 'true' if live and cfg.get('hardware_enable') == 'true' else 'false',
         'bridge_target': 'robot' if live else 'mock',
         'teleop_requires_localization': cfg.get('teleop_requires_localization', 'true') or 'true',
-        'map_meta': cfg.get('map_meta', ''),
+        'map_meta': saved_map_paths(cfg)[1],
         'use_sim_time': cfg.get('use_sim_time', ''),
     }.items())]
 

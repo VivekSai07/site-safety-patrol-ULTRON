@@ -2,39 +2,39 @@
 
 Chain under test: NavigateToView (nav/navigate_to_view) -> nav_contract_server -> Nav2 -> nav/cmd_vel_raw
 -> velocity_smoother -> control/in/autonomy -> twist_mux -> collision_monitor -> motion_gate -> cmd_vel
--> sim_driver -> sim/cmd_vel -> legacy simulator. Teleop cases use control/in/teleop on the same chain.
+-> sim_driver -> sim/cmd_vel -> ultron_b2_sim. Teleop cases use control/in/teleop on the same chain.
 
-Until Agents F (ultron_b2_sim) and C (localization) deliver, the legacy simulator, slam_toolbox
-localization and the JSON LocalizationState monitor are started here and bridged by ``sim_glue``.
-Ground truth is read ONLY to score cases; it never feeds navigation, the gate or localization.
-Thresholds are the pre-registered ones of ``ultron.autonomy.run_navigation.ACCEPT`` (SAHIL_NAV_PLAN).
+The whole integrated stack is started here: ``ros2 launch ultron_b2_bringup sim.launch.py mode:=nav
+map:=MAP_DIR`` (F's ultron_b2_sim, B's preprocess, C's odometry/slam_toolbox localization/monitor, D's
+nav + control). MAP_DIR is a saved map from C's map store, built by mapping from the default sim start
+pose, so the map frame is the world pose ``--origin`` (default sim start 1.6, 1.5, pi/2).
+Ground truth (``sim/ground_truth/base_pose``) is read ONLY to score cases; it never feeds navigation,
+the gate or localization. Thresholds are the pre-registered ones of
+``ultron.autonomy.run_navigation.ACCEPT`` (SAHIL_NAV_PLAN).
 
-  sim_nav_cases OUT --map MAP_DIR [--cases a,b] [--rate 1.0]
+  sim_nav_cases OUT --map MAP_DIR [--cases a,b] [--rate 1.0] [--odom-source mola]
 """
 import argparse
 import json
 import math
 import os
 from pathlib import Path
-import shutil
 import signal
 import subprocess
 import sys
 import time
 
-import yaml
-
 from .ultron_path import ensure_ultron
 
 ensure_ultron()
-from ultron.autonomy.config import CONFIG_DIR, load_sim_slam_config  # noqa: E402
+from ultron.autonomy.config import load_sim_slam_config  # noqa: E402
 from ultron.autonomy.eval_slam import compose  # noqa: E402
 from ultron.autonomy.navigation_contract import make_goal  # noqa: E402
-from ultron.autonomy.run_localization import LOC_PARAMS, inverse  # noqa: E402
+from ultron.autonomy.run_localization import inverse  # noqa: E402
+from ultron.autonomy.sim_bridge import DEFAULT_START  # noqa: E402
 from ultron.autonomy.run_navigation import ACCEPT  # noqa: E402
 
 NS = '/ultron/sim'
-SIM_CMD_VEL = f'{NS}/sim/cmd_vel'
 ALL_CASES = ['reach_near', 'reach_far', 'reject_occupied', 'reject_outside', 'unreachable', 'new_obstacle',
              'cancel', 'operator_inhibit', 'localization_loss', 'teleop_hold', 'teleop_collision',
              'teleop_no_localization']
@@ -56,19 +56,8 @@ def stop(proc, timeout=20):
     return proc.returncode
 
 
-def legacy_sim_config(out):
-    """Copy of config/autonomy/sim_slam.yaml whose cmd_vel input is the sim_driver output topic."""
-    data = yaml.safe_load((CONFIG_DIR / 'sim_slam.yaml').read_text())
-    data['topics']['cmd_vel'] = SIM_CMD_VEL
-    data['lidar_profile'] = str((CONFIG_DIR / data['lidar_profile']).resolve())
-    path = out / 'sim_slam_b2_chain.yaml'
-    path.write_text(yaml.safe_dump(data, sort_keys=False))
-    load_sim_slam_config(path)                   # validates (namespace-only topics etc.)
-    return path
-
-
 class Runner:
-    def __init__(self, map_dir):
+    def __init__(self, map_dir, origin):
         import rclpy
         from rclpy.action import ActionClient
         from rclpy.executors import SingleThreadedExecutor
@@ -87,7 +76,7 @@ class Runner:
         self.ex.add_node(n)
         meta = json.loads((Path(map_dir) / 'map_meta.json').read_text())
         self.map_id, self.map_version = meta['map_id'], int(meta['map_version'])
-        self.origin = tuple(meta['sim_run']['start_pose_world'])
+        self.origin = tuple(meta.get('sim_run', {}).get('start_pose_world', origin))
         self.params = load_sim_slam_config().navigation
         rel = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
@@ -97,14 +86,14 @@ class Runner:
             depth=1, reliability=ReliabilityPolicy.RELIABLE))
         self.hold_pub = n.create_publisher(Bool, 'ops/hold', QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE))
         self.teleop_pub = n.create_publisher(Twist, 'control/in/teleop', 10)
-        self.control_pub = n.create_publisher(String, f'{NS}/sim_control', rel)
+        self.control_pub = n.create_publisher(String, 'sim/sim_control', rel)
         self.truth, self.gate_log, self.feedback = [], [], []
         self.chain = {'nav/cmd_vel_raw': [], 'control/in/autonomy': [], 'control/cmd_vel_muxed': [],
                       'control/cmd_vel_safe': [], 'cmd_vel': []}
         self.bridge_status, self.loc = {}, None
-        n.create_subscription(PoseStamped, f'{NS}/ground_truth/pose', self._on_truth, rel)
+        n.create_subscription(PoseStamped, 'sim/ground_truth/base_pose', self._on_truth, rel)
         n.create_subscription(MotionGateStatus, 'safety/motion_gate', self._on_gate, 10)
-        n.create_subscription(String, f'{NS}/bridge_status', lambda m: setattr(self, 'bridge_status',
+        n.create_subscription(String, 'sim/bridge_status', lambda m: setattr(self, 'bridge_status',
                                                                             json.loads(m.data)), latched)
         n.create_subscription(LocalizationState, 'state/localization', lambda m: setattr(self, 'loc', m), rel)
         for topic in self.chain:
@@ -419,9 +408,13 @@ class Runner:
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('out', type=Path)
-    parser.add_argument('--map', type=Path, required=True)
+    parser.add_argument('--map', type=Path, required=True, help='saved map directory (C map store v<N>)')
     parser.add_argument('--cases', default=','.join(ALL_CASES))
     parser.add_argument('--rate', type=float, default=1.0)
+    parser.add_argument('--odom-source', default='mola', choices=['sim', 'mola', 'kiss'])
+    parser.add_argument('--origin', default=','.join(str(v) for v in DEFAULT_START),
+                        help='world pose x,y,yaw of the map frame (mapping start pose)')
+    parser.add_argument('--launch-arg', action='append', default=[], help='extra sim.launch.py key:=value')
     args = parser.parse_args(argv)
     cases = [c for c in args.cases.split(',') if c]
     if set(cases) - set(ALL_CASES):
@@ -431,38 +424,24 @@ def main(argv=None):
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=False)
     map_dir = args.map.resolve()
+    origin = tuple(float(v) for v in args.origin.split(','))
     env = dict(os.environ)
     repo_src = str(Path(sys.modules['ultron'].__file__).resolve().parents[1])
     env['PYTHONPATH'] = repo_src + os.pathsep + env.get('PYTHONPATH', '')
-    py = sys.executable
-    sim_cfg = legacy_sim_config(out)
-    exe = lambda pkg, name: str(Path(shutil.which('ros2')).parents[1] / 'lib' / pkg / name)  # noqa: E731
-    from ament_index_python.packages import get_package_prefix
-    own = lambda pkg, name: str(Path(get_package_prefix(pkg)) / 'lib' / pkg / name)  # noqa: E731
+    launch = ['ros2', 'launch', 'ultron_b2_bringup', 'sim.launch.py', 'mode:=nav', f'map:={map_dir}',
+              f'odom_source:={args.odom_source}', 'initial_pose:=0,0,0', f'sim_rate:={args.rate}',
+              *args.launch_arg]
+    (out / 'launch_cmd.txt').write_text(' '.join(launch) + '\n')
     procs = {}
     try:
-        procs['slam'] = spawn([exe('slam_toolbox', 'localization_slam_toolbox_node'), '--ros-args', '--params-file',
-                               str(LOC_PARAMS), '-r', '__node:=slam_toolbox', '-p', f'map_file_name:={map_dir / "map"}',
-                               '-p', 'map_start_pose:=[0.0,0.0,0.0]'], out / 'slam_toolbox.log', env)
-        procs['monitor'] = spawn([py, '-m', 'ultron.autonomy.localization_monitor', '--map', str(map_dir),
-                                  '--out', str(out)], out / 'monitor.log', env)
-        procs['glue'] = spawn([own('ultron_b2_navigation', 'sim_glue')], out / 'glue.log', env)
-        procs['nav'] = spawn(['ros2', 'launch', 'ultron_b2_navigation', 'navigation.launch.py',
-                              f'map_yaml:={map_dir / "map.yaml"}', f'map_meta:={map_dir}', 'use_sim_time:=true'],
-                             out / 'navigation.log', env)
-        procs['control'] = spawn(['ros2', 'launch', 'ultron_b2_control', 'control.launch.py', f'map_meta:={map_dir}',
-                                  'use_sim_time:=true'], out / 'control.log', env)
-        time.sleep(6.0)
-        procs['sim'] = spawn([py, '-m', 'ultron.autonomy.sim_bridge', '--config', str(sim_cfg), '--rate', str(args.rate),
-                              '--duration', '3000', '--out', str(out / 'sim')], out / 'sim_bridge.log', env)
-        time.sleep(2.0)
-        for name, proc in procs.items():
-            if proc.poll() is not None:
-                raise RuntimeError(f'{name} exited early (code {proc.returncode}); see {out}')
+        procs['stack'] = spawn(launch, out / 'stack.log', env)
+        time.sleep(8.0)
+        if procs['stack'].poll() is not None:
+            raise RuntimeError(f'stack launch exited early (code {procs["stack"].returncode}); see {out}')
         import rclpy
         rclpy.init()
         try:
-            runner = Runner(map_dir)
+            runner = Runner(map_dir, origin)
             print('waiting for VALID localization, nav/navigate_to_view and Nav2 startup ...', flush=True)
             runner.wait_ready()
             plan = {'reach_near': lambda: runner.arrive((2.5, 5.5), 0.0),
@@ -478,7 +457,7 @@ def main(argv=None):
                 runner.case(name, plan[name])
             summary = {'schema': 'ultron.b2_nav_chain_cases/v1', 'map_id': runner.map_id,
                        'map_version': runner.map_version, 'accept': ACCEPT, 'chain': __doc__.split('\n\n')[1],
-                       'glue': 'legacy sim_bridge + slam_toolbox + localization_monitor via sim_glue (pending F/C)',
+                       'stack': ' '.join(launch), 'odom_source': args.odom_source, 'origin_world': origin,
                        'cases': runner.results, 'gate_log_len': len(runner.gate_log),
                        'verdict': 'PASS' if all(r['verdict'] == 'PASS' for r in runner.results) else 'FAIL'}
             (out / 'nav_cases.json').write_text(json.dumps(summary, indent=2, default=str))
@@ -489,9 +468,8 @@ def main(argv=None):
         finally:
             rclpy.shutdown()
     finally:
-        for name in ('sim', 'control', 'nav', 'glue', 'monitor', 'slam'):
-            if name in procs:
-                stop(procs[name])
+        for proc in procs.values():
+            stop(proc, timeout=40)
 
 
 if __name__ == '__main__':

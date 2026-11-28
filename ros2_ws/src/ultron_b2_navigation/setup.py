@@ -27,7 +27,6 @@ setup(
         'nav_contract_server = ultron_b2_navigation.nav_contract_server:main',
         'zone_mask_server = ultron_b2_navigation.zone_mask_server:main',
         'zone_masks_tool = ultron_b2_navigation.zone_masks_tool:main',
-        'sim_glue = ultron_b2_navigation.sim_glue:main',
         'sim_nav_cases = ultron_b2_navigation.sim_nav_cases:main',
     ]},
 )

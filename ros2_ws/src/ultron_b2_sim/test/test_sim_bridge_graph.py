@@ -1,8 +1,8 @@
 """Graph test: the contract sim bridge on domain 71 publishes contract topics, reacts to cmd_vel,
 renders valid images and serves scenario hooks. SIMULATION ONLY.
 
-The test publishes a Twist directly on ``/ultron/sim/cmd_vel``: in the integrated stack Agent D's
-motion_gate is the sole publisher of that topic; this isolated test stands in for it.
+The test publishes a Twist directly on ``/ultron/sim/sim/cmd_vel``: in the integrated stack only the control
+sim_driver (fed by motion_gate's gated ``cmd_vel``) publishes it; this isolated test stands in for it.
 """
 import json
 import os
@@ -135,9 +135,9 @@ def test_contract_topics_rates_images_and_cmd_vel(bridge):
     assert ('base_link', 'lidar_link') not in tf_children
     assert truth and truth[-1]['provenance'] == 'SIMULATION_GROUND_TRUTH_EVALUATION_ONLY'
 
-    # cmd_vel reaction (test stand-in for motion_gate).
+    # sim/cmd_vel reaction (test stand-in for sim_driver).
     odom_topic = f'{NS}/state/odom'
-    pub = node.create_publisher(Twist, f'{NS}/cmd_vel', reliable)
+    pub = node.create_publisher(Twist, f'{NS}/sim/cmd_vel', reliable)
     start = last[odom_topic].pose.pose.position
     x0, y0 = start.x, start.y
     cmd = Twist()
