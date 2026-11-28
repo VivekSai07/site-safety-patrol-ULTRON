@@ -200,6 +200,35 @@ full-system simulation acceptance, verified real B2 transport, and the
 independent hardware checks have been recorded. Earlier scoped component
 tests can proceed only with their own prerequisites and authorization.
 
+#### Phase 4 Nav2 parameter comparison
+
+Prepare these five candidate settings for each branch. Start with the
+checked-in `config/autonomy/nav2_params.yaml` and change only the listed
+values. Apply inflation changes to both local and global costmaps. Keep
+velocity-scaled lookahead disabled for this comparison.
+
+| Profile | `FollowPath.lookahead_dist` (m) | Inflation radius (m) |
+|---|---:|---:|
+| Baseline | 0.60 | 1.00 |
+| Shorter lookahead | 0.50 | 1.00 |
+| Longer lookahead | 0.70 | 1.00 |
+| Smaller inflation radius | 0.60 | 0.90 |
+| Larger inflation radius | 0.60 | 1.10 |
+
+These are trial values. During N2, verify the effective parameters, planned
+path and gated command output for each profile with actuation isolated.
+N3 prerequisites apply to every physical trial. Use the same marked start,
+goal, map and route on a given branch. Hold the measured footprint, goal
+tolerances, cost scaling, motion limits and independent stop protections
+constant. Present one profile and route for approval at a time. Skip any
+profile whose shadow plan fails the approved clearance and stopping limits.
+
+For each physical trial, record minimum measured clearance, arrival error,
+stop time and distance, oscillations or stalls, operator intervention and
+goal outcome. Confirm the result with the operator before changing
+profiles. Select a profile only from runs that meet all approved limits,
+using completion and tracking consistency to compare them.
+
 ### Slot order and evidence reuse
 
 1. Start with `sahil/sim-slam-nav2`. Complete offline preflight, stationary
