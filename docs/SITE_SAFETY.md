@@ -1,5 +1,11 @@
 # Site safety sweep (fire / first aid / escape routes / PPE)
 
+![ULTRON safety sweep](images/ultron-safety-sweep.gif)
+
+| PPE OK | PPE violation (flagged) |
+|---|---|
+| ![helmet and vest](images/safety-ppe-ok.jpg) | ![no helmet, no vest](images/safety-ppe-violation.jpg) |
+
 Beyond the ladder protocol, patrol 0 can sweep nesseler-style site-safety
 stations. Checklists are data: `src/ultron/assets/site_safety_v1/` mirrors
 `inspection_v1` (rubric, strict response schema, system + section prompts) and
