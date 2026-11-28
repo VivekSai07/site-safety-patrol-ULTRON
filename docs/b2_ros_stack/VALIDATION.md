@@ -414,7 +414,17 @@ _Not assembled. Reviewer decision: pending (human)._
   defers replacement goals until the previous result, drops invalidated deferred goals, and enters
   AWAIT_OPERATOR if a cancelled goal does not acknowledge a stop. A delayed-cancel mock regression
   passed both acknowledged and unconfirmed-stop cases; the mission package reported 63 passed and
-  one skipped. This fix has not been validated in the full integrated simulation.
+  one skipped.
+- Post-merge integrated mission attempt at `bac1bf7`, using the saved MOLA map and
+  isolated simulation: **failed** before a moving inspection goal could be observed, so
+  the moving-HOLD and full mission assertions did not run. The controller's map-to-base TF
+  lookup stayed at approximately 22.85 s as simulation time advanced; Nav2 logged goal
+  success despite that TF error, while the navigation contract rejected distant inspection
+  goals as not settled. One localization-stale HOLD triggered cancellation; the log shows
+  the next Nav2 goal was sent after the preceding result, with no `GOAL_ALREADY_ACTIVE`
+  observed. This is partial evidence, not full validation of the cancellation fix. The
+  mission ended with gaps and no inspection capture; the freeze's cause remains unproven.
+  Artifacts are local under `ros2_ws/runs/sim_integrated_result_bac1bf7/`.
 - Replay checkpoint `7d7444f` from `om/b2-ros-stack-replay-accept` is integrated.
   Its 32 tests passed; the replay clock guard reports stale
   localization when the clock stops, and measured queue-overflow drops fell to zero. One
