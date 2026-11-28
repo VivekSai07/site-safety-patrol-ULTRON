@@ -1,0 +1,26 @@
+# MOLA-LO (mola_lidar_odometry 3.6.0, GPLv3; runs as its own process `mola-cli`, never linked).
+# Read by launch/odometry.launch.py: environment = common + profiles[calibration_profile].
+# Owner: Agent C. Environment variables consumed by the installed
+# /opt/ros/humble/share/mola_lidar_odometry/mola-cli-launchs/lidar_odometry_ros2.yaml.
+# Relative topic names resolve in the bringup namespace (verified: /ultron/replay/...).
+# Output: TF odom->base_link (direct mode, reference frame = odom; no map frame from MOLA) and
+# nav_msgs/Odometry `lidar_odometry/pose`, remapped by the launch to `state/odom`.
+common:
+  MOLA_WITH_GUI: "false"
+  MOLA_LIDAR_TOPIC: sensors/lidar/points_filtered
+  MOLA_LIDAR_QOS_RELIABILITY: reliable
+  MOLA_IMU_TOPIC: ""                # IMU not fused (bag IMU frame TO_VERIFY); empty disables the subscription
+  MOLA_GNSS_TOPIC: ""
+  MOLA_GPS_FIX_TOPIC: ""
+  MOLA_TF_BASE_LINK: base_link
+  MOLA_TF_FOOTPRINT_LINK: ""        # robot_state_publisher owns base_footprint; MOLA must not publish it
+  MOLA_LOCALIZ_USE_REP105: "false"  # direct mode: reference_frame -> base_link
+  MOLA_TF_MAP: odom                 # ... with reference frame odom => TF odom->base_link only
+  MOLA_LO_PUBLISH_REF_FRAME: odom
+  MOLA_NAVSTATE_ENFORCE_PLANAR_MOTION: "true"
+  MOLA_PUBLISH_LOCAL_MAP: "false"
+  MOLA_STATE_ESTIMATOR_YAML: state-estimator-params/state-estimation-simple.yaml
+  MOLA_ODOMETRY_PIPELINE_YAML: pipelines/lidar3d-default.yaml
+profiles:
+  sim: {}
+  real: {}

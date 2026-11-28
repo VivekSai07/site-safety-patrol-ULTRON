@@ -1,0 +1,20 @@
+# KISS-ICP odometry node (kiss-icp 1.2.3, pip). Owner: Agent C. Values PROPOSED; see VALIDATION.md (Agent C).
+# Profile keys: `sim` (simulated Helios-32, self-filtered by the bridge) and `real` (Helios-32 bag / robot).
+# Read by launch/odometry.launch.py (not a ROS parameter file): parameters + profiles[calibration_profile].
+parameters:
+  points_topic: sensors/lidar/points_filtered
+  odom_topic: state/odom
+  odom_frame: odom
+  base_frame: base_link
+  publish_tf: true
+  planar: true               # 2D stack: publish x, y, yaw only
+  max_range: 30.0
+  voxel_size: 0.3            # KISS default would be max_range/100 = 0.3
+  max_points_per_voxel: 20
+  deskew: true               # per-point time field: sim `time`, Helios `timestamp`
+  initial_threshold: 2.0
+  min_motion_th: 0.1
+  points_reliable: true
+profiles:
+  sim: {min_range: 0.3}
+  real: {min_range: 1.0}       # self returns inside ~1 m in the bag (BAG_FACTS.md); B's filter may remove them
