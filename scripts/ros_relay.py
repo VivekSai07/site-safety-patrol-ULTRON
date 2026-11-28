@@ -6,7 +6,10 @@ Run where the robot's ROS 2 topics are visible (Humble or Jazzy), in a shell wit
     python3 scripts/ros_relay.py --to GPU_MACHINE:5600
 
 It needs only rclpy, tf2_ros and numpy. It subscribes and sends; it never publishes a topic,
-calls a service or commands the robot. On the other end: `python -m ultron.pipeline patrol
+calls a service or commands the robot. With `--record DIR` it also starts `ros2 bag record`
+(`ultron.recording`) as a separate, lower-priority process that writes a bag of the robot's
+topics on this machine; the recorder only subscribes (rosbag2 itself announces split events on
+/events/write_split), and if it fails the relay carries on. On the other end: `python -m ultron.pipeline patrol
 --source relay:5600`. Topic defaults are those of the hackathon B2's recordings.
 
 Each colour frame goes out with the newest depth image, both cameras' intrinsics, the
@@ -15,6 +18,7 @@ localisation publishes one. While TF has no pose, lidar clouds are forwarded too
 pipeline can compute odometry itself.
 """
 import argparse
+import logging
 import math
 import socket
 import sys
@@ -34,6 +38,7 @@ from sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from ultron.protocol.relay_wire import cloud_message, frame_message
+from ultron.recording import add_arguments as add_record_arguments, recorder_from_args
 
 MAX_DEPTH_AGE = 0.1  # seconds: an older depth image is not sent with a colour frame
 
@@ -150,7 +155,15 @@ def main():
     parser.add_argument("--cloud", default="/scan_cloud", help="lidar cloud for odometry; empty to disable")
     parser.add_argument("--map-frame", default="map")
     parser.add_argument("--base-frame", default="base_link")
+    parser.add_argument("--record", metavar="DIR", default=None,
+                        help="also record a ROS 2 bag into DIR/<time>/ (on this machine's disk)")
+    add_record_arguments(parser, prefix="record-")
     args, ros_args = parser.parse_known_args()
+    recorder = None
+    if args.record:  # before rclpy starts its threads: the recorder is a forked child
+        logging.basicConfig(level=logging.INFO, format="[recorder] %(levelname)s %(message)s")
+        recorder = recorder_from_args(args.record, args, prefix="record_")
+        recorder.start()
     rclpy.init(args=ros_args)
     node = Relay(args)
     try:
@@ -158,6 +171,8 @@ def main():
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        if recorder is not None:
+            recorder.stop()
         node.destroy_node()
         rclpy.try_shutdown()
 
