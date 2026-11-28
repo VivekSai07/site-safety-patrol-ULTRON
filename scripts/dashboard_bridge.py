@@ -9,9 +9,16 @@ The dashboard has no user authentication, including on localhost.
   dashboard -> ROS: each goal set on the map becomes a nav2 NavigateToPose action goal; progress
                     (ACCEPTED / SUCCEEDED / FAILED / CANCELED) is reported back to the map.
 
+  exploration:      Start launches the explore node (`explore_command`) as a child process, Pause / Resume
+                    publish explore/resume false / true, Finish stops the node; each step is confirmed to
+                    the dashboard (EXPLORING, PAUSED, MAPPED, or FAILED with why).
+  fence:            /map_fenced (the map with everything outside the dashboard's fence occupied, for the
+                    explorer's costmap_topic) and /keepout_mask (for Nav2's KeepoutFilter).
+  obstacles:        the dashboard's object footprints as /ultron/object_obstacles (PointCloud2).
+
 A new dashboard goal cancels the running one, like RViz's 2D Goal Pose. Goals that existed before the
-bridge started are ignored, so a restart never replays an old goal. The dashboard only accepts goals
-when started with --goals.
+bridge started are ignored, so a restart never replays an old goal, nor an old exploration request. The
+dashboard only accepts goals when started with --goals. Contract: docs/EXPLORATION_CONTRACT.md.
 
 See docs/dashboard_nav_goal.md for the simulation-only procedure and limits.
 """
@@ -31,9 +38,18 @@ from rclpy.action import ActionClient
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from sensor_msgs.msg import PointCloud2, PointField
+from std_msgs.msg import Bool
 from tf2_ros import Buffer, TransformException, TransformListener
 
-from ultron.dashboard.ros_link import ACTION_STATUS, Dashboard, grid_png, quaternion_from_yaw, yaw_from_quaternion
+from ultron.dashboard.ros_link import (ACTION_STATUS, Dashboard, Explorer, explore_on_connect, explore_request, fence_mask,
+                                       fenced_grid, grid_png, keepout_grid, obstacle_cloud, quaternion_from_yaw,
+                                       yaw_from_quaternion)
+
+try:  # explore/status; not installed everywhere, then the explorer's state is inferred from its process
+    from explore_lite_msgs.msg import ExploreStatus
+except ImportError:
+    ExploreStatus = None
 
 
 class Outbox(threading.Thread):
@@ -64,7 +80,18 @@ class DashboardBridge(Node):
         p = {name: self.declare_parameter(name, default).value for name, default in [
             ('dashboard_url', 'http://127.0.0.1:8000'), ('map_topic', '/map'), ('map_frame', 'map'),
             ('base_frame', 'base_link'), ('action_name', 'navigate_to_pose'), ('pose_rate_hz', 5.0),
-            ('map_min_period_s', 2.0)]}
+            ('map_min_period_s', 2.0),
+            # a missing Nav2 is a FAILED goal after this long, never a goal that hangs in SENT
+            ('nav_wait_s', 3.0), ('nav_accept_timeout_s', 10.0),
+            # explore_lite's own launch file reads its package params (costmap_topic: map, i.e. unfenced);
+            # point it at /map_fenced with a params file or `ros2 run` (docs/dashboard_nav_goal.md)
+            ('explore_command', 'ros2 launch explore_lite explore.launch.py use_sim_time:=false'),
+            ('explore_resume_topic', 'explore/resume'), ('explore_status_topic', 'explore/status'),
+            ('explore_ready_wait_s', 30.0),
+            ('fenced_map_topic', '/map_fenced'), ('keepout_mask_topic', '/keepout_mask'),
+            # explore_lite subscribes to its costmap without transient-local, so a late start needs a repeat
+            ('fenced_period_s', 2.0),
+            ('obstacles_topic', '/ultron/object_obstacles'), ('obstacles_period_s', 1.0)]}
         self.p = p
         self.dash = Dashboard(p['dashboard_url'])
         self.outbox = Outbox(self.get_logger())
@@ -76,6 +103,9 @@ class DashboardBridge(Node):
         self.lock = threading.Lock()
         self.active = None     # (seq, ClientGoalHandle) of the goal nav2 is executing
         self.latest_seq = None  # newest goal sent to nav2; anything older is cancelled on acceptance
+        self.waiting = None    # (goal, deadline): Nav2 not discovered yet; FAILED after nav_wait_s
+        self.sent_at = None    # (seq, time) a goal went to Nav2 and has no answer yet
+        self.cancelled = set()  # goal seqs the dashboard cancelled (a pause ended); stop them whenever seen
 
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(OccupancyGrid, p['map_topic'], self.on_map, qos)
@@ -88,6 +118,32 @@ class DashboardBridge(Node):
 
         self.nav = ActionClient(self, NavigateToPose, p['action_name'])
         self.create_timer(0.1, self.take_goal)
+
+        # exploration: requests run one at a time on their own thread, they wait for the explorer
+        self.resume_pub = self.create_publisher(Bool, p['explore_resume_topic'], 10)
+        self.explore_status = None  # (count, text) of the latest explore/status
+        if ExploreStatus is not None:
+            self.create_subscription(ExploreStatus, p['explore_status_topic'], self.on_explore_status, QoSProfile(
+                depth=10, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        self.explorer = Explorer(p['explore_command'], self.publish_resume, self.resume_pub.get_subscription_count,
+                                 self.report_exploration, self.get_explore_status if ExploreStatus else None,
+                                 ready_wait_s=p['explore_ready_wait_s'],
+                                 interrupted=lambda: not self.explore_jobs.empty())
+        self.explore_jobs = queue.Queue()
+        self.exploration = {'seq': 0, 'state': 'IDLE'}  # newest dashboard state seen
+        self.explore_seq = None  # newest request handled; None until the first connect (nothing is replayed)
+        threading.Thread(target=self.run_explorer, daemon=True).start()
+
+        # fence and obstacles, latched for late subscribers
+        latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.fenced_pub = self.create_publisher(OccupancyGrid, p['fenced_map_topic'], latched)
+        self.keepout_pub = self.create_publisher(OccupancyGrid, p['keepout_mask_topic'], latched)
+        self.obstacles_pub = self.create_publisher(PointCloud2, p['obstacles_topic'], latched)
+        self.slam_map, self.fence, self.obstacles = None, None, None
+        self.fence_dirty, self.fenced, self.mask_key, self.mask = False, None, None, None
+        self.create_timer(0.5, self.publish_fenced)
+        self.create_timer(p['fenced_period_s'], self.repeat_fenced)
+        self.create_timer(p['obstacles_period_s'], self.publish_obstacles)
         threading.Thread(target=self.listen, daemon=True).start()
         self.get_logger().info(f"bridging {p['dashboard_url']} <-> {p['map_topic']}, TF {p['map_frame']}->{p['base_frame']}, "
                                f"action {p['action_name']}")
@@ -100,12 +156,27 @@ class DashboardBridge(Node):
                 live = self.dash.live()
                 mission = live.get('mission')
                 self.set_mission(mission['id'] if mission and mission['status'] == 'RUNNING' else None)
+                with self.lock:  # unlike goals, the fence and obstacles are state: take them as they are now
+                    self.fence, self.fence_dirty = live.get('fence'), True
+                self.obstacles = self.dash.obstacles()
+                if live.get('exploration'):
+                    self.explore_jobs.put(('connect', live['exploration']))
                 for kind, data in self.dash.events():
                     if kind == 'goal' and data['status'] == 'SENT':
                         with self.lock:
                             self.pending_goal = data
+                    elif kind == 'goal' and data['status'] == 'CANCELED':
+                        with self.lock:
+                            self.cancelled.add(data['seq'])
                     elif kind == 'mission':
                         self.set_mission(data['id'] if data['status'] == 'RUNNING' else None)
+                    elif kind == 'exploration':
+                        self.explore_jobs.put(('event', data))
+                    elif kind == 'fence':
+                        with self.lock:
+                            self.fence, self.fence_dirty = data, True
+                    elif kind == 'obstacles':
+                        self.obstacles = data
             except Exception as error:
                 self.get_logger().warning(f'dashboard stream: {error}; retrying', throttle_duration_sec=10.0)
             time.sleep(2.0)
@@ -117,14 +188,33 @@ class DashboardBridge(Node):
     def take_goal(self):
         with self.lock:
             goal, self.pending_goal = self.pending_goal, None
-        if goal is None:
+            cancelled = set(self.cancelled)
+        if self.active and self.active[0] in cancelled:  # the dashboard ended it (a pause ended): stop it
+            self.get_logger().info(f'goal {self.active[0]}: cancelled by the dashboard')
+            self.active[1].cancel_goal_async()  # its CANCELED result is reported as usual
+        if self.sent_at and self.sent_at[1] < time.monotonic() - self.p['nav_accept_timeout_s']:
+            seq = self.sent_at[0]
+            self.sent_at = None
+            with self.lock:
+                self.cancelled.add(seq)  # if Nav2 accepts it after all, on_accepted cancels it
+            self.report(seq, 'FAILED', 'navigation did not answer')
+        retry, self.waiting = self.waiting, None
+        if goal is None:  # nothing new: try the goal still waiting for Nav2, if any
+            if retry is None:
+                return
+            goal = retry[0]
+        if goal['seq'] in cancelled:
             return
         seq = self.latest_seq = goal['seq']
         if self.active:
             self.active[1].cancel_goal_async()  # its CANCELED report hits the old seq and is ignored
             self.active = None
         if not self.nav.server_is_ready():
-            self.report(seq, 'FAILED', f"action server {self.p['action_name']} not available")
+            deadline = retry[1] if retry and retry[0]['seq'] == goal['seq'] else time.monotonic() + self.p['nav_wait_s']
+            if time.monotonic() < deadline:
+                self.waiting = (goal, deadline)  # try again next tick: discovery takes a moment after start
+            else:
+                self.report(seq, 'FAILED', 'navigation not available')
             return
         msg = NavigateToPose.Goal()
         pose = msg.pose
@@ -134,14 +224,19 @@ class DashboardBridge(Node):
         q = pose.pose.orientation
         q.x, q.y, q.z, q.w = quaternion_from_yaw(float(goal['yaw']))
         self.get_logger().info(f"goal {seq}: x={goal['x']:.2f} y={goal['y']:.2f} yaw={goal['yaw']:.2f} in {goal['frame_id']}")
+        self.sent_at = (seq, time.monotonic())
         self.nav.send_goal_async(msg).add_done_callback(lambda future: self.on_accepted(seq, future))
 
     def on_accepted(self, seq, future):
+        if self.sent_at and self.sent_at[0] == seq:
+            self.sent_at = None
         handle = future.result()
         if not handle.accepted:
             self.report(seq, 'FAILED', 'rejected by nav2')
             return
-        if seq != self.latest_seq:  # replaced while nav2 was still deciding
+        with self.lock:
+            cancelled = seq in self.cancelled
+        if seq != self.latest_seq or cancelled:  # replaced or cancelled while nav2 was still deciding
             handle.cancel_goal_async()
             return
         self.active = (seq, handle)
@@ -159,9 +254,105 @@ class DashboardBridge(Node):
         self.get_logger().info(f'goal {seq}: {status} {detail}'.rstrip())
         self.outbox.put('goal status', self.dash.goal_status, seq, status, detail)
 
+    # exploration -----------------------------------------------------------------------------
+    def run_explorer(self):
+        """Explorer thread: carry out requests in order; in between, watch the explorer process."""
+        while True:
+            try:
+                kind, data = self.explore_jobs.get(timeout=0.5)
+            except queue.Empty:
+                self.explorer.watch(self.exploration['seq'], self.exploration['state'])
+                continue
+            try:
+                self.explore_job(kind, data)
+            except Exception as error:  # keep the thread alive whatever happens
+                self.get_logger().error(f'exploration {kind}: {error}')
+
+    def explore_job(self, kind, data):
+        self.exploration = data
+        if kind == 'connect':
+            request = explore_on_connect(data, self.explore_seq, self.explorer.running())
+        else:
+            request = explore_request(data, self.explore_seq)
+        self.explore_seq = data['seq']
+        if request == 'stop':
+            self.get_logger().warning('dashboard shows no exploration: stopping the explorer')
+            self.explorer.stop()
+        elif request:
+            self.get_logger().info(f"exploration {data['seq']}: {request} (by {data.get('by') or '?'})")
+            self.explorer.handle(request, data['seq'], data.get('by', ''))
+
+    def publish_resume(self, flag):
+        self.resume_pub.publish(Bool(data=flag))
+
+    def on_explore_status(self, msg):
+        count = self.explore_status[0] + 1 if self.explore_status else 1
+        self.explore_status = (count, msg.status)
+        self.get_logger().info(f'explore/status: {msg.status}')
+
+    def get_explore_status(self):
+        return self.explore_status or (0, '')
+
+    def report_exploration(self, seq, state, detail='', by=''):
+        self.get_logger().info(f'exploration {seq}: {state} {detail}'.rstrip())
+        self.exploration = {**self.exploration, 'state': state}
+        try:  # straight from the explorer thread, in order; the outbox may drop work
+            self.dash.exploration_status(seq, state, detail, by)
+        except Exception as error:
+            self.get_logger().warning(f'dashboard exploration status failed: {error}')
+
+    # fence and obstacles ---------------------------------------------------------------------
+    def publish_fenced(self):
+        """/map_fenced and /keepout_mask, whenever the map or the fence changed."""
+        with self.lock:
+            msg, fence, dirty = self.slam_map, self.fence, self.fence_dirty
+            self.fence_dirty = False
+        if not dirty or msg is None:
+            return
+        info = msg.info
+        if fence and fence.get('frame_id', 'map') != msg.header.frame_id:
+            self.get_logger().warning(f"fence is in {fence['frame_id']}, the map in {msg.header.frame_id}: "
+                                      'fence ignored', throttle_duration_sec=30.0)
+            fence = None
+        if fence:
+            key = (info.width, info.height, info.resolution, info.origin.position.x, info.origin.position.y,
+                   tuple(map(tuple, fence['polygon'])))
+            if key != self.mask_key:
+                self.mask_key = key
+                self.mask = fence_mask(info.width, info.height, info.resolution, info.origin.position.x,
+                                       info.origin.position.y, fence['polygon'])
+            data, keepout = fenced_grid(msg.data, self.mask), keepout_grid(self.mask)
+        else:  # no fence: the explorer still reads /map_fenced, so pass the map through
+            data, keepout = list(msg.data), [0] * (info.width * info.height)
+        fenced, mask = OccupancyGrid(header=msg.header, info=info), OccupancyGrid(header=msg.header, info=info)
+        fenced.data, mask.data = data, keepout
+        self.fenced = (fenced, mask)
+        self.repeat_fenced()
+
+    def repeat_fenced(self):
+        if self.fenced:
+            self.fenced_pub.publish(self.fenced[0])
+            self.keepout_pub.publish(self.fenced[1])
+
+    def publish_obstacles(self):
+        """Repeated with a fresh stamp: an obstacle layer drops old observations and looks up TF at the stamp."""
+        obstacles = self.obstacles
+        if not obstacles:
+            return
+        count, data = obstacle_cloud(obstacles['cells'])
+        cloud = PointCloud2(height=1, width=count, is_bigendian=False, point_step=12, row_step=12 * count,
+                            is_dense=True, data=data,
+                            fields=[PointField(name=n, offset=4 * i, datatype=PointField.FLOAT32, count=1)
+                                    for i, n in enumerate('xyz')])
+        cloud.header.frame_id = obstacles['frame_id']
+        cloud.header.stamp = self.get_clock().now().to_msg()
+        self.obstacles_pub.publish(cloud)
+
     # ROS -> dashboard ------------------------------------------------------------------------
     def on_map(self, msg):
         self.latest_map = msg
+        with self.lock:
+            self.slam_map, self.fence_dirty = msg, True
 
     def flush_map(self):
         msg = self.latest_map
@@ -201,6 +392,7 @@ def main():
     except (KeyboardInterrupt, ExternalShutdownException):  # Ctrl+C, or SIGTERM from scripts/dashboard.sh
         pass
     finally:
+        node.explorer.stop()  # an orphaned explorer would keep driving the robot
         node.destroy_node()
         rclpy.try_shutdown()
 
