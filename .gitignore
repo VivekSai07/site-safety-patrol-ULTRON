@@ -33,6 +33,8 @@ src/ultron/detection_world/hall_scene.py.local
 data/
 # Text encoder that YOLOE downloads into the working directory on first use.
 mobileclip*.ts
+# CLIP image+text TorchScript that ultron.spatial downloads on first use.
+clip_*.ts
 # Expanded prompt manifests are reproducible; keep the requested ZIP artifact.
 /deliverables/ULTRON_inspection_prompt_pack_v1/
 # Knowledge-graph data directory (generated)

@@ -40,11 +40,14 @@ embedding dedup (does not prevent double inspection during a mission).
 
 ## Embedding model
 
-Reuse the MobileCLIP-B(LT) TorchScript that ultralytics already downloads for YOLOE
-text prompts (`mobileclip_blt.ts`, present on the GPU machine). It provides image and
-text encoders in a shared space — image–image cosine for re-ID, text–image cosine for
-place queries. No new model downloads; the only dependency group added is
-`spatial = ["torch>=2.2", "numpy>=1.24", "Pillow>=9"]`, all already installed.
+Reuse the ultralytics CLIP TorchScript assets. The repo's `mobileclip_blt.ts`
+(fetched for YOLOE text prompts) only scripts the text encoder — verified by
+loading it — so the embedder uses `clip_b32_datacomp.ts` (CLIP B/32, 289 MB,
+one-time download from ultralytics' asset store, cached in the repo root),
+which exports image and text encoders in a shared 512-d space. No new pip
+dependencies: the `spatial` extra is
+`["ultralytics>=8.3.0", "torch>=2.2", "numpy>=1.24", "Pillow>=9"]`,
+all already installed on the GPU machine.
 
 ## Architecture
 
@@ -123,8 +126,8 @@ last stored place, with ≥ **1 s** spacing (DimOS's distance/time thresholds, t
 for a patrol). `query_text(text, limit)` embeds the text and cosine-ranks both place
 frames and object samples, returning map coordinates, thumbnail path and timestamp.
 
-CLI: `python -m ultron.spatial query --site ctrl-hall "fire extinguisher"` prints
-ranked hits with `(x, y)`.
+CLI: `python -m ultron.spatial --store runs/sites/ctrl-hall/spatial query "fire extinguisher"`
+prints ranked hits with `(x, y)`.
 
 ## Error handling
 
