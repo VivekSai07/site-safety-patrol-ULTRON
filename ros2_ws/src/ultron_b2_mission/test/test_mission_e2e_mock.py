@@ -33,6 +33,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy  # noqa: E
 
 HERE = pathlib.Path(__file__).resolve().parent
 NAV_DELAY_S = 0.4
+NAV_CANCEL_DELAY_S = 2.0
 
 
 @pytest.fixture
@@ -69,6 +70,9 @@ class MockWorld(Node):
         self.asset_ids = asset_ids
         self.operator_enabled = True
         self.goals, self.cancels, self.holds, self.states = [], [], [], []
+        self.nav_busy = False
+        self.busy_rejections = 0
+        self.stop_acknowledged = True
         self.events = []
         self.map_pub = self.create_publisher(OccupancyGrid, 'map', latched)
         self.loc_pub = self.create_publisher(LocalizationState, 'state/localization', 10)
@@ -92,6 +96,10 @@ class MockWorld(Node):
             msg_to_navigation_goal(goal)
         except ContractError:
             return GoalResponse.REJECT
+        with self.lock:
+            if self.nav_busy:
+                self.busy_rejections += 1
+                return GoalResponse.REJECT
         return GoalResponse.ACCEPT
 
     def _publish_static(self):
@@ -144,6 +152,7 @@ class MockWorld(Node):
         NavigateToView = self.msgs['NavigateToView']
         g = gh.request
         with self.lock:
+            self.nav_busy = True
             self.goals.append({'goal_id': g.goal_id, 'reason': g.reason, 'map_id': g.map_id,
                                'map_version': g.map_version, 'frame': g.target.header.frame_id,
                                'x': g.target.pose.position.x, 'y': g.target.pose.position.y})
@@ -152,13 +161,18 @@ class MockWorld(Node):
             if gh.is_cancel_requested:
                 with self.lock:
                     self.cancels.append(g.goal_id)
+                time.sleep(NAV_CANCEL_DELAY_S)
+                with self.lock:
+                    self.nav_busy = False
                 gh.canceled()
-                return NavigateToView.Result(status='CANCELLED', reason='cancel requested')
+                return NavigateToView.Result(status='CANCELLED', reason='cancel requested',
+                                             stop_acknowledged=self.stop_acknowledged)
             time.sleep(0.02)
         q = g.target.pose.orientation
         with self.lock:
             self.robot = [g.target.pose.position.x, g.target.pose.position.y,
                           math.atan2(2 * q.w * q.z, 1 - 2 * q.z * q.z)]
+            self.nav_busy = False
         gh.succeed()
         return NavigateToView.Result(status='REACHED', reason='mock teleport', settled=True,
                                      stop_acknowledged=True)
@@ -182,7 +196,8 @@ def _stop(proc):
     return proc.stdout.read() if proc.stdout else ''
 
 
-def test_mission_end_to_end_against_mock_nav_server(artifacts):
+@pytest.mark.parametrize('stop_acknowledged', [True, False])
+def test_mission_end_to_end_against_mock_nav_server(artifacts, stop_acknowledged):
     from ultron_b2_interfaces.action import RunMission
     from ultron_b2_perception.registry_store import open_registry
     zone = artifacts / 'zone.yaml'
@@ -224,17 +239,41 @@ def test_mission_end_to_end_against_mock_nav_server(artifacts):
             time.sleep(0.02)
         assert world.goals, 'no NavigateToView goal received'
         with world.lock:
+            world.stop_acknowledged = stop_acknowledged
             world.operator_enabled = False
             n_goals = len(world.goals)
             held_goal = world.goals[-1]['goal_id']
-        time.sleep(2.0)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and held_goal not in world.cancels:
+            time.sleep(0.02)
         with world.lock:
             assert held_goal in world.cancels, 'active goal was not cancelled on HOLD'
             assert len(world.goals) == n_goals, 'goal sent while operator enable was lost'
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and 'HOLD' not in world.states:
+            time.sleep(0.02)
         assert 'HOLD' in world.states
         assert not world.holds, 'mission wrote the operator-owned ops/hold lock (assert_hold_lock defaults false)'
         with world.lock:
             world.operator_enabled = True
+        time.sleep(0.5)
+        with world.lock:
+            assert world.nav_busy, 'mock cancellation completed before overlap was exercised'
+            assert len(world.goals) == n_goals and world.busy_rejections == 0, \
+                'replacement goal sent before cancellation completed'
+        if not stop_acknowledged:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and 'AWAIT_OPERATOR' not in world.states:
+                time.sleep(0.05)
+            assert 'AWAIT_OPERATOR' in world.states, 'unconfirmed stop did not fail closed'
+            with world.lock:
+                assert len(world.goals) == n_goals and world.busy_rejections == 0
+            handle.cancel_goal_async()
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and not result_fut.done():
+                time.sleep(0.05)
+            assert result_fut.done(), 'mission did not exit after cancellation'
+            return
 
         deadline = time.monotonic() + 90
         while not result_fut.done() and time.monotonic() < deadline:
@@ -242,6 +281,7 @@ def test_mission_end_to_end_against_mock_nav_server(artifacts):
         assert result_fut.done(), 'mission did not finish'
         res = result_fut.result().result
         assert res.status in ('DONE', 'DONE_WITH_GAPS'), (res.status, res.reason)
+        assert world.busy_rejections == 0
         summary = json.loads(pathlib.Path(res.summary_ref).read_text())
         assert len(summary['ladders_captured']) == 2, summary
         assert summary['oracle_detections_used'] is True

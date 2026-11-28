@@ -108,6 +108,8 @@ def main(argv=None):
             self.coverage = None
             self.nav_handles, self.cap_handles = {}, {}
             self.cancel_requested = set()
+            self.nav_inflight = None
+            self.nav_deferred = None
             self.asserting_hold = False
             self.last_hold_pub = 0.0
             self.event_seq = 0
@@ -355,6 +357,7 @@ def main(argv=None):
                               external_hold=inp.external_hold)
             self.core.tick(self.now(), snapshot)
             self._flush()
+            self._dispatch_deferred_nav()
 
         def _slow(self):
             with self.lock:
@@ -414,6 +417,9 @@ def main(argv=None):
 
         def _cmd_nav(self, d):
             gid = d['goal_id']
+            if self.nav_inflight is not None:
+                self.nav_deferred = d
+                return
             if not self.nav.server_is_ready():
                 self.core.on_nav_result(gid, 'FAILED', 'NAV_SERVER_UNAVAILABLE: nav/navigate_to_view')
                 return
@@ -424,20 +430,43 @@ def main(argv=None):
                                                            d['x'], d['y'], d['yaw']),
                                        xy_tolerance_m=d['xy_tolerance_m'], yaw_tolerance_rad=d['yaw_tolerance_rad'],
                                        timeout_s=d['timeout_s'], reason=d['reason'], asset_id=d['asset_id'])
-            fut = self.nav.send_goal_async(goal)
+            self.nav_inflight = gid
+            try:
+                fut = self.nav.send_goal_async(goal)
+            except Exception as exc:
+                self.nav_deferred = None
+                self.core._await_operator(f'Navigation goal send could not be confirmed: {exc}')
+                return
             fut.add_done_callback(lambda f, gid=gid: self._nav_accepted(gid, f))
+
+        def _dispatch_deferred_nav(self):
+            d = self.nav_deferred
+            if d is None or self.nav_inflight is not None:
+                return
+            active = self.core.active_goal
+            if active is None or active['goal_id'] != d['goal_id']:
+                self.nav_deferred = None
+            elif self.core.state not in TERMINAL and not self.core._inhibit_causes():
+                self.nav_deferred = None
+                self._cmd_nav(d)
 
         def _nav_accepted(self, gid, fut):
             with self.lock:
                 try:
                     handle = fut.result()
                 except Exception as exc:
-                    self.core.on_nav_result(gid, 'FAILED', f'send failed: {exc}')
+                    self.cancel_requested.discard(gid)
+                    self.nav_deferred = None
+                    if self.core.state not in TERMINAL:
+                        self.core._await_operator(f'Navigation goal acceptance unavailable: {exc}')
                     self._flush()
                     return
                 if not handle.accepted:
+                    self.nav_inflight = None
+                    self.cancel_requested.discard(gid)
                     self.core.on_nav_result(gid, 'REJECTED', 'goal rejected by nav server')
                     self._flush()
+                    self._dispatch_deferred_nav()
                     return
                 self.nav_handles[gid] = handle
                 if gid in self.cancel_requested:
@@ -447,22 +476,41 @@ def main(argv=None):
         def _nav_done(self, gid, fut):
             with self.lock:
                 self.nav_handles.pop(gid, None)
+                self.nav_inflight = None
+                was_cancelled = gid in self.cancel_requested
+                self.cancel_requested.discard(gid)
                 try:
                     wrapped = fut.result()
                     r = wrapped.result
                     status = r.status or status_names.get(wrapped.status, 'FAILED')
+                    if was_cancelled and status != 'REJECTED' and not r.stop_acknowledged:
+                        self.nav_deferred = None
+                        if self.core.state not in TERMINAL:
+                            self.core._await_operator('Cancelled navigation did not acknowledge a stop')
+                        self._flush()
+                        return
                     self.core.on_nav_result(gid, status, r.reason, settled=bool(r.settled))
                 except Exception as exc:
-                    self.core.on_nav_result(gid, 'FAILED', f'result error: {exc}')
+                    self.nav_inflight = gid
+                    self.nav_deferred = None
+                    if self.core.state not in TERMINAL:
+                        self.core._await_operator(f'Navigation result unavailable: {exc}')
+                    self._flush()
+                    return
                 self._flush()
+                self._dispatch_deferred_nav()
 
         def _cmd_cancel_nav(self, d):
             gid = d['goal_id']
+            if self.nav_deferred is not None and self.nav_deferred['goal_id'] == gid:
+                self.nav_deferred = None
+                return
+            if self.nav_inflight != gid:
+                return
+            self.cancel_requested.add(gid)
             handle = self.nav_handles.get(gid)
             if handle is not None:
                 handle.cancel_goal_async()
-            else:
-                self.cancel_requested.add(gid)
 
         def _cmd_capture(self, d):
             cid = d['capture_id']

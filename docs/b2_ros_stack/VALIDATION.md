@@ -409,9 +409,12 @@ _Not assembled. Reviewer decision: pending (human)._
   launch scoping passed 13 tests but has not been rerun in the integrated stack. Localization
   and gate tests passed 48. Artifacts remain local and uncommitted in
   `ros2_ws/sim_tf_blocker_20261128/`.
-  The mission core clears its active goal when requesting cancellation and can send a replacement
-  on HOLD release before the navigation server finishes the prior goal. A fix needs to wait for
-  the prior terminal result without letting a stale or inhibited goal through; it is not implemented.
+  The mission core cleared its active goal when requesting cancellation and could send a replacement
+  on HOLD release before the navigation server finished the prior goal. The mission manager now
+  defers replacement goals until the previous result, drops invalidated deferred goals, and enters
+  AWAIT_OPERATOR if a cancelled goal does not acknowledge a stop. A delayed-cancel mock regression
+  passed both acknowledged and unconfirmed-stop cases; the mission package reported 63 passed and
+  one skipped. This fix has not been validated in the full integrated simulation.
 - Replay is separately checkpointed, **not merged**, at `7d7444f` on
   `om/b2-ros-stack-replay-accept`. Its 32 tests passed; the replay clock guard reports stale
   localization when the clock stops, and measured queue-overflow drops fell to zero. One
