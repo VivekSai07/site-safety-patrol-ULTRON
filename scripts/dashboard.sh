@@ -15,12 +15,14 @@
 #                               streamed in as site "sim-hall". Oracle detections, kinematic motion.
 #
 # Extra options go to `python -m ultron.dashboard`, e.g.: scripts/dashboard.sh live --port 8010 --lan
+# or --fence room.json. EXPLORE_COMMAND="ros2 run explore_lite explore --ros-args ..." sets the bridge's
+# explore_command (what Start exploration launches).
 # The pipeline then posts to the printed URL: python -m ultron.pipeline patrol ... --dashboard URL
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 export PYTHONPATH="$(pwd)/src${PYTHONPATH:+:$PYTHONPATH}"
 
-usage() { sed -n 2,18p "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n 2,20p "$0" | sed 's/^# \{0,1\}//'; }
 mode=${1:-}
 case $mode in
     demo|live) shift ;;
@@ -88,7 +90,10 @@ if [[ $mode == demo ]]; then
     $PY -m ultron.dashboard.replay "$DEMO_RUN" --url "$url" &
     pids+=($!)
 else
-    python3 scripts/dashboard_bridge.py --ros-args -p dashboard_url:="$url" &
+    bridge=(-p dashboard_url:="$url")
+    # the explorer reads the unfenced /map unless its command points it at /map_fenced (docs/EXPLORATION_CONTRACT.md)
+    [[ -n ${EXPLORE_COMMAND:-} ]] && bridge+=(-p explore_command:="$EXPLORE_COMMAND")
+    python3 scripts/dashboard_bridge.py --ros-args "${bridge[@]}" &
     pids+=($!)
 fi
 if ((sim)); then

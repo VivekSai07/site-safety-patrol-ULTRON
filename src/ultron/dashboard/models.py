@@ -1,7 +1,8 @@
 """Data contract between the robot side (sim or ROS) and the dashboard."""
+import math
 import re
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -74,6 +75,9 @@ class Goal(BaseModel):
     y: float
     yaw: float = 0.0
     frame_id: str = 'map'
+    # who asked: the operator always wins; the pipeline only drives when nobody else does
+    # (docs/EXPLORATION_CONTRACT.md)
+    by: Literal['operator', 'pipeline'] = 'operator'
 
 
 class GoalStatus(str, Enum):
@@ -93,32 +97,56 @@ class GoalUpdate(BaseModel):
 class ExplorationState(str, Enum):
     """Mapping the site with the team's frontier explorer (m-explore-ros2), started from the dashboard.
 
-    The operator asks (STARTING, FINISHING); only the ROS bridge confirms (EXPLORING, MAPPED, FAILED),
-    so the page never shows the robot exploring before the robot side says it is.
+    The operator or pipeline asks (STARTING, PAUSING, RESUMING, FINISHING); only the ROS bridge confirms
+    (EXPLORING, PAUSED, MAPPED, FAILED), so the page never shows the robot exploring before the robot
+    side says it is.
     """
     IDLE = 'IDLE'            # not explored since the dashboard started
     STARTING = 'STARTING'    # operator pressed Start; no bridge has confirmed yet
     EXPLORING = 'EXPLORING'  # bridge: the explorer is running and drives the robot
+    PAUSING = 'PAUSING'      # pause asked (explore/resume=false); no bridge has confirmed yet
+    PAUSED = 'PAUSED'        # bridge: the explorer is stopped but alive; goals may drive Nav2
+    RESUMING = 'RESUMING'    # resume asked (explore/resume=true); no bridge has confirmed yet
     FINISHING = 'FINISHING'  # operator pressed Finish mapping; no bridge has confirmed yet
     MAPPED = 'MAPPED'        # explorer stopped (operator finished, or no frontiers left); the map is usable
     FAILED = 'FAILED'        # bridge could not start or stop the explorer; detail says why
 
 
-EXPLORATION_ACTIVE = {ExplorationState.STARTING, ExplorationState.EXPLORING, ExplorationState.FINISHING}
-BRIDGE_REPORTS = {ExplorationState.EXPLORING, ExplorationState.MAPPED, ExplorationState.FAILED}
+# The explorer process exists (or is being started): Start is refused.
+EXPLORATION_ACTIVE = {ExplorationState.STARTING, ExplorationState.EXPLORING, ExplorationState.PAUSING,
+                      ExplorationState.PAUSED, ExplorationState.RESUMING, ExplorationState.FINISHING}
+# The explorer drives Nav2 (or is about to): every goal is refused with 409 'exploring'.
+EXPLORATION_DRIVING = {ExplorationState.STARTING, ExplorationState.EXPLORING, ExplorationState.RESUMING,
+                       ExplorationState.FINISHING}
+EXPLORATION_PAUSE = {ExplorationState.PAUSING, ExplorationState.PAUSED}
+BRIDGE_REPORTS = {ExplorationState.EXPLORING, ExplorationState.PAUSED, ExplorationState.MAPPED, ExplorationState.FAILED}
+MAX_LEASE_S = 180.0
 
 
 class ExplorationAction(str, Enum):
     START = 'start'
+    PAUSE = 'pause'
+    RENEW = 'renew'
+    RESUME = 'resume'
     FINISH = 'finish'
 
 
 class ExplorationRequest(BaseModel):
     action: ExplorationAction
+    by: Literal['operator', 'pipeline'] = 'operator'
+    # a pipeline pause ends by itself after this long unless renewed (the pipeline may crash or hang);
+    # longer asks are cut to MAX_LEASE_S. An operator pause has no lease.
+    lease_s: float = Field(60.0, gt=0, allow_inf_nan=False)
+    reason: str = Field('', max_length=200)
+
+    @field_validator('lease_s')
+    @classmethod
+    def capped(cls, value):
+        return min(value, MAX_LEASE_S)
 
 
 class ExplorationUpdate(BaseModel):
-    """From the bridge, about the operator's latest request (`seq`)."""
+    """From the bridge, about the latest request (`seq`)."""
     seq: int
     state: ExplorationState
     detail: str = ''
@@ -130,6 +158,56 @@ class ExplorationUpdate(BaseModel):
         if state not in BRIDGE_REPORTS:
             raise ValueError(f'the bridge reports {sorted(s.value for s in BRIDGE_REPORTS)}; {state.value} is the operator\'s')
         return state
+
+
+def _finite_points(points):
+    for p in points:
+        if not all(math.isfinite(v) for v in p):
+            raise ValueError('coordinates must be finite numbers')
+    return points
+
+
+class Fence(BaseModel):
+    """Where the robot may go and objects may be: a polygon in the map frame, the room's walls drawn
+    slightly inside the glass (lidar sees through windows, so SLAM maps free space beyond them)."""
+    frame_id: str = 'map'
+    polygon: list[list[float]] = Field(min_length=3, max_length=1000)
+
+    @field_validator('frame_id')
+    @classmethod
+    def frame_is_safe(cls, value):
+        return safe_id(value)
+
+    @field_validator('polygon')
+    @classmethod
+    def is_a_polygon(cls, value):
+        if any(len(p) != 2 for p in value):
+            raise ValueError('each polygon point is [x, y] in metres')
+        _finite_points(value)
+        area = sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(value, value[1:] + value[:1])) / 2
+        if abs(area) < 1e-6:
+            raise ValueError('the polygon has no area')
+        return value
+
+
+class Obstacles(BaseModel):
+    """Footprints of known objects Nav2 may not see (a ladder lying on the floor): cell centres, replaced
+    on every PUT. The bridge republishes them as a point cloud for an obstacle layer."""
+    frame_id: str = 'map'
+    cell: float = Field(gt=0, le=2.0, allow_inf_nan=False)
+    cells: list[list[float]] = Field(max_length=50000)
+
+    @field_validator('frame_id')
+    @classmethod
+    def frame_is_safe(cls, value):
+        return safe_id(value)
+
+    @field_validator('cells')
+    @classmethod
+    def are_points(cls, value):
+        if any(len(p) != 2 for p in value):
+            raise ValueError('each cell is [x, y] in metres, its centre')
+        return _finite_points(value)
 
 
 class SiteCheckAnswer(str, Enum):

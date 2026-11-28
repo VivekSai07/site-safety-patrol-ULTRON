@@ -1,7 +1,7 @@
 // Live page: loads the current mission, then follows the server's event stream.
 const S = {mission: null, inspections: new Map(), confirmed: new Map(), photos: new Map(), order: [], alerts: new Map(),
   events: [], pose: null, trail: [], checklist: [], history: {}, clock: null,
-  grid: null, goal: null, goalsEnabled: false, picking: false, drag: null, frame: null};
+  grid: null, goal: null, goalsEnabled: false, picking: false, drag: null, frame: null, exploration: null, fence: null};
 const $ = id => document.getElementById(id);
 const SVG = 'http://www.w3.org/2000/svg';
 const DOT = {FLAGGED: 'var(--flag-dot)', MANUAL_REVIEW: 'var(--rev-dot)', AUTOMATED_PASS: 'var(--pass-dot)', INSPECTING: 'var(--live-dot)'};
@@ -30,6 +30,7 @@ async function load() {
   const live = await getJSON('/api/live');
   S.mission = live.mission;
   S.grid = live.grid; S.goal = live.goal; S.goalsEnabled = !!live.goals_enabled;
+  S.exploration = live.exploration; S.fence = live.fence;
   S.inspections = new Map((live.inspections || []).map(i => [i.asset_id, i]));
   S.alerts = new Map((live.alerts || []).map(a => [a.id, a]));
   S.confirmed = new Map(); S.photos = new Map(); S.order = [];
@@ -190,6 +191,9 @@ function renderMap() {
   } else {
     map.append(svg('rect', {x: X(b[0]), y: Y(b[3]), width: b[2] - b[0], height: b[3] - b[1], 'stroke-width': 0.04}, 'fill: var(--surface); stroke: var(--map-line)'));
   }
+  if (S.fence) {  // where the robot may go: drawn inside the glass, which lidar sees through
+    map.append(svg('polygon', {points: S.fence.polygon.map(([x, y]) => `${X(x)},${Y(y)}`).join(' '), fill: 'none', 'stroke-width': 0.05, 'stroke-dasharray': '0.15 0.1'}, 'stroke: var(--accent)'));
+  }
   for (const k of (!S.grid && m && m.map && m.map.keepouts) || []) {
     map.append(svg('rect', {x: X(k[0]), y: Y(k[3]), width: k[2] - k[0], height: k[3] - k[1], 'stroke-width': 0.03, 'stroke-dasharray': '0.1 0.08'}, 'fill: var(--hatch); stroke: var(--muted)'));
   }
@@ -228,19 +232,43 @@ function renderMap() {
   map.classList.toggle('picking', S.picking);
   $('map-info').textContent = `${(b[2] - b[0]).toFixed(1)} × ${(b[3] - b[1]).toFixed(1)} m`;
   $('goal-btn').hidden = !S.goalsEnabled;
-  $('explore-btn').hidden = !S.goalsEnabled;  // live mode only, like Set goal
   $('goal-btn').setAttribute('aria-pressed', String(S.picking));
-  $('goal-info').textContent = S.exploreNote ? t('explore.pending')
-    : S.picking ? t('goal.pick') : S.goal ? `${t(`goal.${S.goal.status}`)} · ${S.goal.x.toFixed(1)} / ${S.goal.y.toFixed(1)} m` : '';
+  renderExplore();
+  const ex = S.exploration && S.exploration.state !== 'IDLE' ? t(`explore.${S.exploration.state}`) : '';
+  const goal = S.goal ? `${t(`goal.${S.goal.status}`)} · ${S.goal.x.toFixed(1)} / ${S.goal.y.toFixed(1)} m` : '';
+  $('goal-info').textContent = S.exploreNote ? S.exploreNote : S.picking ? t('goal.pick') : [ex, goal].filter(Boolean).join(' · ');
 }
 
-// Start exploration: placeholder until the ROS bridge drives m-explore-ros2 (docs/DASHBOARD_TEAM_TODO.md).
-// It sends nothing; /api/exploration exists server side but stays unused so Set goal is never blocked.
+// Exploration (m-explore-ros2 through the ROS bridge): one button starts and finishes mapping, one pauses
+// and resumes it, so the operator can set goals by hand in between. Only the bridge confirms each step.
+const EXPLORE_MAIN = {IDLE: 'start', MAPPED: 'start', FAILED: 'start', STARTING: 'finish', EXPLORING: 'finish',
+  PAUSING: 'finish', PAUSED: 'finish', RESUMING: 'finish', FINISHING: 'finish'};
+function renderExplore() {
+  const state = (S.exploration || {}).state || 'IDLE';
+  const main = $('explore-btn'), pause = $('explore-pause-btn');
+  main.hidden = pause.hidden = !S.goalsEnabled;  // live mode only, like Set goal
+  main.dataset.action = EXPLORE_MAIN[state];
+  main.dataset.i18n = `explore.${EXPLORE_MAIN[state]}`;
+  main.textContent = t(main.dataset.i18n);
+  main.disabled = state === 'FINISHING';
+  pause.dataset.action = state === 'PAUSED' ? 'resume' : 'pause';
+  pause.dataset.i18n = `explore.${pause.dataset.action}`;
+  pause.textContent = t(pause.dataset.i18n);
+  pause.hidden = pause.hidden || !['EXPLORING', 'PAUSED'].includes(state);
+}
+
 function initExplore() {
-  $('explore-btn').addEventListener('click', () => {
-    S.exploreNote = true; scheduleRender();
-    clearTimeout(S.exploreTimer);
-    S.exploreTimer = setTimeout(() => { S.exploreNote = false; scheduleRender(); }, 4000);
+  for (const id of ['explore-btn', 'explore-pause-btn']) $(id).addEventListener('click', async () => {
+    const response = await fetch('/api/exploration', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: $(id).dataset.action, by: 'operator'})}).catch(() => null);
+    if (response && response.ok) S.exploration = await response.json();
+    else {  // e.g. a goal is underway, or another request came first
+      const detail = response ? (await response.json().catch(() => ({}))).detail : '';
+      S.exploreNote = `${t('explore.refused')}${detail ? `: ${detail}` : ''}`;
+      clearTimeout(S.exploreTimer);
+      S.exploreTimer = setTimeout(() => { S.exploreNote = ''; scheduleRender(); }, 4000);
+    }
+    scheduleRender();
   });
 }
 
@@ -277,7 +305,12 @@ function initGoalPicking() {
     S.drag = null; S.picking = false;
     const response = await fetch('/api/goal', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(goal)}).catch(() => null);
     if (response && response.ok) S.goal = await response.json();
-    else $('goal-info').textContent = t('goal.failed');
+    else {  // 409 exploring / pausing: say why, the operator can pause the explorer first
+      const detail = response ? (await response.json().catch(() => ({}))).detail : '';
+      S.exploreNote = detail === 'exploring' || detail === 'pausing' ? t(`goal.refused.${detail}`) : t('goal.failed');
+      clearTimeout(S.exploreTimer);
+      S.exploreTimer = setTimeout(() => { S.exploreNote = ''; scheduleRender(); }, 4000);
+    }
     scheduleRender();
   });
   map.addEventListener('pointercancel', () => { S.drag = null; scheduleRender(); });
@@ -319,6 +352,8 @@ function connect() {
   on('frame', f => { if (mine(f)) showFrame(f.camera); });
   on('map', g => { S.grid = g; scheduleRender(); });
   on('goal', g => { if (!S.goal || g.seq >= S.goal.seq) { S.goal = g; scheduleRender(); } });
+  on('exploration', x => { S.exploration = x; scheduleRender(); });
+  on('fence', f => { S.fence = f; scheduleRender(); });
   source.onerror = () => { $('live-chip').className = 'live-chip idle'; $('live-chip').textContent = '…'; };
   source.onopen = () => load();
 }

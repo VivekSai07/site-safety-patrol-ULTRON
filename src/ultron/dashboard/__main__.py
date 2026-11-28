@@ -32,7 +32,11 @@ def main(argv=None):
     parser.add_argument('--goals', action='store_true',
                         help='enable unauthenticated goals; a connected ROS bridge may reach hardware')
     parser.add_argument('--notify', help='notification config JSON (see config/notify.example.json)')
+    parser.add_argument('--fence', help='the room\'s fence at start-up, JSON {"frame_id": "map", "polygon": [[x, y], ...]}'
+                        ' (docs/EXPLORATION_CONTRACT.md); kept across dashboard restarts this way')
     args = parser.parse_args(argv)
+
+    import json
 
     import uvicorn
     from .app import create_app
@@ -42,7 +46,8 @@ def main(argv=None):
     if args.notify is None:
         config['public_url'] = f'http://127.0.0.1:{args.port}'
     # Open browser tabs hold the live stream; without a limit, shutdown waits for them to close.
-    uvicorn.run(create_app(args.db, args.media, config, allow_goals=args.goals), host='0.0.0.0' if args.lan else '127.0.0.1',
+    fence = json.loads(open(args.fence).read()) if args.fence else None
+    uvicorn.run(create_app(args.db, args.media, config, allow_goals=args.goals, fence=fence), host='0.0.0.0' if args.lan else '127.0.0.1',
                 port=args.port, timeout_graceful_shutdown=3)
 
 
