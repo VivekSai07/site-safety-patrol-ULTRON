@@ -67,7 +67,7 @@ Without a robot, run the same pipeline on a recorded bag: `--source bag:PATH,rat
 | `src/ultron/detection_world/`, `detection_*.py` | Synthetic detection worlds, box-level evaluation, label-first baseline | Om |
 | `src/site_safety_patrol/`, `scenarios/` | Earlier standard-library fixture demo, kept for reference | |
 
-Documents: [pipeline](docs/PIPELINE.md) · [dashboard](docs/DASHBOARD.md) · [navigation goals from the dashboard](docs/dashboard_nav_goal.md) · [autonomy handoff](docs/SAHIL_HANDOFF.md), [SLAM plan](docs/SAHIL_SLAM_PLAN.md) and [navigation plan](docs/SAHIL_NAV_PLAN.md) · [site safety sweep](docs/SITE_SAFETY.md) · [API prompt packs](docs/API_PROMPTS.md) · [weekend plan and team split as first written](docs/WEEKEND_PLAN.md).
+Documents: [pipeline](docs/PIPELINE.md) · [hardware readiness](docs/HARDWARE_READINESS.md) · [dashboard](docs/DASHBOARD.md) · [navigation goals from the dashboard](docs/dashboard_nav_goal.md) · [autonomy handoff](docs/SAHIL_HANDOFF.md), [SLAM plan](docs/SAHIL_SLAM_PLAN.md) and [navigation plan](docs/SAHIL_NAV_PLAN.md) · [site safety sweep](docs/SITE_SAFETY.md) · [API prompt packs](docs/API_PROMPTS.md) · [weekend plan and team split as first written](docs/WEEKEND_PLAN.md).
 
 ## Tests
 
@@ -81,6 +81,10 @@ python -m unittest discover -s tests
 ---
 
 # The simulation
+
+**Readiness:** [Integrated launch commands, tested evidence and remaining hardware blockers](docs/HARDWARE_READINESS.md). Hardware motion remains NO-GO; SLAM/Nav2 and real sensor/control validation are outstanding.
+
+**API prompts:** [Versioned ladder and site-safety prompt packs, schemas and request-building adapter](docs/API_PROMPTS.md). Targeted `inspection_v2` wording is available as an opt-in candidate; the evaluated v1 baseline is preserved. [Evaluation plan](docs/PROMPT_V2_EVALUATION.md).
 
 **A lightweight Unitree B2 MuJoCo simulation for the nesseler challenge.** The existing demo has a robot model patrol a bounded construction scene, discover ladders, approach for evidence, request one second look, and remember ladder identities across patrols. Actual simulated RGB/depth frames become a traceable inspection report. Rerun export and ROS 2 Humble/RViz replay consume the same recording. The label-first baseline has a rendered synthetic capture-to-draft probe with manual fixture transcription, plus bounded browser-control checks; real OCR and real-world operation remain unverified. See the [baseline and source overview](docs/LABEL_FIRST_BASELINE.md).
 
@@ -110,11 +114,13 @@ Synthetic ground truth is not a detector.
 ## Seven-section assessment and photoreal dataset prompt pack
 
 The [assessment runbook](docs/ASSESSMENT_RUNBOOK.md) describes an optional
-live adapter and a separate 24-view simulation experiment. **Do not run
-`scripts/first-milestone.sh` or `ultron.assessment_live` without separate
-authorization and rights/privacy review:** they can send images and prompts
-to an external API. They were not run in this reconciliation; live inference,
-dashboard publication and real-data evaluation remain unverified.
+live adapter and a separate 24-view simulation experiment. The current
+[integrated patrol worker](docs/HARDWARE_READINESS.md#reproduce-on-the-laptop)
+uses the user-authorized OpenAI path when explicitly enabled; images and prompts
+leave the laptop and can incur API charges. A one-keyframe cloud response was verified from the user laptop;
+a verified-reference synthetic comparison subsequently detected the seeded missing rung.
+Real-data accuracy and performance across other defects remain unverified.
+Default simulation makes no cloud calls.
 
 The existing [generation-prompt ZIP](deliverables/ULTRON_inspection_prompt_pack_v1.zip)
 contains scenario recipes and prompts, not reviewed images or a validated

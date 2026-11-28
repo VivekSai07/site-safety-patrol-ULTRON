@@ -1,0 +1,216 @@
+{
+  "version": "ultron.inspection.v2",
+  "dashboard_commit": "42330758a62197122b56d56098a49c8c442350bc",
+  "sections": [
+    {
+      "number": 1,
+      "key": "holme",
+      "title": "Holme / rails",
+      "criteria": [
+        {
+          "key": "holme.verformung",
+          "label_de": "Verformung",
+          "mode": "visual",
+          "guidance": "Look for bowed, kinked or twisted rails; compare continuous rail edges.",
+          "generation_defect": "A localized permanent kink midway along the right rail; no other intended defect."
+        },
+        {
+          "key": "holme.beschaedigung",
+          "label_de": "Beschädigung (z.B. Risse)",
+          "mode": "visual",
+          "guidance": "Inspect visible rail surfaces for cracks, splits and impact damage; dirt alone is not a crack.",
+          "generation_defect": "A visible short branching crack at a rail junction, with material separation rather than a painted line."
+        },
+        {
+          "key": "holme.kanten",
+          "label_de": "Scharfe Kanten, Splitter, Grat",
+          "mode": "person",
+          "guidance": "Visible burrs or splinters may be reported as damage; absence of sharpness requires a person.",
+          "generation_defect": "A visibly raised metal burr on an exposed rail edge; do not imply a tactile test."
+        },
+        {
+          "key": "holme.abnutzung",
+          "label_de": "Abnutzung",
+          "mode": "visual",
+          "guidance": "Distinguish worn material from cosmetic scuffs and lighting; hidden thickness is unknown.",
+          "generation_defect": "Localized deep abrasion with visible material loss on the rail."
+        },
+        {
+          "key": "holme.schutz",
+          "label_de": "Schutzbehandlung (bei Holz)",
+          "mode": "person",
+          "guidance": "Wood treatment adequacy cannot be established from colour/shine. Visible peeling is an observation only.",
+          "generation_defect": "A wooden ladder rail with peeling coating and exposed wood; treatment adequacy remains unverified."
+        }
+      ]
+    },
+    {
+      "number": 2,
+      "key": "sprossen",
+      "title": "Sprossen/Stufen/Plattform / rungs, steps, platform",
+      "criteria": [
+        {
+          "key": "sprossen.verformung",
+          "label_de": "Verformung",
+          "mode": "visual",
+          "guidance": "Look for sagged, bent or twisted rungs/steps/platform, retaining an overview for context.",
+          "generation_defect": "One rung visibly bent downward at its centre."
+        },
+        {
+          "key": "sprossen.beschaedigung",
+          "label_de": "Beschädigung",
+          "mode": "visual",
+          "guidance": "Look for missing/cracked/broken treads or platform pieces; do not infer occluded parts are present.",
+          "generation_defect": "One rung with a clearly broken end and an exposed gap at the rail."
+        },
+        {
+          "key": "sprossen.kanten",
+          "label_de": "Scharfe Kanten, Splitter, Grat",
+          "mode": "person",
+          "guidance": "Report visible broken edges/splinters, but do not claim tactile smoothness.",
+          "generation_defect": "A visibly splintered wooden step edge without a person touching it."
+        },
+        {
+          "key": "sprossen.verbindung",
+          "label_de": "Verbindung zum Holm",
+          "mode": "visual",
+          "guidance": "Inspect visible rung-to-rail interfaces for separation or missing fasteners; no inference about tightness.",
+          "generation_defect": "A visibly separated rung-to-rail joint with a missing rivet."
+        },
+        {
+          "key": "sprossen.abnutzung",
+          "label_de": "Abnutzung (Trittfläche, Plattformauflage)",
+          "mode": "visual",
+          "guidance": "Inspect tread texture/material loss; reflectance or dust alone is not wear.",
+          "generation_defect": "One heavily worn tread with locally flattened anti-slip grooves."
+        }
+      ]
+    },
+    {
+      "number": 3,
+      "key": "spreiz",
+      "title": "Spreizsicherung / spreader",
+      "criteria": [
+        {
+          "key": "spreiz.vollstaendigkeit",
+          "label_de": "Vollständigkeit/Befestigung",
+          "mode": "visual",
+          "guidance": "Inspect both spreader endpoints and presence. Visible attachment does not prove security.",
+          "generation_defect": "One spreader endpoint visibly detached from the rail on an open A-frame."
+        },
+        {
+          "key": "spreiz.funktion",
+          "label_de": "Funktionsfähigkeit",
+          "mode": "person",
+          "guidance": "A still image cannot verify operation, locking or load resistance. Default NOT_CHECKED unless literal visible damage supports DEFECT.",
+          "generation_defect": "A spreader linkage visibly broken in two; function still not physically tested."
+        },
+        {
+          "key": "spreiz.beschaedigung",
+          "label_de": "Beschädigung",
+          "mode": "visual",
+          "guidance": "Inspect spreader links/straps for visible breaks, bends or tears.",
+          "generation_defect": "A visible tear across most of a fabric spreader strap."
+        }
+      ]
+    },
+    {
+      "number": 4,
+      "key": "beschlag",
+      "title": "Beschlagteile / fittings",
+      "criteria": [
+        {
+          "key": "beschlag.beschaedigung",
+          "label_de": "Beschädigung/Korrosion",
+          "mode": "visual",
+          "guidance": "Describe visible rust, cracks or deformation on hinges/brackets without guessing hidden corrosion.",
+          "generation_defect": "Localized flaking corrosion with visible pitting on one steel hinge bracket."
+        },
+        {
+          "key": "beschlag.vollstaendigkeit",
+          "label_de": "Vollständigkeit/Befestigung",
+          "mode": "visual",
+          "guidance": "Identify visibly absent fittings/fasteners; no torque or tightness claim.",
+          "generation_defect": "A hinge mounting hole visibly missing its fastener."
+        },
+        {
+          "key": "beschlag.funktion",
+          "label_de": "Funktionsfähigkeit",
+          "mode": "person",
+          "guidance": "Do not claim moving mechanisms function from one or multiple static images.",
+          "generation_defect": "A visibly snapped hinge pin; no person or motion demonstration."
+        },
+        {
+          "key": "beschlag.abnutzung",
+          "label_de": "Abnutzung",
+          "mode": "visual",
+          "guidance": "Inspect visible worn guides/hinges/contact faces; play is not inferred without a test.",
+          "generation_defect": "A visibly elongated hinge mounting hole with worn edges."
+        },
+        {
+          "key": "beschlag.schmierung",
+          "label_de": "Schmierung (mechanische Teile)",
+          "mode": "person",
+          "guidance": "Neither shine nor a visible smear proves adequate lubrication or mechanism function.",
+          "generation_defect": "A visibly dirty dry-looking hinge surface, without asserting lubrication failure from appearance alone."
+        }
+      ]
+    },
+    {
+      "number": 5,
+      "key": "fuesse",
+      "title": "Leiter-/Trittfüße/Rollen / feet and rollers",
+      "criteria": [
+        {
+          "key": "fuesse.vollstaendigkeit",
+          "label_de": "Vollständigkeit/Befestigung",
+          "mode": "visual",
+          "guidance": "Inspect every required foot/roller seen, including rear feet; obscured feet remain unknown.",
+          "generation_defect": "One rubber foot cap visibly absent, exposing the rail end."
+        },
+        {
+          "key": "fuesse.abnutzung",
+          "label_de": "Abnutzung/Beschädigung",
+          "mode": "visual",
+          "guidance": "Inspect visible foot-cap tears, tread wear and roller damage; keep ground-contact context.",
+          "generation_defect": "A foot cap with a clear split and missing rubber chunk."
+        },
+        {
+          "key": "fuesse.funktion",
+          "label_de": "Funktionsfähigkeit",
+          "mode": "person",
+          "guidance": "Grip, brake function and loaded stability require physical checks; apparent floor contact is insufficient.",
+          "generation_defect": "A visibly fractured roller bracket on an otherwise unchanged platform stepladder."
+        }
+      ]
+    },
+    {
+      "number": 6,
+      "key": "zubehoer",
+      "title": "Zubehör / accessories",
+      "criteria": [
+        {
+          "key": "zubehoer.vollstaendigkeit",
+          "label_de": "Vollständigkeit/Befestigung",
+          "mode": "visual",
+          "guidance": "Inspect applicable supports/extensions/stabilizers. Absence alone is not failure unless the required accessory is verified.",
+          "generation_defect": "A fitted stabilizer bar visibly detached at one endpoint; show the mounting context."
+        }
+      ]
+    },
+    {
+      "number": 7,
+      "key": "kennzeichnung",
+      "title": "Kennzeichnung / markings",
+      "criteria": [
+        {
+          "key": "kennzeichnung.betriebsanleitung",
+          "label_de": "Betriebsanleitung (z.B. Piktogramm)",
+          "mode": "visual",
+          "guidance": "Check instructions/pictograms presence and readable portions. Separate manufacturer data, factory-control dates and inspection sticker due dates.",
+          "generation_defect": "A visibly torn instruction/pictogram strip with most safety symbols missing; keep inspection sticker as a separate region."
+        }
+      ]
+    }
+  ]
+}

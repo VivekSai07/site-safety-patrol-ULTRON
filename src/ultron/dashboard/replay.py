@@ -23,6 +23,13 @@ class Api:
     def __init__(self, url):
         self.url = url.rstrip('/')
 
+    def get(self, path):
+        try:
+            with urllib.request.urlopen(self.url + path, timeout=10) as response:
+                return response.status, json.loads(response.read() or b'null')
+        except urllib.error.HTTPError as error:
+            return error.code, None
+
     def post(self, path, body=None, raw=None, content_type='application/json'):
         data = raw if raw is not None else json.dumps(body or {}).encode()
         request = urllib.request.Request(self.url + path, data=data, method='POST',

@@ -1,10 +1,12 @@
 # Weekend target architecture and team plan
 
-Moved here from the README unchanged. It is the plan as written on 27 to 28 November, not a description of what runs; for that see the [README](../README.md) and [PIPELINE.md](PIPELINE.md).
+Moved here from the README unchanged. It is the plan as written on 27 to 28 November, not a description of what runs; for that see the [README](../README.md), [PIPELINE.md](PIPELINE.md) and the [readiness matrix](HARDWARE_READINESS.md).
 
 ## Weekend target architecture
 
-**Later team integration plan, not a claim of completed integration.** The current baseline is operator-driven simulation capture, starting with an overview and inspection label, followed by a local evidence-linked draft. Autonomous acquisition and the OpenAI worker are later integrations; any live API use requires separate authorization and rights/privacy review for both images and text. A deterministic supervisor owns movement and completion; a deterministic policy owns screening decisions. The seven nesseler sections are report categories, not seven defects a camera can always prove absent.
+**Target architecture; implemented and pending layers are distinguished in the [readiness matrix](HARDWARE_READINESS.md).** The patrol now emits per-ladder evidence jobs to an optional live OpenAI worker and dashboard. Dynamic occupancy stop/replan and open-fixture 24-view acquisition are simulation integrations. SLAM/Nav2 and real B2 execution remain pending. The following paragraph describes the earlier baseline, not these new scoped integrations.
+
+**Earlier baseline:** The current baseline is operator-driven simulation capture, starting with an overview and inspection label, followed by a local evidence-linked draft. Autonomous acquisition and the OpenAI worker are later integrations; any live API use requires separate authorization and rights/privacy review for both images and text. A deterministic supervisor owns movement and completion; a deterministic policy owns screening decisions. The seven nesseler sections are report categories, not seven defects a camera can always prove absent.
 
 ```mermaid
 flowchart TB

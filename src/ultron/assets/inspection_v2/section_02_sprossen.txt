@@ -1,0 +1,20 @@
+Section 2: Sprossen/Stufen/Plattform / rungs, steps, platform
+
+sprossen.verformung — Verformung [mode=visual]
+Look for sagged, bent or twisted rungs/steps/platform, retaining an overview for context.
+
+sprossen.beschaedigung — Beschädigung [mode=visual]
+Look for visibly missing, cracked or broken rungs, steps, treads and platform pieces; inspect the visible rung-to-rail interfaces.
+Describe unusual gaps or irregular spacing as observations. Irregular spacing alone does not establish a missing rung: retain UNKNOWN when the intended layout, occlusion or viewpoint is ambiguous, and explicitly request the missing design/context evidence.
+When a caller-verified intact reference matches the ladder design and aligned current views clearly show a structural component absent at that location, report DEFECT with current inspection image IDs and the visible discrepancy. Reference-only images cannot serve as evidence of current condition. Unseen components must not be inferred present or missing.
+
+sprossen.kanten — Scharfe Kanten, Splitter, Grat [mode=person]
+Report visible broken edges/splinters, but do not claim tactile smoothness.
+
+sprossen.verbindung — Verbindung zum Holm [mode=visual]
+Inspect visible rung-to-rail interfaces for separation or missing fasteners; no inference about tightness.
+
+sprossen.abnutzung — Abnutzung (Trittfläche, Plattformauflage) [mode=visual]
+Inspect tread texture/material loss; reflectance or dust alone is not wear.
+
+Only verified applicability may yield N_A. Unseen components are UNKNOWN, not intact.

@@ -63,7 +63,11 @@ function openLadder(dialog, record, checklist, site) {
     rows.push(el('tr', {}, el('td', {class: 'grp'}, de ? group.de : group.en), el('td', {class: 'grp'}, resultPill(items[group.key])), el('td', {class: 'grp'}, '')));
     for (const item of group.items) {
       const refs = ((record.item_photos || {})[item.key] || []).map(id => photoIndex[id]).filter(Boolean).join(', ');
-      rows.push(el('tr', {}, el('td', {style: 'padding-left:22px'}, de ? item.de : item.en), el('td', {}, resultPill(items[item.key])), el('td', {class: 'mono'}, refs)));
+      const detail = (record.criterion_details || {})[item.key];
+      const old = (record.retained_findings || {})[item.key];
+      const prior = old ? (old.photos || []).map(p => el('a', {href: `/media/${encodeURIComponent(old.mission_id)}/${encodeURIComponent(p.photo_id)}.jpg`, target: '_blank'}, `${de ? 'Früher' : 'Prior'} ${old.mission_id} `)) : [];
+      const explanation = detail ? el('div', {class: 'sub'}, `${detail.reason} · ${de ? 'Modellwert (unkalibriert)' : 'Model score (uncalibrated)'}: ${detail.confidence.toFixed(2)}`) : null;
+      rows.push(el('tr', {}, el('td', {style: 'padding-left:22px'}, de ? item.de : item.en, explanation), el('td', {}, resultPill(items[item.key])), el('td', {class: 'mono'}, refs, ...prior)));
     }
   }
   const ladder = record.ladder || {};
@@ -76,6 +80,7 @@ function openLadder(dialog, record, checklist, site) {
         el('button', {onclick: () => dialog.close()}, t('close')))),
     el('div', {class: `reason s-${record.status}`}, reasonText(record)),
     el('div', {class: 'sub'}, `${t('sticker')}: ${ladder.sticker_status || t('not_read')}${ladder.sticker_due ? ` · ${t('due')} ${ladder.sticker_due}` : ''}`),
+    record.assessment_source ? el('div', {class:'sub'}, `${record.assessment_source} · 360°: ${(record.view_coverage || {}).accepted_cells || 0}/24 (${de ? 'Blickwinkel, keine Sicherheitsfreigabe' : 'view sampling, not safety certification'})`) : null,
     el('div', {class: 'photos'}, (record.photos || []).map((p, i) => el('figure', {},
       el('img', {src: `/media/${record.mission_id}/${p.id}.jpg`, alt: `F${i + 1} ${record.asset_id}`}),
       el('figcaption', {}, `F${i + 1}`)))),
