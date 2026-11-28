@@ -345,7 +345,7 @@ class SimBridge:
                 'provenance': 'SIMULATION_ONLY'}
 
     # --- main loop ---------------------------------------------------------------------
-    def run(self, duration=None, hold_after_route=3.0):
+    def run(self, duration=None, hold_after_route=3.0, viewer=None):
         clock = self.msg['Clock']()
         wall0, t0, k = time.monotonic(), self.t, 0
         route_done_at = None
@@ -383,6 +383,8 @@ class SimBridge:
                             scan = self._drop_points(scan)
                         self._publish_cloud(scan, scan_stamp)
                         self._publish_scan(scan, scan_stamp)
+                if viewer is not None:
+                    viewer.sync()
                 elapsed = time.monotonic() - wall0
                 rtf = (self.t - t0) / elapsed if elapsed > 0 else 0.0
                 if self.t - last_status >= 1.0:
@@ -426,6 +428,7 @@ def main(argv=None):
     parser.add_argument('--lidar-profile', type=Path, help='Alternative lidar profile YAML')
     parser.add_argument('--control-hz', type=float, help='Override control/odometry rate (default from config)')
     parser.add_argument('--external-odom-tf', action='store_true', help='Leave odom-to-base TF to an external estimator')
+    parser.add_argument('--viewer', action='store_true', help='Open a rate-limited MuJoCo overview window')
     args = parser.parse_args(argv)
     config = load_sim_slam_config(args.config)
     if args.control_hz:
@@ -439,15 +442,27 @@ def main(argv=None):
     scenario = load_scenario(args.scenario) if args.scenario else None
     import rclpy
     rclpy.init()
+    viewer = None
     try:
         bridge = SimBridge(config, route, args.rate, args.out, scenario, args.people, args.motion_distortion,
                            args.odom_scale, str(args.lidar_profile) if args.lidar_profile else None,
                            external_odom_tf=args.external_odom_tf)
-        bridge.run(args.duration)
+        if args.viewer:
+            import glfw
+            from ..live_view import LiveView
+            if not glfw.init():
+                raise RuntimeError('Cannot initialize GLFW on the desktop display')
+            bridge.sim.model.vis.quality.offsamples = 0
+            bridge.sim.model.vis.quality.shadowsize = 512
+            viewer = LiveView(bridge.sim.model, bridge.sim.data, fps=3,
+                              title='ULTRON | MuJoCo LiDAR hall | Esc to stop')
+        bridge.run(args.duration, viewer=viewer)
         bridge.node.destroy_node()
     except KeyboardInterrupt:
         pass
     finally:
+        if viewer is not None:
+            viewer.close()
         if rclpy.ok():
             rclpy.shutdown()
 

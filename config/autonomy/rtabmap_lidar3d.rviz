@@ -1,0 +1,58 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Map
+      Name: Live occupancy projection
+      Enabled: true
+      Topic:
+        Value: /map
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Alpha: 0.5
+      Color Scheme: map
+    - Class: rviz_default_plugins/PointCloud2
+      Name: RTAB-Map 3D cloud
+      Enabled: true
+      Topic:
+        Value: /ultron/sim/rtabmap/cloud_map
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Style: Points
+      Size (Pixels): 3
+      Color Transformer: AxisColor
+      Axis: Z
+      Decay Time: 0
+    - Class: rviz_default_plugins/Path
+      Name: Nav2 global path
+      Enabled: true
+      Topic:
+        Value: /plan
+        Reliability Policy: Reliable
+      Color: 245; 157; 36
+      Line Style: Billboards
+      Line Width: 0.06
+    - Class: rviz_default_plugins/TF
+      Name: Robot frames
+      Enabled: true
+      Show Names: true
+      Marker Scale: 0.35
+  Global Options:
+    Fixed Frame: map
+    Background Color: 30; 33; 40
+    Frame Rate: 12
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 14
+      Pitch: 0.95
+      Yaw: 0.75
+      Focal Point:
+        X: 3
+        Y: 0
+        Z: 0
+Window Geometry:
+  Width: 940
+  Height: 760

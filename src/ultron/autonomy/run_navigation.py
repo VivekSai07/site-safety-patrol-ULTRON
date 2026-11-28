@@ -469,6 +469,7 @@ def main(argv=None):
     parser.add_argument('--rate', type=float, help='Simulation speed (default 1.0, or 0.6 for live 3D mapping)')
     parser.add_argument('--dashboard-url', help='Local dashboard URL for dashboard goals')
     parser.add_argument('--serve-dashboard', action='store_true', help='Wait for interactive dashboard goals')
+    parser.add_argument('--viewer', action='store_true', help='Show the live MuJoCo scene')
     parser.add_argument('--sdk-stand-in', action='store_true', help='Log motion gate output as stand-in SDK calls')
     args = parser.parse_args(argv)
     args.live_map = args.live_map or args.live_map_3d
@@ -553,6 +554,8 @@ def main(argv=None):
                        '--out', str(out / 'sim')]
         if args.live_map_3d:
             bridge_args.append('--external-odom-tf')
+        if args.viewer:
+            bridge_args.append('--viewer')
         procs['bridge'] = spawn(bridge_args, out / 'bridge.log')
         if args.sdk_stand_in:
             procs['sdk'] = spawn([py, '-m', 'ultron.autonomy.sdk_velocity_node',

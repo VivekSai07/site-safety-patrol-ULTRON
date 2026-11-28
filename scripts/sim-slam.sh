@@ -45,6 +45,7 @@ case "$action" in
     rviz)     # scripts/sim-slam.sh rviz [map]   ("map" layout while SLAM runs)
         layout="$repo_root/config/autonomy/sim_slam.rviz"
         [[ "${1:-}" == map ]] && layout="$repo_root/config/autonomy/sim_slam_map.rviz"
+        [[ "${1:-}" == 3d ]] && layout="$repo_root/config/autonomy/rtabmap_lidar3d.rviz"
         exec rviz2 -d "$layout" --ros-args -p use_sim_time:=true ;;
     env)      # print the environment for manual ros2 commands
         printf 'ROS_DOMAIN_ID=%s ROS_LOCALHOST_ONLY=1\n' "$ROS_DOMAIN_ID" ;;

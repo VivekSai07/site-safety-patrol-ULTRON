@@ -18,7 +18,7 @@ class DrawSchedule:
 
 class LiveView:
     """No background rendering loop; all window GL calls restore camera context."""
-    def __init__(self,model,data,fps=5):
+    def __init__(self,model,data,fps=5,*,title='ULTRON | kinematic B2 patrol | oracle detection | Esc to stop'):
         import glfw
         import mujoco
         self.glfw=glfw;self.mj=mujoco;self.model=model;self.data=data
@@ -27,7 +27,7 @@ class LiveView:
         glfw.default_window_hints()
         glfw.window_hint(glfw.VISIBLE,glfw.TRUE)
         glfw.window_hint(glfw.RESIZABLE,glfw.FALSE)
-        self.window=glfw.create_window(800,450,'ULTRON | kinematic B2 patrol | oracle detection | Esc to stop',None,None)
+        self.window=glfw.create_window(800,450,title,None,None)
         glfw.default_window_hints()
         if not self.window:
             raise RuntimeError('Cannot open MuJoCo window on DISPLAY; use the desktop terminal or headless mode')
@@ -38,8 +38,15 @@ class LiveView:
             self.scene=mujoco.MjvScene(model,maxgeom=1000)
             self.context=mujoco.MjrContext(model,mujoco.mjtFontScale.mjFONTSCALE_100)
             self.camera=mujoco.MjvCamera()
-            self.camera.type=mujoco.mjtCamera.mjCAMERA_FIXED
-            self.camera.fixedcamid=mujoco.mj_name2id(model,mujoco.mjtObj.mjOBJ_CAMERA,'overview')
+            camera_id=mujoco.mj_name2id(model,mujoco.mjtObj.mjOBJ_CAMERA,'overview')
+            if camera_id >= 0:
+                self.camera.type=mujoco.mjtCamera.mjCAMERA_FIXED
+                self.camera.fixedcamid=camera_id
+            else:
+                self.camera.lookat[:]=model.stat.center
+                self.camera.distance=1.5*model.stat.extent
+                self.camera.azimuth=115
+                self.camera.elevation=-58
             self.option=mujoco.MjvOption()
         except BaseException:
             glfw.destroy_window(self.window)

@@ -78,6 +78,45 @@ and a 0.28 m/s desired controller speed in the simulated hall.
 The automated run saves its checked results in `nav_cases.json`, a
 `cloud_map.ply` snapshot and the RTAB-Map database. [3D navigation results](SAHIL_VALIDATION.md#3d-lidar-slam-with-dashboard-navigation-in-mujoco)
 
+To watch the interactive run on a desktop, start the dashboard with
+`--goals`, source the action overlay, and add the MuJoCo viewer flag.
+
+```bash
+scripts/sim-slam.sh nav runs/live-3d-desktop --live-map-3d --serve-dashboard \
+  --viewer --dashboard-url http://127.0.0.1:8000
+```
+
+In another terminal, open the RViz2 layout for the fused 3D cloud, live
+occupancy projection, TF frames and Nav2 path.
+
+```bash
+scripts/sim-slam.sh rviz 3d
+```
+
+Open the dashboard, create a mission, and start the simulation operator
+heartbeat as shown below. Use **Set goal** on the dashboard to send the
+same goal to all three views. Press Esc in MuJoCo or Ctrl-C in the navigation
+terminal to stop the simulation.
+
+### Relaunch the three-window desktop demo
+
+On the same checkout, run the original local launcher from the repository root when its output folder and mission ID are unused.
+
+```bash
+bash runs/live-3d-desktop-01/launch.sh
+```
+
+If the original run already exists, use a fresh run folder.
+
+```bash
+demo="live-3d-desktop-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "runs/$demo"
+sed "s/live-3d-desktop-01/$demo/g" runs/live-3d-desktop-01/launch.sh > "runs/$demo/launch.sh"
+bash "runs/$demo/launch.sh"
+```
+
+Open the [dashboard](http://127.0.0.1:8000), choose **Set goal**, then click and drag on a clear mapped area. Press Ctrl-C in the launch terminal to stop the demo. On a fresh checkout, use the desktop commands above to start the three views separately.
+
 ## Navigate on a checked map
 
 The dashboard uploads a saved occupancy map and the simulator's current valid
