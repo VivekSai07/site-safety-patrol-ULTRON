@@ -37,3 +37,5 @@ mobileclip*.ts
 /deliverables/ULTRON_inspection_prompt_pack_v1/
 # Knowledge-graph data directory (generated)
 .ua/
+# Recorded B2 rosbags and their downloads stay local (gigabytes)
+/rosbags/
