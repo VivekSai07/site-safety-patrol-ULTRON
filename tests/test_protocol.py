@@ -169,6 +169,75 @@ class AssessTest(unittest.TestCase):
                 parse_json(bad)
 
 
+class SectionReaderTest(unittest.TestCase):
+    """Seven focused calls plus one for identity, using the shared rubric's guidance."""
+
+    class SectionVlm:
+        def __init__(self, fail=()):
+            self.calls, self.fail = [], set(fail)
+
+        def ask(self, prompt, frames, name, schema, quick=True):
+            self.calls.append((name, prompt))
+            if name in self.fail:
+                raise VlmError("timeout")
+            if name == "identity":
+                return {"aufstiegsart": "Stehleiter", "werkstoff": "Aluminium", "anzahl_sprossen": 7,
+                        "leiterlaenge": None, "hersteller": "Erfunden GmbH", "artikel_typ_nummer": None,
+                        "inventar_nummer": None, "plakette": {"present": False, "next_month": None,
+                                                              "next_year": None, "text": None, "image": None, "box": None}}
+            keys = schema["properties"]["criteria"]["items"]["properties"]["key"]["enum"]
+            return {"criteria": [{"key": key, "state": "DEFECT" if key == "sprossen.beschaedigung" else "OK",
+                                  "severity": "critical" if key == "sprossen.beschaedigung" else "none",
+                                  "reason": "sichtbar", "image": 0, "box": [100, 100, 600, 600], "confidence": 0.9}
+                                 for key in keys]}
+
+    def read(self, details=None, fail=()):
+        from ultron.protocol import sections
+        vlm = self.SectionVlm(fail)
+        return sections.read(vlm, [frame("a.jpg")], details, focal_px=640.0), vlm
+
+    def test_rubric_and_form_describe_the_same_23_rows(self):
+        from ultron.protocol import sections
+        paired = sections.sections()
+        self.assertEqual([len(rows) for _, rows in paired], [5, 5, 3, 5, 3, 1, 1])
+        self.assertEqual(paired[1][1][3][1]["key"], "sprossen.verbindung")
+        self.assertEqual(paired[1][1][3][0].id, "2.4")
+
+    def test_eight_focused_calls_with_guidance_and_distances(self):
+        answer, vlm = self.read(details=[320.0])
+        self.assertEqual([name for name, _ in vlm.calls], [f"section-{n}" for n in range(1, 8)] + ["identity"])
+        feet = vlm.calls[4][1]
+        self.assertIn("fuesse.vollstaendigkeit", feet)
+        self.assertIn("obscured feet remain unknown", feet)       # guidance from the shared rubric
+        self.assertNotIn("holme.verformung", feet)                 # one section at a time
+        self.assertIn("Photo 0 was taken from about 2.0 m", feet)
+        self.assertIn("fuesse.vollstaendigkeit - Vollständigkeit/Befestigung [visual] (judge it)", feet)
+        self.assertIn("fuesse.abnutzung - Abnutzung/Beschädigung [visual] (too far: UNKNOWN)", feet)
+        self.assertIn("fuesse.funktion - Funktionsfähigkeit [person]:", feet)
+        self.assertIn("No photo is close enough to read a label", vlm.calls[-1][1])
+        self.assertEqual(len(answer["criteria"]), 23)
+
+    def test_the_answer_goes_through_the_same_rules(self):
+        answer, _ = self.read(details=[320.0])
+        result = assess(answer, 1, TODAY, details=[320.0])
+        self.assertEqual(result["result"], form.RESULT_REMOVE)       # the broken rung is kept
+        self.assertEqual(result["criteria"]["1.3"]["status"], form.NOT_VISIBLE)  # burrs from 2 m: no
+        self.assertIsNone(result["master"]["hersteller"])            # label text without a close-up: no
+        self.assertEqual(result["master"]["werkstoff"], "Aluminium")
+
+    def test_a_close_up_lets_the_label_be_read(self):
+        answer, vlm = self.read(details=[320.0, 1800.0])
+        self.assertIn("Copy only text you can read without doubt", vlm.calls[-1][1])
+
+    def test_a_failed_section_leaves_its_rows_open_and_says_so(self):
+        answer, _ = self.read(details=[320.0], fail={"section-5", "identity"})
+        result = assess(answer, 1, TODAY, details=[320.0])
+        self.assertEqual({result["criteria"][i]["status"] for i in ("5.1", "5.2")}, {form.NOT_VISIBLE})
+        self.assertEqual(result["criteria"]["5.3"]["status"], form.HUMAN_CHECK)
+        self.assertIn("Abschnitt 5", result["remarks"])
+        self.assertIsNone(result["master"]["aufstiegsart"])
+
+
 class StoreTest(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()

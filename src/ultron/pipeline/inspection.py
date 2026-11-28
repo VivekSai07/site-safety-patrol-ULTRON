@@ -9,6 +9,7 @@ from . import checklists
 from .catalog import KINDS
 from .coverage import missing_views
 from .navigate import Passive
+from ..protocol import sections
 from ..protocol.assess import assess
 from ..protocol.frames import Frame
 from ..protocol.store import LIGHT_COLOURS, evidence_crop
@@ -17,7 +18,7 @@ from ..protocol.vlm import VlmError
 
 class Inspection:
     def __init__(self, objects, keyframes, vlm, store, survey=None, navigator=None, camera=None,
-                 is_free=None, max_extra_views=4, max_attempts=8, min_sightings=3, mission=None):
+                 is_free=None, max_extra_views=4, max_attempts=8, min_sightings=3, mission=None, by_section=True):
         self.objects, self.keyframes, self.vlm, self.store = objects, keyframes, vlm, store
         self.survey = survey                  # used to process frames captured at requested views
         self.navigator = navigator or Passive()
@@ -27,6 +28,7 @@ class Inspection:
         self.max_attempts = max_attempts        # navigation goals tried per object, reached or not
         self.min_sightings = min_sightings      # objects seen less often are not inspected
         self.mission = mission
+        self.by_section = by_section            # read the ladder form section by section (seven focused calls)
 
     def run(self):
         if self.survey:
@@ -76,7 +78,12 @@ class Inspection:
         return self.objects.update(site_object.id, status="INSPECTED", result=result)
 
     def _ladder(self, site_object, frames, details):
-        inspection = assess(self.vlm.inspect(frames), len(frames), details=details)
+        if self.by_section:
+            focal = self.survey.calibration.fy if self.survey and self.survey.calibration else None
+            answer = sections.read(self.vlm, frames, details, focal)
+        else:
+            answer = self.vlm.inspect(frames)
+        inspection = assess(answer, len(frames), details=details)
         sheet = self.store.record(inspection, frames, position=site_object.position, mission=self.mission,
                                   model=getattr(self.vlm, "model", None), ladder_id=site_object.id)
         last = sheet["inspections"][-1]

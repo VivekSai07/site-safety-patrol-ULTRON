@@ -144,6 +144,23 @@ coverage. Still wrong after the rule: the leaning ladder is typed "Stehleiter" a
 Reading a label or sticker needs about 1500 pixels per metre: 0.4 m from the object with the B2's
 head camera. The recording has no such view, so no row needing it has ever been filled.
 
+## Joined with the rest of the repository
+
+This branch contains `main` and Sahil's `sahil/sim-slam-nav2` (`ultron.autonomy`). Where they meet:
+
+| Piece from the team | How the pipeline uses it |
+|---|---|
+| Dashboard (`ultron.dashboard`) | `--dashboard URL`: mission, live frame, pose, events and each ladder's record. Run on the hall recording: both ladders arrive as "manual review" with photos and evidence crops |
+| Ladder prompt pack (`assets/inspection_v1/rubric.json`) | `protocol/sections.py` reads the form one section at a time with that guidance, tells the model each photo's distance and marks each criterion as judgeable or too far |
+| Navigation contract (`autonomy/navigation_contract.py`) | `navigate.ContractNavigator` turns view requests into `ultron.navigation_goal/v1` goals and waits for "capture ready"; `navigate.free_space` filters goals with the saved map's footprint check. Tested against the contract code with a scripted backend, never with Nav2 running |
+
+Section-by-section reading on the hall recording (Qwen3-VL 8B, eight calls per ladder, about 20 s):
+the model now answers the shape rows with a photo and a box, says "unknown" for rows the photos
+cannot show, and differs between the two ladders (feet in view on one, not on the other).
+
+Not joined yet: main's wider safety pack (escape routes, protective equipment), its coverage
+planner, Om's detection evaluation, and non-ladder objects on the dashboard.
+
 ## Not yet verified
 
 - Form reading has run on real frames only from two to three metres, with one small model. How

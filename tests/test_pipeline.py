@@ -557,7 +557,7 @@ class InspectionTest(Workspace):
             return frame(f"{kind}-view-{next(counter)}", pose, 100.0, depth=math.dist(pose[:2], target), seed=7)
 
         return Inspection(self.objects, self.keyframes, vlm, self.store, self.survey, navigator, camera,
-                          min_sightings=1, mission="PATROL-1")
+                          min_sightings=1, mission="PATROL-1", by_section=False)
 
     def test_rarely_seen_objects_are_not_inspected_by_default(self):
         for stamp in range(2):
@@ -725,6 +725,80 @@ class NavigatorTest(unittest.TestCase):
                 client.post("/api/goal/status", json={"seq": client.get("/api/goal").json()["seq"], "status": "SUCCEEDED"})
 
             self.assertTrue(DashboardNavigator(call, timeout=5, poll=1, sleep=bridge_reports_arrival).go_to(self.REQUEST))
+
+
+class ContractNavigatorTest(unittest.TestCase):
+    """Against the real navigation contract from ultron.autonomy, with a scripted backend instead of Nav2."""
+    PARAMS = {"default_timeout_s": 30.0, "goal_xy_tolerance_m": 0.2, "goal_yaw_tolerance_rad": 0.2,
+              "settle_speed_m_s": 0.05, "settle_yaw_rate_rad_s": 0.05, "settle_time_s": 1.0}
+    REQUEST = ViewRequest("LAD-001", "detail", 0, 3.0, 1.0, 1.57, "no detail view yet")
+
+    def setUp(self):
+        try:
+            from ultron.autonomy.navigation_contract import GoalTracker
+        except ImportError:
+            self.skipTest("ultron.autonomy not available")
+        self.GoalTracker = GoalTracker
+
+    def backend(self, nav2_codes, reject=None, settle=True):
+        from ultron.pipeline.navigate import ContractNavigator
+        tracker, codes, clock = self.GoalTracker(self.PARAMS), list(nav2_codes), [100.0]
+
+        class Scripted:
+            def __init__(self):
+                self.tracker, self.goal = tracker, None
+
+            def submit(self, goal):
+                self.goal = goal
+                return tracker.submit(goal, reject is None, reject or "OK", clock[0])
+
+            def tick(self):
+                clock[0] += 1.0
+                if codes:
+                    tracker.on_backend_status(self.goal.goal_id, codes.pop(0), clock[0])
+                elif settle:
+                    tracker.settle(clock[0], 0.0, 0.0, True, (3.0, 1.0, 1.57))
+
+            def done(self):
+                return tracker.status in ("REJECTED", "CANCELLED", "TIMEOUT", "FAILED") or (
+                    tracker.status == "REACHED" and tracker.result.capture_ready) or clock[0] > 140
+
+        scripted = Scripted()
+        return ContractNavigator(scripted, self.PARAMS, "PATROL-1", "hall", 1, clock=lambda: clock[0]), scripted
+
+    def test_reached_and_settled_counts_as_arrived(self):
+        navigator, backend = self.backend([1, 2, 4])  # accepted, executing, succeeded
+        self.assertTrue(navigator.go_to(self.REQUEST))
+        goal = backend.goal
+        self.assertEqual((goal.schema, goal.asset_id, goal.x, goal.y), ("ultron.navigation_goal/v1", "LAD-001", 3.0, 1.0))
+        self.assertIn("detail view of LAD-001", goal.reason)
+        self.assertTrue(navigator.results[0].capture_ready)
+
+    def test_reached_but_never_settled_is_not_arrived(self):
+        navigator, _ = self.backend([1, 4], settle=False)
+        self.assertFalse(navigator.go_to(self.REQUEST))
+
+    def test_rejected_aborted_and_cancelled_goals_fail(self):
+        self.assertFalse(self.backend([], reject="TARGET_FOOTPRINT_OCCUPIED")[0].go_to(self.REQUEST))
+        self.assertFalse(self.backend([1, 6])[0].go_to(self.REQUEST))
+        self.assertFalse(self.backend([1, 5])[0].go_to(self.REQUEST))
+
+    def test_free_space_comes_from_the_saved_map(self):
+        try:
+            import yaml  # noqa: F401
+        except ImportError:
+            self.skipTest("PyYAML not installed")
+        from ultron.autonomy.navigation_contract import MapFootprint
+        from ultron.pipeline.navigate import free_space
+        with tempfile.TemporaryDirectory() as folder:
+            grid = np.full((100, 100), 254, dtype=np.uint8)   # free
+            grid[:, 60:] = 0                                  # a wall from x = 3 m
+            Image.fromarray(grid).save(Path(folder, "map.pgm"))
+            Path(folder, "map.yaml").write_text(
+                "image: map.pgm\nresolution: 0.05\norigin: [0.0, 0.0, 0.0]\nnegate: 0\n"
+                "occupied_thresh: 0.65\nfree_thresh: 0.25\n")
+            is_free = free_space(MapFootprint(Path(folder, "map.yaml")), 0.4)
+            self.assertEqual((is_free(1.5, 2.5), is_free(2.8, 2.5), is_free(9.0, 2.5)), (True, False, False))
 
 
 if __name__ == "__main__":
