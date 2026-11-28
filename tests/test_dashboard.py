@@ -8,7 +8,7 @@ try:
     from fastapi.testclient import TestClient
     from ultron.dashboard.app import create_app
     from ultron.dashboard.bus import Bus, sse_stream
-    from ultron.dashboard.models import Inspection
+    from ultron.dashboard.models import Fence, Inspection
     from ultron.dashboard.checklist import from_sim_checks
     from ultron.dashboard.notify import Notifier, load_config
     from ultron.dashboard.store import Store
@@ -448,7 +448,8 @@ class NavigationTest(unittest.TestCase):
     def test_goal_round_trip(self):
         client, published = self.make()
         goal = client.post('/api/goal', json={'x': 3.5, 'y': -1.0, 'yaw': 1.57}).json()
-        self.assertEqual(goal, {'seq': 1, 'x': 3.5, 'y': -1.0, 'yaw': 1.57, 'frame_id': 'map', 'status': 'SENT', 'detail': ''})
+        self.assertEqual(goal, {'seq': 1, 'x': 3.5, 'y': -1.0, 'yaw': 1.57, 'frame_id': 'map', 'by': 'operator',
+                                'status': 'SENT', 'detail': ''})
         self.assertEqual(published[-1], ('goal', goal))
         # the bridge reports progress on the current goal; a newer goal replaces it
         self.assertEqual(client.post('/api/goal/status', json={'seq': 1, 'status': 'ACCEPTED'}).json()['status'], 'ACCEPTED')
@@ -505,7 +506,8 @@ class ExplorationTest(unittest.TestCase):
         self.assertEqual(self.ask(client, 'finish').status_code, 409)       # nothing running
         self.ask(client, 'start')
         self.assertEqual(self.ask(client, 'start').status_code, 409)        # already starting
-        self.assertEqual(self.ask(client, 'pause').status_code, 422)        # unknown action
+        self.assertEqual(self.ask(client, 'pause').status_code, 409)        # nothing to pause before EXPLORING
+        self.assertEqual(self.ask(client, 'jump').status_code, 422)         # unknown action
         self.assertEqual(self.report(client, 1, 'STARTING').status_code, 422)  # the operator's state, not the bridge's
         self.ask(client, 'finish')
         self.assertEqual(self.report(client, 1, 'EXPLORING').status_code, 409)  # stale: seq 2 is current
@@ -531,6 +533,275 @@ class ExplorationTest(unittest.TestCase):
         self.assertEqual(self.ask(client, 'start').status_code, 409)        # goal SENT, not finished
         client.post('/api/goal/status', json={'seq': 1, 'status': 'SUCCEEDED'})
         self.assertEqual(self.ask(client, 'start').status_code, 201)
+
+
+@unittest.skipUnless(HAVE_DASHBOARD, 'dashboard extras not installed')
+class PauseLeaseTest(unittest.TestCase):
+    """Pause / renew / resume (docs/EXPLORATION_CONTRACT.md): the pipeline pauses the explorer on a lease to
+    collect views; the operator always wins; the dashboard resumes by itself when a lease runs out."""
+
+    def make(self):
+        self.t = 1000.0
+        app = create_app(':memory:', allow_goals=True, clock=lambda: self.t)
+        self.published = []
+        app.state.bus.publish = lambda kind, data: self.published.append((kind, data))
+        self.client = TestClient(app)
+        return self.client
+
+    def ask(self, action, **extra):
+        return self.client.post('/api/exploration', json={'action': action, **extra})
+
+    def report(self, state, **extra):
+        seq = self.client.get('/api/exploration').json()['seq']
+        return self.client.post('/api/exploration/status', json={'seq': seq, 'state': state, **extra})
+
+    def goal(self, by='operator'):
+        return self.client.post('/api/goal', json={'x': 1, 'y': 2, 'by': by})
+
+    def state(self):
+        return self.client.get('/api/exploration').json()
+
+    def exploring(self):
+        self.make()
+        self.ask('start')
+        self.report('EXPLORING')
+
+    def paused(self, by='pipeline', lease_s=60):
+        self.exploring()
+        self.ask('pause', by=by, lease_s=lease_s, reason='views of LAD-002')
+        self.report('PAUSED')
+
+    def test_pipeline_pause_round_trip(self):
+        self.exploring()
+        pausing = self.ask('pause', by='pipeline', lease_s=30, reason='views of LAD-002').json()
+        self.assertEqual((pausing['state'], pausing['by'], pausing['detail'], pausing['seq']),
+                         ('PAUSING', 'pipeline', 'views of LAD-002', 2))
+        self.assertEqual(pausing['lease_until'], '1970-01-01T00:17:10+00:00')  # clock 1000 s + 30 s
+        self.assertEqual(self.published[-1], ('exploration', pausing))
+        self.assertEqual(self.goal('pipeline').json()['detail'], 'pausing')
+        paused = self.report('PAUSED').json()  # the bridge confirms; holder and lease carry over
+        self.assertEqual((paused['state'], paused['by'], paused['lease_until']), ('PAUSED', 'pipeline', pausing['lease_until']))
+        goal = self.goal('pipeline')
+        self.assertEqual((goal.status_code, goal.json()['by']), (201, 'pipeline'))
+        self.client.post('/api/goal/status', json={'seq': 1, 'status': 'ACCEPTED'})
+        resuming = self.ask('resume', by='pipeline').json()
+        self.assertEqual((resuming['state'], resuming['seq'], resuming['lease_until']), ('RESUMING', 3, None))
+        # the pipeline's goal is cancelled first, so the bridge stops it before the explorer takes Nav2 back
+        kinds = [k for k, _ in self.published[-2:]]
+        self.assertEqual(kinds, ['goal', 'exploration'])
+        self.assertEqual(self.client.get('/api/goal').json()['status'], 'CANCELED')
+        self.assertEqual(self.client.post('/api/goal/status', json={'seq': 1, 'status': 'ACCEPTED'}).status_code, 409)
+        self.assertEqual(self.report('EXPLORING').json()['state'], 'EXPLORING')
+        self.assertEqual(self.goal('pipeline').json()['detail'], 'exploring')
+
+    def test_renew_extends_the_lease_without_a_new_request(self):
+        self.paused(lease_s=60)
+        seq = self.state()['seq']
+        self.t += 50
+        renewed = self.ask('renew', by='pipeline', lease_s=60).json()
+        self.assertEqual((renewed['seq'], renewed['state']), (seq, 'PAUSED'))   # same seq: nothing for the bridge
+        self.assertEqual(renewed['lease_until'], '1970-01-01T00:18:30+00:00')   # 1050 + 60
+        self.t += 50                                                             # past the first lease
+        self.assertEqual(self.state()['state'], 'PAUSED')
+        refused = self.ask('renew', by='operator')                              # not the operator's pause
+        self.assertEqual((refused.status_code, refused.json()['detail']), (409, 'paused by pipeline'))
+
+    def test_renew_while_pausing_keeps_the_confirmation_valid(self):
+        self.exploring()
+        self.ask('pause', by='pipeline')
+        self.ask('renew', by='pipeline')
+        self.assertEqual(self.report('PAUSED').status_code, 200)
+
+    def test_lease_runs_out_and_the_dashboard_resumes(self):
+        self.paused(lease_s=20)
+        self.goal('pipeline')
+        self.t += 19.9
+        self.assertEqual(self.state()['state'], 'PAUSED')
+        self.t += 0.2
+        ex = self.state()                                 # any request checks the lease
+        self.assertEqual((ex['state'], ex['by'], ex['detail'], ex['lease_until']),
+                         ('RESUMING', 'dashboard', 'pause lease ran out', None))
+        goal = self.client.get('/api/goal').json()
+        self.assertEqual((goal['status'], goal['detail']), ('CANCELED', 'pause lease ran out'))
+        self.assertEqual(self.ask('renew', by='pipeline').status_code, 409)   # too late
+        self.assertEqual(self.report('EXPLORING').json()['state'], 'EXPLORING')
+
+    def test_lease_runs_out_while_still_pausing(self):
+        self.exploring()
+        self.ask('pause', by='pipeline', lease_s=5)
+        self.t += 6
+        self.assertEqual(self.state()['state'], 'RESUMING')
+
+    def test_lease_expiry_needs_no_request(self):
+        # the pipeline died silently and nobody touches the dashboard: the background check resumes
+        import time as _time
+        self.t = _time.time()
+        app = create_app(':memory:', allow_goals=True, clock=lambda: self.t)
+        with TestClient(app) as client:
+            client.post('/api/exploration', json={'action': 'start'})
+            client.post('/api/exploration/status', json={'seq': 1, 'state': 'EXPLORING'})
+            client.post('/api/exploration', json={'action': 'pause', 'by': 'pipeline', 'lease_s': 1})
+            self.t += 5
+            deadline = _time.time() + 3
+            while app.state.live['exploration']['state'] != 'RESUMING' and _time.time() < deadline:
+                _time.sleep(0.1)
+            self.assertEqual(app.state.live['exploration']['state'], 'RESUMING')
+
+    def test_lease_is_capped_and_operator_pause_has_none(self):
+        self.exploring()
+        self.assertEqual(self.ask('pause', by='pipeline', lease_s=999).json()['lease_until'],
+                         '1970-01-01T00:19:40+00:00')   # 1000 + 180
+        self.assertEqual(self.ask('pause', by='pipeline', lease_s=0).status_code, 422)
+        self.exploring()
+        operator = self.ask('pause').json()
+        self.assertEqual((operator['state'], operator['by'], operator['lease_until']), ('PAUSING', 'operator', None))
+        self.report('PAUSED')
+        self.t += 10_000
+        self.assertEqual(self.state()['state'], 'PAUSED')    # an operator pause never runs out
+
+    def test_operator_goal_takes_over_a_pipeline_pause(self):
+        self.paused()
+        self.goal('pipeline')
+        goal = self.goal('operator').json()                   # replaces the pipeline's goal
+        self.assertEqual((goal['seq'], goal['by']), (2, 'operator'))
+        ex = self.state()
+        self.assertEqual((ex['state'], ex['by'], ex['lease_until']), ('PAUSED', 'operator', None))
+        self.t += 10_000
+        self.assertEqual(self.state()['state'], 'PAUSED')     # no lease any more
+        self.assertEqual(self.ask('resume', by='pipeline').json()['detail'], 'paused by operator')
+        self.assertEqual(self.ask('renew', by='pipeline').status_code, 409)
+        # the operator resumes: their own goal stops, the explorer drives again
+        self.assertEqual(self.ask('resume').json()['state'], 'RESUMING')
+        self.assertEqual(self.client.get('/api/goal').json()['status'], 'CANCELED')
+
+    def test_operator_pause_takes_over_a_pipeline_pause(self):
+        self.paused()
+        seq = self.state()['seq']
+        taken = self.ask('pause').json()
+        self.assertEqual((taken['state'], taken['by'], taken['lease_until'], taken['seq']), ('PAUSED', 'operator', None, seq))
+        self.assertEqual(self.ask('pause').json()['by'], 'operator')      # again: nothing changes
+        self.assertEqual(self.ask('pause', by='pipeline').status_code, 409)
+
+    def test_goal_ownership(self):
+        self.make()                                            # no exploration: rung 2, manual goals
+        self.assertEqual(self.goal('pipeline').status_code, 201)
+        self.assertEqual(self.goal('operator').status_code, 201)          # replaces the pipeline's
+        refused = self.goal('pipeline')
+        self.assertEqual((refused.status_code, refused.json()['detail']), (409, 'operator goal underway'))
+        self.client.post('/api/goal/status', json={'seq': 2, 'status': 'ACCEPTED'})
+        self.assertEqual(self.goal('pipeline').json()['detail'], 'operator goal underway')
+        self.client.post('/api/goal/status', json={'seq': 2, 'status': 'SUCCEEDED'})
+        self.assertEqual(self.goal('pipeline').status_code, 201)
+        self.assertEqual(self.goal('operator').status_code, 201)
+        self.assertEqual(self.client.post('/api/goal', json={'x': 1, 'y': 2, 'by': 'robot'}).status_code, 422)
+
+    def test_every_goal_is_refused_while_exploring(self):
+        self.make()
+        self.ask('start')
+        for by in ('operator', 'pipeline'):
+            self.assertEqual((self.goal(by).status_code, self.goal(by).json()['detail']), (409, 'exploring'))
+        self.report('EXPLORING')
+        self.assertEqual(self.goal('operator').json()['detail'], 'exploring')
+        self.ask('pause')
+        self.assertEqual(self.goal('operator').json()['detail'], 'pausing')
+        self.report('PAUSED')
+        self.assertEqual(self.goal('operator').status_code, 201)
+        self.client.post('/api/goal/status', json={'seq': 1, 'status': 'SUCCEEDED'})
+        self.ask('resume')
+        self.assertEqual(self.goal('pipeline').json()['detail'], 'exploring')
+
+    def test_finish_from_every_active_state(self):
+        for setup in ('starting', 'exploring', 'pausing', 'paused', 'resuming'):
+            self.make()
+            self.ask('start')
+            if setup != 'starting':
+                self.report('EXPLORING')
+            if setup in ('pausing', 'paused', 'resuming'):
+                self.ask('pause', by='pipeline')
+            if setup in ('paused', 'resuming'):
+                self.report('PAUSED')
+                self.goal('pipeline')
+            if setup == 'resuming':
+                self.ask('resume', by='pipeline')
+            finishing = self.ask('finish').json()
+            self.assertEqual((finishing['state'], finishing['lease_until']), ('FINISHING', None), setup)
+            if setup == 'paused':  # explore_lite cancels every goal as it stops; say so on the goal
+                self.assertEqual(self.client.get('/api/goal').json()['status'], 'CANCELED')
+            self.assertEqual(self.report('MAPPED').json()['state'], 'MAPPED')
+
+    def test_transitions_that_make_no_sense_are_refused(self):
+        self.make()
+        for action in ('pause', 'renew', 'resume', 'finish'):
+            self.assertEqual(self.ask(action).status_code, 409, action)       # IDLE
+        self.ask('start')
+        for action in ('start', 'renew', 'resume'):
+            self.assertEqual(self.ask(action).status_code, 409, action)       # STARTING
+        self.report('EXPLORING')
+        for action in ('start', 'renew', 'resume'):
+            self.assertEqual(self.ask(action).status_code, 409, action)       # EXPLORING
+        self.ask('pause')
+        self.assertEqual(self.ask('start').status_code, 409)
+        self.report('PAUSED')
+        self.assertEqual(self.ask('start').status_code, 409)
+        self.ask('resume')
+        for action in ('pause', 'renew', 'resume'):
+            self.assertEqual(self.ask(action).status_code, 409, action)       # RESUMING
+        self.assertEqual(self.report('PAUSING').status_code, 422)           # the operator's state, not the bridge's
+        self.assertEqual(self.report('PAUSED').json()['state'], 'PAUSED')     # bridge could not resume: it says so
+
+    def test_bridge_failure_while_paused_ends_the_lease(self):
+        self.paused()
+        failed = self.report('FAILED', detail='explorer exited with code 1').json()
+        self.assertEqual((failed['state'], failed['lease_until'], failed['by']), ('FAILED', None, 'pipeline'))
+        self.assertEqual(self.ask('renew', by='pipeline').status_code, 409)
+        self.assertEqual(self.goal('pipeline').status_code, 201)            # rung 2: goals still work
+        self.assertEqual(self.ask('start').status_code, 409)                # goal underway
+
+
+@unittest.skipUnless(HAVE_DASHBOARD, 'dashboard extras not installed')
+class FenceAndObstaclesTest(unittest.TestCase):
+    make = NavigationTest.make
+    ROOM = {'frame_id': 'map', 'polygon': [[0, 0], [8, 0], [8, 5], [0, 5]]}
+
+    def test_fence_round_trip(self):
+        client, published = self.make()
+        self.assertIsNone(client.get('/api/fence').json())
+        fence = client.put('/api/fence', json=self.ROOM).json()
+        self.assertEqual(fence, self.ROOM)
+        self.assertEqual(published[-1], ('fence', self.ROOM))
+        self.assertEqual(client.get('/api/fence').json(), self.ROOM)
+        self.assertEqual(client.get('/api/live').json()['fence'], self.ROOM)
+        self.assertEqual(client.delete('/api/fence').status_code, 204)
+        self.assertEqual(published[-1], ('fence', None))
+        self.assertIsNone(client.get('/api/fence').json())
+
+    def test_fence_is_validated(self):
+        client, published = self.make()
+        for bad in ({'polygon': [[0, 0], [1, 0]]},                                  # fewer than 3 points
+                    {'polygon': [[0, 0], [1, 0], [2, 0]]},                          # no area
+                    {'polygon': [[0, 0], [1, 0], [1]]},                             # not [x, y]
+                    {'polygon': [[0, 0], [1, 0], [1, 'x']]},
+                    {'frame_id': 'map frame', 'polygon': self.ROOM['polygon']},
+                    {'frame_id': 'map'}):
+            self.assertEqual(client.put('/api/fence', json=bad).status_code, 422, bad)
+        with self.assertRaises(ValueError):  # Python's json reads NaN; FastAPI cannot echo it back in a 422
+            Fence(polygon=[[0, 0], [1, 0], [float('nan'), 1]])
+        self.assertEqual(published, [])
+
+    def test_fence_given_at_start_up(self):
+        app = create_app(':memory:', fence=self.ROOM)
+        self.assertEqual(TestClient(app).get('/api/fence').json(), self.ROOM)
+
+    def test_obstacles_round_trip_and_validation(self):
+        client, published = self.make()
+        self.assertIsNone(client.get('/api/obstacles').json())
+        body = {'frame_id': 'map', 'cell': 0.1, 'cells': [[1.05, 2.05], [1.15, 2.05]]}
+        self.assertEqual(client.put('/api/obstacles', json=body).json(), body)
+        self.assertEqual(published[-1], ('obstacles', body))
+        cleared = client.put('/api/obstacles', json={**body, 'cells': []}).json()   # replaced on every PUT
+        self.assertEqual(client.get('/api/obstacles').json(), cleared)
+        for bad in ({**body, 'cell': 0}, {**body, 'cell': -1}, {**body, 'cells': [[1, 2, 3]]}, {'cells': []}):
+            self.assertEqual(client.put('/api/obstacles', json=bad).status_code, 422, bad)
 
 
 @unittest.skipUnless(HAVE_DASHBOARD, 'dashboard extras not installed')

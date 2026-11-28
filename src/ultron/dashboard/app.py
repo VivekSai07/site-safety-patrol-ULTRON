@@ -4,7 +4,9 @@ import contextlib
 import csv
 import io
 import math
+import time
 from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -14,8 +16,9 @@ from PIL import Image
 
 from . import checklist, protocol_pdf, site_checklists
 from .bus import Bus, sse_stream
-from .models import (EXPLORATION_ACTIVE, Event, ExplorationAction, ExplorationRequest, ExplorationState,
-                     ExplorationUpdate, Goal, GoalUpdate, Inspection, MissionEnd, MissionStart, Pose, SiteCheck, safe_id)
+from .models import (EXPLORATION_ACTIVE, EXPLORATION_DRIVING, EXPLORATION_PAUSE, Event, ExplorationAction,
+                     ExplorationRequest, ExplorationState, ExplorationUpdate, Fence, Goal, GoalUpdate, Inspection,
+                     MissionEnd, MissionStart, Obstacles, Pose, SiteCheck, safe_id)
 from .notify import Notifier, load_config
 from .store import Duplicate, Store, now
 
@@ -47,13 +50,18 @@ def route_point_due(last, pose):
 
 
 def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_config=None, channels=None,
-               escalation_period_s=5.0, allow_goals=False):
-    """allow_goals: accept navigation goals from the map. Off by default: a goal is motion authority."""
+               escalation_period_s=5.0, allow_goals=False, fence=None, clock=time.time):
+    """allow_goals: accept navigation goals from the map. Off by default: a goal is motion authority.
+    fence: the room's polygon at start-up (a Fence dict), so a dashboard restart does not drop it.
+    clock: wall time for pause leases (tests pass a fake one)."""
     store, bus = Store(db_path), Bus()
     media = Path(media_dir)
     notifier = Notifier(store, bus, notify_config or load_config(), channels)
     live = {'pose': {}, 'trail': {}, 'frames': {}, 'map': None, 'goal': None, 'route_last': {},
-            'exploration': {'seq': 0, 'state': ExplorationState.IDLE.value, 'detail': '', 'by': '', 'since': now()}}
+            'exploration': {'seq': 0, 'state': ExplorationState.IDLE.value, 'detail': '', 'by': '', 'since': now(),
+                            'lease_until': None},
+            'lease': None,  # clock() time a pipeline pause runs out; None: no lease
+            'fence': None if fence is None else Fence(**fence).model_dump(), 'obstacles': None}
 
     @contextlib.asynccontextmanager
     async def lifespan(_app):
@@ -64,9 +72,15 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
                 await asyncio.sleep(escalation_period_s)
                 await asyncio.to_thread(notifier.check_escalations)
 
-        task = asyncio.create_task(escalations())
+        async def leases():  # a pipeline that died silently must not leave the explorer paused for ever
+            while True:
+                await asyncio.sleep(1.0)
+                check_lease()
+
+        tasks = [asyncio.create_task(escalations()), asyncio.create_task(leases())]
         yield
-        task.cancel()
+        for task in tasks:
+            task.cancel()
 
     app = FastAPI(title='ULTRON ladder patrol dashboard', lifespan=lifespan)
     app.state.store, app.state.bus, app.state.notifier, app.state.live = store, bus, notifier, live
@@ -151,8 +165,9 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
         missions = store.missions()
         running = [m for m in missions if m['status'] == 'RUNNING']
         mission = (running or missions or [None])[0]
+        check_lease()
         nav = {'grid': map_meta(), 'goal': live['goal'], 'goals_enabled': allow_goals,
-               'exploration': live['exploration']}
+               'exploration': live['exploration'], 'fence': live['fence']}
         if mission is None:
             return {'mission': None, **nav}
         mid = mission['id']
@@ -239,13 +254,25 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
             raise HTTPException(404, 'no occupancy map was recorded for this mission')
         return Response(grid['png'], media_type='image/png')
 
-    # Navigation goal (browser -> robot side). One current goal; a new one replaces it, like RViz.
+    # Navigation goal (browser or pipeline -> robot side). One current goal; a new one replaces it, like RViz.
+    # One owner of Nav2 at a time: operator > pipeline > explorer (docs/EXPLORATION_CONTRACT.md).
+    # The pipeline matches on the 409 details, so they are fixed words.
     @app.post('/api/goal', status_code=201)
     async def set_goal(body: Goal):
         if not allow_goals:
             raise HTTPException(403, 'goals are disabled; start the dashboard with --goals')
-        if exploring():  # the explorer drives the same Nav2 action, and pausing it cancels every goal
-            raise HTTPException(409, 'the robot is exploring; finish mapping before setting a goal')
+        check_lease()
+        current = ExplorationState(live['exploration']['state'])
+        if current in EXPLORATION_DRIVING:  # the explorer drives the same Nav2 action
+            raise HTTPException(409, 'exploring')
+        if current is ExplorationState.PAUSING:  # explore_lite cancels every goal on the action server as it stops
+            raise HTTPException(409, 'pausing')
+        if body.by == 'pipeline' and goal_underway('operator'):
+            raise HTTPException(409, 'operator goal underway')
+        ex = live['exploration']
+        if body.by == 'operator' and current is ExplorationState.PAUSED and ex['by'] != 'operator':
+            # the operator took over: the pipeline's lease and resume no longer end this pause
+            set_exploration(ex['seq'], current, 'operator took over', 'operator')
         seq = (live['goal'] or {}).get('seq', 0) + 1
         live['goal'] = {'seq': seq, **body.model_dump(), 'status': 'SENT', 'detail': ''}
         bus.publish('goal', live['goal'])
@@ -260,48 +287,128 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
         goal = live['goal']
         if goal is None or goal['seq'] != body.seq:
             raise HTTPException(409, 'that goal is no longer the current one')
+        if goal['status'] == 'CANCELED' and body.status.value in ('SENT', 'ACCEPTED'):
+            raise HTTPException(409, 'that goal was cancelled')  # a late ACCEPTED must not revive it
         goal.update(status=body.status.value, detail=body.detail[:200])
         bus.publish('goal', goal)
         return goal
 
-    # Exploration (browser -> bridge -> m-explore-ros2): the operator starts mapping whenever they want
-    # and can finish it at any time; the explorer also ends it itself when no frontiers are left.
-    def exploring():
-        return ExplorationState(live['exploration']['state']) in EXPLORATION_ACTIVE
+    def goal_underway(by=None):
+        goal = live['goal']
+        return goal is not None and goal['status'] in ('SENT', 'ACCEPTED') and by in (None, goal.get('by', 'operator'))
 
-    def goal_underway():
-        return live['goal'] is not None and live['goal']['status'] in ('SENT', 'ACCEPTED')
+    def cancel_goal(detail):
+        """The explorer is about to take Nav2 back (or stops, and explore_lite cancels every goal as it
+        does): mark the running goal CANCELED so the bridge cancels it and nobody waits on it."""
+        if goal_underway():
+            live['goal'].update(status='CANCELED', detail=detail)
+            bus.publish('goal', live['goal'])
 
-    def set_exploration(seq, state, detail='', by=''):
-        live['exploration'] = {'seq': seq, 'state': state.value, 'detail': detail[:200], 'by': by, 'since': now()}
+    # Exploration (browser or pipeline -> bridge -> m-explore-ros2): the operator starts mapping whenever they
+    # want and can finish it at any time; the explorer also ends it itself when no frontiers are left. The
+    # pipeline pauses it to collect views of an object, on a lease it renews.
+    def iso(t):
+        return datetime.fromtimestamp(t, timezone.utc).isoformat(timespec='seconds')
+
+    def set_exploration(seq, state, detail='', by='', lease=None):
+        live['lease'] = lease if state in EXPLORATION_PAUSE else None
+        live['exploration'] = {'seq': seq, 'state': state.value, 'detail': detail[:200], 'by': by, 'since': now(),
+                               'lease_until': None if live['lease'] is None else iso(live['lease'])}
         bus.publish('exploration', live['exploration'])
         return live['exploration']
+
+    def check_lease():
+        """A pipeline pause that was not renewed in time ends by itself: the pipeline may have crashed."""
+        ex = live['exploration']
+        if live['lease'] is not None and clock() >= live['lease'] and ExplorationState(ex['state']) in EXPLORATION_PAUSE:
+            cancel_goal('pause lease ran out')
+            set_exploration(ex['seq'] + 1, ExplorationState.RESUMING, 'pause lease ran out', 'dashboard')
 
     @app.post('/api/exploration', status_code=201)
     async def request_exploration(body: ExplorationRequest):
         if not allow_goals:
             raise HTTPException(403, 'robot control is off; start the dashboard in live mode')
-        current = ExplorationState(live['exploration']['state'])
-        seq = live['exploration']['seq'] + 1
-        if body.action == ExplorationAction.START:
+        check_lease()
+        ex = live['exploration']
+        current = ExplorationState(ex['state'])
+        seq = ex['seq'] + 1
+        action = body.action
+        if action == ExplorationAction.START:
             if current in EXPLORATION_ACTIVE:
                 raise HTTPException(409, f'exploration is already {current.value}')
             if goal_underway():
                 raise HTTPException(409, 'a navigation goal is underway; wait for it or set no new one')
-            return set_exploration(seq, ExplorationState.STARTING, by='operator')
-        if current not in (ExplorationState.STARTING, ExplorationState.EXPLORING):
+            return set_exploration(seq, ExplorationState.STARTING, body.reason, body.by)
+        if action == ExplorationAction.PAUSE:
+            if current in EXPLORATION_PAUSE and body.by == 'operator':
+                # operator > pipeline: the operator keeps a pipeline pause as their own, with no lease
+                return ex if ex['by'] == 'operator' else set_exploration(ex['seq'], current, 'operator took over', 'operator')
+            if current is not ExplorationState.EXPLORING:
+                raise HTTPException(409, f'nothing to pause: exploration is {current.value}')
+            lease = clock() + body.lease_s if body.by == 'pipeline' else None
+            return set_exploration(seq, ExplorationState.PAUSING, body.reason, body.by, lease)
+        if action == ExplorationAction.RENEW:
+            if current not in EXPLORATION_PAUSE:
+                raise HTTPException(409, f'nothing to renew: exploration is {current.value}')
+            if body.by != ex['by']:
+                raise HTTPException(409, f"paused by {ex['by']}")
+            if body.by == 'pipeline':  # same request, same seq: the bridge has nothing to do
+                live['lease'] = clock() + body.lease_s
+                ex['lease_until'] = iso(live['lease'])
+                bus.publish('exploration', ex)
+            return ex
+        if action == ExplorationAction.RESUME:
+            if current not in EXPLORATION_PAUSE:
+                raise HTTPException(409, f'nothing to resume: exploration is {current.value}')
+            if body.by == 'pipeline' and ex['by'] == 'operator':
+                raise HTTPException(409, 'paused by operator')
+            cancel_goal('exploration resumed')
+            return set_exploration(seq, ExplorationState.RESUMING, body.reason, body.by)
+        if current not in EXPLORATION_ACTIVE - {ExplorationState.FINISHING}:
             raise HTTPException(409, f'nothing to finish: exploration is {current.value}')
-        return set_exploration(seq, ExplorationState.FINISHING, by='operator')
+        cancel_goal('mapping finished')
+        return set_exploration(seq, ExplorationState.FINISHING, body.reason, body.by)
 
     @app.get('/api/exploration')
     async def get_exploration():
+        check_lease()
         return live['exploration']
 
     @app.post('/api/exploration/status')
     async def exploration_status(body: ExplorationUpdate):
-        if body.seq != live['exploration']['seq']:
+        check_lease()
+        ex = live['exploration']
+        if body.seq != ex['seq']:
             raise HTTPException(409, 'that request is no longer the current one')
-        return set_exploration(body.seq, body.state, body.detail, body.by or live['exploration']['by'])
+        # the holder and lease of a pause carry over when the bridge confirms PAUSED
+        return set_exploration(body.seq, body.state, body.detail, body.by or ex['by'], live['lease'])
+
+    # Fence (operator -> bridge, pipeline): nothing outside it is a goal, a frontier or an object.
+    @app.get('/api/fence')
+    async def get_fence():
+        return live['fence']
+
+    @app.put('/api/fence')
+    async def put_fence(body: Fence):
+        live['fence'] = body.model_dump()
+        bus.publish('fence', live['fence'])
+        return live['fence']
+
+    @app.delete('/api/fence', status_code=204)
+    async def delete_fence():
+        live['fence'] = None
+        bus.publish('fence', None)
+
+    # Obstacles Nav2 may not see (pipeline -> bridge): known objects' footprints, replaced on every PUT.
+    @app.get('/api/obstacles')
+    async def get_obstacles():
+        return live['obstacles']
+
+    @app.put('/api/obstacles')
+    async def put_obstacles(body: Obstacles):
+        live['obstacles'] = body.model_dump()
+        bus.publish('obstacles', live['obstacles'])
+        return live['obstacles']
 
     @app.post('/api/events', status_code=201)
     async def add_event(body: Event):
