@@ -219,7 +219,14 @@ What the open yard forced (the hall recording had none of it):
   stepladders 0.3 m apart edge to edge): lined up (0.02 m); L49's old place reported moved, the
   ladder at its new place a new object; the twins two objects, each on the right one; no
   duplicates. L10's removal is not reported: D passed no nearer than 5.3 m.
-- **Gone against a wall cannot be seen**: the look-through test sees an empty place only in front of
+- Patrol D2 on D's map (the twins re-seen at 3.3 m, together and L52 alone; a stop facing L10's
+  empty place): seen together from 5-8 m in D, each twin's footprint had picked up a thin layer
+  of the other's cells, so every later sighting touched both and was left unassigned. A sighting
+  touching two objects known to be different now goes to the one whose footprint holds its cells
+  clearly more strongly (counts, not just presence). D2 then re-observes both twins, each on the
+  right one (23 -> 143 and 29 -> 151 sightings), and makes no third. The detector found L52 alone
+  in only 1 of 57 frames.
+- **Gone against a wall cannot be seen** (measured at D2's stop: 29 "occupied", no "empty"): the look-through test sees an empty place only in front of
   open space. Where L10 leaned, the container wall stands at the footprint's distance and reads as
   "something there". The same holds for every wall-mounted kind (extinguisher, hose cabinet, alarm
   box): their removal is never reported. Not yet addressed.

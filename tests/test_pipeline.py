@@ -579,6 +579,41 @@ class SurveyTest(Workspace):
         self.assertEqual(self.store.events()[-1]["message"], "model crashed")
 
 
+class TwinsTest(unittest.TestCase):
+    """Two identical ladders 0.3 m apart, once seen together (so known to be two)."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.objects = ObjectMap(folder.name)
+
+    @staticmethod
+    def sighting(first_i, shift=0):
+        """A ladder covering 0.5 m x 1 m of floor from cell (first_i, 100), moved `shift` cells along x."""
+        cells = [[i + shift, j] for i in range(first_i, first_i + 5) for j in range(100, 110)]
+        return Sighting(Detection("ladder", [400, 200, 600, 800], 0.9), (((first_i + 2.5 + shift) * CELL), 10.5), 3.0,
+                        cells=cells)
+
+    def test_a_twin_seen_alone_is_matched_to_the_one_it_lies_on(self):
+        for stamp in range(10):  # both in view together
+            left = self.objects.observe(self.sighting(100), stamp)
+            right = self.objects.observe(self.sighting(108), stamp, exclude={left.id})
+            self.objects.seen_together([left.id, right.id])
+        self.assertEqual((left.id, right.id), ("LAD-001", "LAD-002"))
+        # Seen together from further away, each picked up a few cells of the other (as on the
+        # simulated yard): now their footprints overlap, though thinly where they overlap.
+        for one, other in (("LAD-001", 108), ("LAD-002", 100)):
+            cells = dict(self.objects.get(one).cells)
+            cells.update({f"{i},{j}": 2 for i in range(other, other + 5) for j in range(100, 110)})
+            self.objects.update(one, cells=cells)
+        # Alone, and 0.1 m off as depth noise puts it: within reach of both, but on the right one.
+        self.assertEqual(self.objects.observe(self.sighting(108, shift=-1), 20).id, "LAD-002")
+        self.assertEqual(self.objects.observe(self.sighting(100, shift=1), 21).id, "LAD-001")
+        # Halfway between them nothing says which: neither, and no third ladder.
+        self.assertIsNone(self.objects.observe(self.sighting(104), 22))
+        self.assertEqual(len(self.objects.all()), 2)
+
+
 class SiteMapTest(unittest.TestCase):
     """One object map per site and map: a second patrol re-observes what the first one found."""
 

@@ -29,6 +29,11 @@ REPEATED = 2        # sightings a cell needs before it belongs to an object's fo
 REPEATED_SHARE = 0.05
 MARGIN = 4          # cells around a footprint that still count as touching it
 MIN_SHARE = 0.2     # of a sighting's cells that must touch a footprint for the sighting to be that object
+# Two objects known to be different, standing closer than MARGIN (identical ladders 0.3 m apart),
+# both touch a sighting of either. Seen together from further away, each also picks up a few cells
+# of the other. The sighting then belongs to the one that holds the cells under it strongly.
+CLEARLY_MORE = 2.0  # times the other's support
+MIN_SUPPORT = 0.2   # of the object's strongest cell, on average under the sighting
 ON_TOP = 0.8        # of a fragment's cells inside a neighbour's footprint: a part of it, even if seen apart
 
 
@@ -50,6 +55,17 @@ def touching(cells, area, margin=MARGIN):
         return 0.0
     gap = np.abs(cells[:, None, :] - area[None, :, :]).max(axis=2).min(axis=1)
     return float((gap <= margin).mean())
+
+
+def support(cells, site_object):
+    """How strongly `site_object`'s footprint holds `cells`: for each, the count of its strongest
+    cell at most one cell away, as a share of the object's strongest cell; averaged."""
+    counts = site_object.cells
+    if not counts or not len(cells):
+        return 0.0
+    top = max(counts.values())
+    near = [max(counts.get(f"{i + di},{j + dj}", 0) for di in (-1, 0, 1) for dj in (-1, 0, 1)) for i, j in cells]
+    return float(np.mean(near)) / top
 
 
 def offset(cells, area):
@@ -126,7 +142,12 @@ class ObjectMap:
                 scored.append((share, o))
         scored.sort(key=lambda item: -item[0])
         if len(scored) > 1 and scored[1][1].id in scored[0][1].apart and scored[1][0] * 2 > scored[0][0]:
-            return AMBIGUOUS  # touches two objects known to be different about equally
+            # Touches two objects known to be different about equally: the one it lies on, if clear.
+            cells = np.asarray(sighting.cells, dtype=int).reshape(-1, 2)
+            held = sorted(((support(cells, o), o) for _, o in scored[:2]), key=lambda item: -item[0])
+            if held[0][0] >= MIN_SUPPORT and held[0][0] >= CLEARLY_MORE * held[1][0]:
+                return held[0][1]
+            return AMBIGUOUS
         return scored[0][1] if scored else None
 
     def _match(self, kind, position, stamp, exclude):
