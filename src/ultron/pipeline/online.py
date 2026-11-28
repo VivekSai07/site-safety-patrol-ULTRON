@@ -39,8 +39,11 @@ import math
 import queue
 import sys
 import threading
+import time
 
 from .coverage import missing_views
+from .keyframes import view_name
+from .navigate import BUSY, PREEMPTED, UNAVAILABLE
 from .types import ViewRequest
 
 COLLECTING, CHECKING, READING, DONE = "collecting", "checking", "reading", "done"
@@ -101,6 +104,8 @@ class Track:
     failures: int = 0
     retry_after: float = 0.0
     reason: str = ""             # why it was flushed last
+    cells: int = 0               # (view, side) cells its keyframes fill ...
+    progress_at: float = None    # ... and when that last grew
 
 
 @dataclass
@@ -117,7 +122,8 @@ class Candidate:
 class OnlinePatrol:
     def __init__(self, survey, inspection, store, navigator=None, is_free=None, candidates=None,
                  leave_seconds=6.0, leave_distance=3.5, budget_seconds=120.0, max_reads=2, max_failures=2,
-                 commands=None, log=print):
+                 stall_seconds=20.0, exploration=None, pause_radius=4.0, pause_cap=90.0, operator_grace=10.0,
+                 obstacles=None, commands=None, log=print, clock=time.monotonic):
         self.survey, self.inspection, self.store = survey, inspection, store
         self.objects, self.keyframes = survey.objects, survey.keyframes
         self.navigator = navigator if navigator is not None and getattr(navigator, "moves", False) else None
@@ -127,6 +133,14 @@ class OnlinePatrol:
         self.leave_distance = leave_distance    # ... and at least this far away: the robot has left it
         self.budget_seconds = budget_seconds    # longest an object is collected before it is read anyway
         self.max_reads, self.max_failures = max_reads, max_failures
+        # In a tight room the robot may never get far from an object: it is done once its views stop growing.
+        self.stall_seconds = stall_seconds
+        self.exploration = exploration if self.navigator else None  # navigate.Exploration, or None
+        self.pause_radius = pause_radius        # pause the explorer for objects this near the robot ...
+        self.pause_cap = pause_cap              # ... for at most this long (wall clock)
+        self.operator_grace = operator_grace    # after an operator goal, wait this long before sending one
+        self.publish_obstacles = obstacles      # callable(cells): known footprints to the navigation stack
+        self.clock = clock
         self.commands = commands                # queue of operator lines ("n" = next, "q" = stop), or None
         self.log = log
         self.mission = inspection.mission
@@ -144,6 +158,13 @@ class OnlinePatrol:
         self._next = False                      # the operator asked to move on from the focus
         self._force = False                     # feed the next frame whatever the interval: a goal was reached
         self.verify = survey.verifier is not None
+        self.hold_until = -math.inf             # (clock) no goal is sent before this
+        self.held = None                        # why goals are held, as last announced
+        self.pause = None                       # {"since", "renewed", "objects"} while the pipeline holds a pause
+        self.paused_for = set()                 # objects that already had their pause this patrol
+        self._pause_retry = -math.inf
+        self._explore_state, self._explore_checked = None, -math.inf
+        self._obstacles_sent, self._obstacles_at = None, -math.inf
 
     # --- the loop ----------------------------------------------------------------------------
     def run(self, frames):
@@ -154,13 +175,16 @@ class OnlinePatrol:
                     break
         except KeyboardInterrupt:
             self.log("Online patrol stopped by Ctrl-C: reading what is left. Ctrl-C again aborts.")
-        self.finish()
+        finally:  # on any exit, an error included: hand exploration back, read what was found
+            self.finish()
 
     def step(self, frame):
         seen = self.survey.feed(frame, force=self._force)
         self._force = False
         self.stamp = frame.stamp
         self.pose = frame.pose or self.pose
+        if hasattr(self.is_free, "robot"):
+            self.is_free.robot = self.pose  # the gate checks goals are reachable from here
         self._operator()
         self._apply_results()
         self._take_new()
@@ -169,12 +193,16 @@ class OnlinePatrol:
         if self.find_candidates:
             self._candidates(frame)
         self._steer()
+        self._explore()
+        self._obstacles()
         return seen
 
     def finish(self):
         """Wait for the navigator and the reader, then let the ordinary inspection settle the survey
         (merge fragments, judge missing objects, announce the rest) and inspect what is left: objects
         beside one of their kind are announced only then, and none should fare worse than offline."""
+        if self.pause:
+            self._end_pause("patrol ended")
         if self.goal:
             wait([self.goal[0]])  # a navigator that failed must not cost the inspection of what was found
             self.goal = None
@@ -217,6 +245,9 @@ class OnlinePatrol:
                 self._submit("check", track.object_id, [view[3] for view in views],
                              lambda: [self.survey.verifier.classify(*view) for view in views])
             return
+        cells = len({(view_name(site_object.kind, k.distance), k.side) for k in self.keyframes.for_object(site_object.id)})
+        if track.progress_at is None or cells > track.cells:
+            track.cells, track.progress_at = cells, self.stamp
         reason = self._ready(track, site_object)
         if reason:
             self._flush(track, site_object, reason)
@@ -235,6 +266,12 @@ class OnlinePatrol:
         far = self._distance(site_object.position)
         if unseen and (far is None or far >= self.leave_distance):
             return "left behind"
+        if self.stamp - track.progress_at >= self.stall_seconds:
+            return "no new views"
+        if (self.navigator and self.focus == track.object_id and self.clock() >= self.hold_until
+                and getattr(self.is_free, "informed", lambda: True)()
+                and self._may_drive() and self._next_view() is None and not self.goal):
+            return "no reachable view left"
         if self.stamp - track.since >= self.budget_seconds:
             return "time budget"
         return None
@@ -365,16 +402,108 @@ class OnlinePatrol:
         if self.goal and self.goal[0].done():
             future, sent = self.goal
             self.goal = None
-            if future.exception() is None and future.result():
-                self._force = True  # standing at the view: take the next frame whatever the interval
+            outcome = getattr(self.navigator, "outcome", None)
+            if future.exception() is None and outcome in (BUSY, PREEMPTED, UNAVAILABLE):
+                # Says nothing about the place: someone else drives, or there is no navigation.
+                self._hold(outcome, getattr(self.navigator, "detail", ""))
             else:
+                # Reached or not, this spot was tried: reached without the view (hidden, not detected
+                # from there) it is not asked for again.
                 self.tried.setdefault(sent.object_id, set()).add((sent.view, sent.side))
-                self.store.emit("view_failed", object=sent.object_id, view=sent.view, side=sent.side)
-        if self.goal or request is None:
+                if future.exception() is None and future.result():
+                    self._force = True  # standing at the view: take the next frame whatever the interval
+                else:
+                    self.store.emit("view_failed", object=sent.object_id, view=sent.view, side=sent.side)
+        if self.goal or request is None or self.clock() < self.hold_until or not self._may_drive():
             return
+        if hasattr(self.navigator, "idle") and not self.navigator.idle():
+            self._hold(PREEMPTED, "operator goal underway")
+            return
+        if self.held:
+            self.store.emit("navigation_resumed", was=self.held)
+            self.held = None
         self.store.emit("view_requested", object=request.object_id, view=request.view, side=request.side,
                         goal=[request.x, request.y, request.yaw], reason=request.reason)
         self.goal = (self.driver.submit(self.navigator.go_to, request), request)
+
+    def _hold(self, why, detail=""):
+        grace = {BUSY: 3.0, PREEMPTED: self.operator_grace, UNAVAILABLE: 10.0}.get(why, 5.0)
+        self.hold_until = self.clock() + grace
+        if self.held != why:
+            self.held = why
+            self.store.emit("navigation_held", reason=why, detail=detail, seconds=grace)
+
+    # --- exploration: pause for an object's views, resume after ---------------------------------
+    def _exploration_state(self):
+        if self.exploration is None:
+            return None
+        if self.clock() - self._explore_checked >= 1.0:
+            self._explore_checked = self.clock()
+            self._explore_state = self.exploration.state()
+        return self._explore_state
+
+    def _may_drive(self):
+        """The explorer is not driving: idle, mapped, failed, or paused."""
+        state = self._exploration_state()
+        return state is None or state.get("state") in ("IDLE", "MAPPED", "FAILED", "PAUSED")
+
+    def _explore(self):
+        if self.exploration is None:
+            return
+        now, state = self.clock(), self._exploration_state()
+        current = state.get("state") if state else None
+        if self.pause:
+            if state is not None and current not in ("PAUSING", "PAUSED") and now - self.pause["since"] > 3.0:
+                self.store.emit("exploration_pause_ended", reason=f"exploration is {current}", objects=sorted(self.pause["objects"]))
+                self.pause = None  # resumed or finished elsewhere (operator, lease run out)
+                return
+            open_ = [o for o in self.pause["objects"] if o in self.tracks and self.tracks[o].state in (COLLECTING, CHECKING)]
+            if not open_:
+                self._end_pause("views collected")
+            elif now - self.pause["since"] >= self.pause_cap:
+                self._end_pause("time cap")
+            elif now - self.pause["renewed"] >= self.exploration.lease_s / 3:
+                self.pause["renewed"] = now
+                ok, text = self.exploration.renew()
+                if not ok:
+                    self.store.emit("error", stage="exploration renew", message=text)
+            return
+        if current != "EXPLORING" or not self.focus or self.focus in self.paused_for or now < self._pause_retry:
+            return
+        focus = self.objects.get(self.focus)
+        distance = self._distance(focus.position) if focus else None
+        if distance is None or distance > self.pause_radius or self._next_view() is None:
+            return
+        batch = {t.object_id for t in self.tracks.values() if t.state in (COLLECTING, CHECKING)
+                 and t.object_id not in self.paused_for
+                 and (self._distance((self.objects.get(t.object_id) or focus).position) or 0) <= self.pause_radius + 2}
+        ok, text = self.exploration.pause(reason="views of " + ", ".join(sorted(batch)))
+        if not ok:
+            self._pause_retry = now + 5.0
+            self.store.emit("error", stage="exploration pause", message=text)
+            return
+        self.pause = {"since": now, "renewed": now, "objects": batch}
+        self.paused_for |= batch
+        self._explore_checked = -math.inf  # look again at once: PAUSING -> PAUSED
+        self.store.emit("exploration_paused", objects=sorted(batch))
+
+    def _end_pause(self, reason):
+        ok, text = self.exploration.resume()
+        self.store.emit("exploration_resumed", reason=reason, objects=sorted(self.pause["objects"]),
+                        ok=ok, detail=text)
+        self.pause = None
+        self._explore_checked = -math.inf
+
+    def _obstacles(self):
+        """Known footprints to the navigation stack (via the dashboard), every 2 s when they change."""
+        if self.publish_obstacles is None or self.clock() - self._obstacles_at < 2.0:
+            return
+        self._obstacles_at = self.clock()
+        from .gate import obstacle_cells
+        cells = obstacle_cells(self.objects)
+        if cells != self._obstacles_sent:
+            self._obstacles_sent = cells
+            self.publish_obstacles(cells)
 
     # --- operator ----------------------------------------------------------------------------
     def _operator(self):

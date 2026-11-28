@@ -106,6 +106,8 @@ class Survey:
         # Objects announced (`object_found`) in this workspace: resuming does not announce them twice.
         self.announced = {e["object"] for e in store.events(limit=None) if e["kind"] == "object_found"}
         self.seen_now = {}  # object id -> sightings in this run: a patrol reports what it saw itself
+        self.inside = None  # inside(x, y): the room's fence (gate.Fence.contains); sightings outside are dropped
+        self.outside = 0    # sightings dropped for lying outside it
 
     def feed(self, frame, force=False):
         """Process one frame. Returns the objects seen in it (empty if skipped or nothing found)."""
@@ -134,6 +136,10 @@ class Survey:
             sighting = lift(frame, detection, self.calibration)
             if sighting.distance and not sighting.approximate and sighting.distance > MAX_RANGE:
                 continue
+            if self.inside and sighting.position is not None and not sighting.approximate \
+                    and not self.inside(*sighting.position):
+                self.outside += 1
+                continue  # beyond the room's fence: a reflection, or something seen through the glass
             low, high = KINDS[detection.kind].size
             # A box cut off by the image edge shows only part of the object: it may be any size or larger.
             cut_off = detection.box[1] <= EDGE or detection.box[3] >= 1000 - EDGE

@@ -20,8 +20,9 @@ from . import calibrate
 from .detect import ReplayDetector, VlmDetector, YoloDetector, load_prompts
 from .inspection import Inspection
 from .keyframes import KeyframeStore
-from .navigate import ContractNavigator, DashboardNavigator, Operator, Passive, free_space, http_json
+from .navigate import ContractNavigator, DashboardNavigator, Exploration, Operator, Passive, free_space, http_json
 from .objects import ObjectMap
+from .gate import DashboardMap, Fence, Gate
 from .online import OnlinePatrol, stdin_commands
 from .survey import Survey
 from .verify import Verifier
@@ -171,6 +172,19 @@ def command_patrol(args):
     command_status(args)
 
 
+def load_fence(args):
+    """The room's fence: --fence FILE, else the dashboard's (`/api/fence`), else none (warned)."""
+    if args.fence:
+        return Fence.load(args.fence)
+    if args.dashboard:
+        status, answer = http_json(args.dashboard, timeout=3)("GET", "/api/fence")
+        if status == 200 and answer and answer.get("polygon"):
+            return Fence.from_json(answer)
+    print("WARNING: no fence: goals and objects are not kept inside the room (lidar sees through windows)",
+          flush=True)
+    return None
+
+
 def realtime(frames):
     """Hold a recording back to the pace it was recorded at, so the vision model gets the time it
     would have on the robot (a replay otherwise runs as fast as frames can be processed)."""
@@ -203,13 +217,24 @@ def command_online(args):
     publisher = connect_dashboard(store, args, mission)
     print_events(store, quiet={"look"} if args.navigator == "operator" else ())
     # operator: a person drives by teleop, follows the `focus` events and types n when done with one
-    navigator, is_free = (None, None) if args.navigator == "operator" else build_navigator(args, mission)
-    inspection = Inspection(survey.objects, survey.keyframes, vlm, store, survey, Passive(), is_free=is_free,
+    navigator, saved_map = (None, None) if args.navigator == "operator" else build_navigator(args, mission)
+    fence = load_fence(args)
+    if fence:
+        survey.inside = fence.contains  # objects beyond the fence are reflections or behind glass
+        store.emit("fence", polygon=fence.polygon)
+    dashboard = http_json(args.dashboard, timeout=2) if args.dashboard else None
+    gate = Gate(fence, DashboardMap(args.dashboard) if args.dashboard and not saved_map else None, survey.objects,
+                clearance=args.clearance, also=saved_map, require_map=navigator is not None and not args.no_map_check)
+    exploration = Exploration(dashboard) if dashboard and args.navigator == "dashboard" else None
+    obstacles = (lambda cells: dashboard("PUT", "/api/obstacles", {"frame_id": "map", "cell": 0.1, "cells": cells})) \
+        if dashboard else None
+    inspection = Inspection(survey.objects, survey.keyframes, vlm, store, survey, Passive(), is_free=gate,
                             mission=mission)
-    online = OnlinePatrol(survey, inspection, store, navigator=navigator, is_free=is_free,
+    online = OnlinePatrol(survey, inspection, store, navigator=navigator, is_free=gate,
                           leave_seconds=args.leave_seconds, leave_distance=args.leave_distance,
                           budget_seconds=args.budget_seconds, max_reads=args.max_reads,
-                          commands=stdin_commands(), candidates=build_candidates(args))
+                          stall_seconds=args.stall_seconds, exploration=exploration, pause_cap=args.pause_cap,
+                          obstacles=obstacles, commands=stdin_commands(), candidates=build_candidates(args))
     frames = open_source(args.source, args.pace)
     online.run(realtime(frames) if args.realtime else frames)
     if publisher:
@@ -308,6 +333,10 @@ def main(argv=None):
     live.add_argument("--max-reads", type=int, default=1,
                       help="reads per object: 2 reads it again when the robot comes back with views it lacked "
                            "(the dashboard keeps the first ladder verdict of a mission)")
+    live.add_argument("--fence", help="room polygon JSON {frame_id, polygon: [[x, y], ...]} (default: the dashboard's)")
+    live.add_argument("--stall-seconds", type=float, default=20.0, help="an object whose views stop growing this long is read")
+    live.add_argument("--pause-cap", type=float, default=90.0, help="longest pause of the explorer for one batch of objects (s)")
+    live.add_argument("--no-map-check", action="store_true", help="send goals even before the dashboard has a map")
     live.add_argument("--realtime", action="store_true", help="replay a recording at the pace it was recorded")
     live.add_argument("--candidates", choices=["none", "lidar"], default="none",
                       help="where things worth a look come from besides the detector")

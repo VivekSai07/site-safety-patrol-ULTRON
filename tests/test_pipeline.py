@@ -1294,7 +1294,7 @@ class NavigatorTest(unittest.TestCase):
     def test_goal_is_posted_and_polled_until_it_ends(self):
         accepted = {"seq": 4, "status": "ACCEPTED"}
         self.assertTrue(self.navigator([accepted, accepted, {"seq": 4, "status": "SUCCEEDED"}]).go_to(self.REQUEST))
-        self.assertEqual(self.posted, {"x": 3.0, "y": 1.0, "yaw": 1.57})
+        self.assertEqual(self.posted, {"x": 3.0, "y": 1.0, "yaw": 1.57, "by": "pipeline"})
         self.assertFalse(self.navigator([{"seq": 4, "status": "FAILED"}]).go_to(self.REQUEST))
 
     def test_replaced_goal_timeout_and_disabled_goals_all_fail(self):

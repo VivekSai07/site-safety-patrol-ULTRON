@@ -33,43 +33,106 @@ class Operator:
         return reply.strip().lower() not in ("s", "skip", "n")
 
 
-def http_json(url):
-    """call(method, path, body) -> (status, parsed JSON or None) against the dashboard at `url`."""
+def http_json(url, timeout=10):
+    """call(method, path, body) -> (status, parsed JSON or None) against the dashboard at `url`.
+    An HTTP error returns its JSON body too (FastAPI: {"detail": ...}); no answer is status 0."""
     def call(method, path, body=None):
         request = urllib.request.Request(url.rstrip("/") + path, json.dumps(body).encode() if body else None,
                                          {"Content-Type": "application/json"}, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=10) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 return response.status, json.loads(response.read() or b"null")
         except urllib.error.HTTPError as error:
-            return error.code, None
-        except (urllib.error.URLError, TimeoutError, OSError):
+            try:
+                return error.code, json.loads(error.read() or b"null")
+            except (ValueError, OSError):
+                return error.code, None
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
             return 0, None
     return call
 
 
+def detail(answer):
+    return str(answer.get("detail", "")) if isinstance(answer, dict) else ""
+
+
+REACHED, FAILED, BUSY, PREEMPTED, UNAVAILABLE = "reached", "failed", "busy", "preempted", "unavailable"
+
+
 class DashboardNavigator:
-    """Goals go through the dashboard's `/api/goal` (start it with --goals and run dashboard_bridge.py)."""
+    """Goals go through the dashboard's `/api/goal` (start it with --goals and run dashboard_bridge.py).
+
+    `go_to` returns True once there; `outcome` then says why not: FAILED (Nav2 could not get
+    there: try another side), BUSY (the explorer drives, or is pausing), PREEMPTED (an operator
+    goal is underway or replaced ours, or ours was cancelled: stand down), UNAVAILABLE (no
+    dashboard, goals disabled, or no navigation). Only FAILED says anything about the place."""
     moves = True
-    FINAL = {"SUCCEEDED": True, "FAILED": False, "CANCELED": False}
+    FINAL = {"SUCCEEDED": REACHED, "FAILED": FAILED, "CANCELED": PREEMPTED}
 
     def __init__(self, call, timeout=90.0, poll=1.0, sleep=time.sleep):
         self.call, self.timeout, self.poll, self.sleep = call, timeout, poll, sleep
+        self.outcome, self.detail = None, ""
 
     def go_to(self, request):
-        status, goal = self.call("POST", "/api/goal", {"x": request.x, "y": request.y, "yaw": request.yaw})
-        if status != 201:
-            return False
+        self.outcome, self.detail = self._go(request)
+        return self.outcome == REACHED
+
+    def _go(self, request):
+        status, goal = self.call("POST", "/api/goal", {"x": request.x, "y": request.y, "yaw": request.yaw,
+                                                       "by": "pipeline"})
+        if status == 409:
+            text = detail(goal)
+            return (PREEMPTED if "operator" in text else BUSY), text
+        if status != 201 or not isinstance(goal, dict):
+            return UNAVAILABLE, detail(goal) or f"HTTP {status}"
         waited = 0.0
         while waited < self.timeout:
             status, current = self.call("GET", "/api/goal")
             if status == 200 and current and current.get("seq") != goal["seq"]:
-                return False  # someone set a newer goal on the map
+                return PREEMPTED, "a newer goal was set"
             if status == 200 and current and current.get("status") in self.FINAL:
-                return self.FINAL[current["status"]]
+                outcome = self.FINAL[current["status"]]
+                text = current.get("detail", "")
+                if outcome == FAILED and "not available" in text:
+                    outcome = UNAVAILABLE  # the bridge found no Nav2: nothing to learn about the place
+                return outcome, text
             self.sleep(self.poll)
             waited += self.poll
-        return False
+        return FAILED, "timed out"
+
+    def idle(self):
+        """No operator goal underway: the pipeline may send one."""
+        status, current = self.call("GET", "/api/goal")
+        return status == 200 and not (current and current.get("status") in ("SENT", "ACCEPTED")
+                                      and current.get("by", "operator") != "pipeline")
+
+
+class Exploration:
+    """The explorer seen through the dashboard (`/api/exploration`): its state, and a pause lease
+    the pipeline holds while it collects views (docs/EXPLORATION_CONTRACT.md). Calls are short
+    (timeout 2 s) since they run on the survey's thread."""
+    DRIVING = {"STARTING", "EXPLORING", "RESUMING"}
+
+    def __init__(self, call, lease_s=60.0):
+        self.call, self.lease_s = call, lease_s
+
+    def state(self):
+        status, answer = self.call("GET", "/api/exploration")
+        return answer if status == 200 and isinstance(answer, dict) else None
+
+    def _act(self, action, reason=""):
+        status, answer = self.call("POST", "/api/exploration", {"action": action, "by": "pipeline",
+                                                               "lease_s": self.lease_s, "reason": reason})
+        return status in (200, 201), detail(answer)
+
+    def pause(self, reason=""):
+        return self._act("pause", reason)
+
+    def renew(self):
+        return self._act("renew")
+
+    def resume(self):
+        return self._act("resume")
 
 
 class ContractNavigator:
