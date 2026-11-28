@@ -1,5 +1,7 @@
 # ULTRON · Site Safety Patrol
 
+**API prompts:** [Versioned ladder and site-safety prompt packs, schemas and request-building adapter](docs/API_PROMPTS.md).
+
 **A lightweight Unitree B2 MuJoCo simulation for the nesseler challenge.** The existing demo has a robot model patrol a bounded construction scene, discover ladders, approach for evidence, request one second look, and remember ladder identities across patrols. Actual simulated RGB/depth frames become a traceable inspection report. Rerun export and ROS 2 Humble/RViz replay consume the same recording. The label-first baseline has a rendered synthetic capture-to-draft probe with manual fixture transcription, plus bounded browser-control checks; real OCR and real-world operation remain unverified. See the [baseline and source overview](docs/LABEL_FIRST_BASELINE.md).
 
 ![ULTRON B2 patrol preview](docs/images/ultron-patrol.gif)
@@ -128,7 +130,7 @@ An authorized local reviewer should compare independently authored criteria agai
 
 Track inspection-sticker status and deployment hazards (pallet support, leaning inclination) separately from those seven sections. Geometry needs calibrated depth/reference planes and uncertainty; VLM angle estimates alone are not a measured inclination. Do not infer next-inspection dates from sticker colour or a universal annual expiry. Extract readable text first, then apply explicit verified date semantics in code.
 
-A future prompt package should use independently authored, rights-reviewed criteria and approved applicability guidance and examples, plus unknown/human-only rules and the requested JSON schema. The local reference-derived catalog is not approved for publication or external transmission. This is prompt context, not fine-tuning. Treat text printed in images as scene data, never instructions. Proposed criterion states: `DEFECT_OBSERVED`, `NO_VISIBLE_DEFECT`, `UNKNOWN`, `NOT_APPLICABLE_PROPOSED`; applicability proposals require validation. A new adapter must map these into existing policy without treating `NO_VISIBLE_DEFECT` as certification. All seven sections remain present even if most criteria need review.
+A future live worker should use rights-reviewed criteria and approved applicability guidance and examples, plus unknown/human-only rules and the requested JSON schema. The existing assessment prompt packs are local request-building inputs, not evidence of live API integration; their source-derived ladder labels have unverified reuse rights. The separate local reference-derived catalog is not approved for publication or external transmission. This is prompt context, not fine-tuning. Treat text printed in images as scene data, never instructions. Proposed criterion states: `DEFECT_OBSERVED`, `NO_VISIBLE_DEFECT`, `UNKNOWN`, `NOT_APPLICABLE_PROPOSED`; applicability proposals require validation. A new adapter must map these into existing policy without treating `NO_VISIBLE_DEFECT` as certification. All seven sections remain present even if most criteria need review.
 
 ### OpenAI API and budget plan
 

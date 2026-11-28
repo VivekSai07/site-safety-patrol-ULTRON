@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ladder Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-row">
+    <div style="display:flex;gap:12px;align-items:baseline;flex-wrap:wrap">
+      <span class="brand">ULTRON</span>
+      <span class="sub" style="color:var(--head-muted)" id="site">–</span>
+      <span class="badge-sim" id="sim-badge" data-i18n="sim" hidden>SIMULATION</span>
+    </div>
+    <div class="meta">
+      <label for="site-select" class="sub" style="color:var(--head-muted)" data-i18n="site">Baustelle</label>
+      <select id="site-select"></select>
+      <div class="switch" role="group" data-i18n-aria="lang.toggle">
+        <button type="button" data-lang="de">DE</button><button type="button" data-lang="en">EN</button>
+      </div>
+      <button type="button" class="theme-btn" id="theme" data-i18n-aria="theme.toggle">
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
+        <span data-theme-label></span>
+      </button>
+    </div>
+  </div>
+  <nav class="tabs" aria-label="Pages">
+    <a href="/" data-i18n="nav.live">Live</a>
+    <a href="/ladder" aria-current="page" data-i18n="nav.ladders">Leitern</a>
+    <a href="/history" data-i18n="nav.history">Verlauf</a>
+  </nav>
+</header>
+
+<main>
+  <div class="split" style="align-items:flex-start">
+    <nav class="narrow" aria-label="Ladders" style="max-width:260px;display:flex;flex-direction:column;gap:8px" id="ladder-list"></nav>
+    <div class="wide col" id="report">
+      <p class="empty" data-i18n="pick_ladder"></p>
+    </div>
+  </div>
+  <footer class="note" data-i18n="footer"></footer>
+</main>
+<script src="/static/i18n.js"></script>
+<script src="/static/common.js"></script>
+<script src="/static/ladder.js"></script>
+</body>
+</html>

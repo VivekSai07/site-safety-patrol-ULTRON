@@ -1,0 +1,9 @@
+Section 3: Fluchtwege / escape routes
+
+flucht.kennzeichnung — Kennzeichnung sichtbar [mode=visual]
+Confirm a green escape-route sign that is visible and interpretable.
+
+flucht.frei — Fluchtweg frei [mode=visual]
+Check the visible route for obstructions. Judge only the area actually shown; unseen sections stay UNKNOWN.
+
+Only verified applicability may yield N_A. Unseen routes are UNKNOWN, not clear.

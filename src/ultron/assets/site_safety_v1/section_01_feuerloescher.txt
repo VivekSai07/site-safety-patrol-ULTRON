@@ -1,0 +1,12 @@
+Section 1: Feuerlöscher / fire extinguisher
+
+ext.vorhanden — Vorhanden am Standort [mode=visual]
+Confirm an extinguisher body at the station. An empty bracket, missing unit or no station in frame is DEFECT or UNKNOWN, never OK.
+
+ext.zugaenglich — Zugänglich, nicht verstellt [mode=visual]
+Check the area in front of the extinguisher for stored material or blockage. Judge only what the frames show.
+
+ext.pruefplakette — Prüfplakette vorhanden/lesbar [mode=visual]
+Look for an inspection tag on the body. Put a literally readable due date into the label block; unreadable tags stay UNKNOWN.
+
+Only verified applicability may yield N_A. Unseen stations are UNKNOWN, not compliant.

@@ -1,0 +1,6 @@
+Section 7: Kennzeichnung / markings
+
+kennzeichnung.betriebsanleitung — Betriebsanleitung (z.B. Piktogramm) [mode=visual]
+Check instructions/pictograms presence and readable portions. Separate manufacturer data, factory-control dates and inspection sticker due dates.
+
+Only verified applicability may yield N_A. Unseen components are UNKNOWN, not intact.

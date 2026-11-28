@@ -12,6 +12,8 @@ dependencies = []
 [project.optional-dependencies]
 sim = ["mujoco>=3.3,<4", "numpy>=1.24", "Pillow>=9"]
 rerun = ["rerun-sdk==0.32.0", "numpy>=1.24", "Pillow>=9"]
+# Live dashboard: CPU only, no ROS or GPU; runs on Ubuntu and Windows.
+dashboard = ["fastapi>=0.110", "uvicorn>=0.29", "pydantic>=2", "httpx>=0.27", "pypdf>=4", "reportlab>=4", "Pillow>=9"]
 
 # Model extras are intentionally separate from the simulation and ROS interpreter.
 # Check upstream licensing before distributing weights or commercial deployment.
@@ -28,4 +30,14 @@ safety-patrol = "site_safety_patrol.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-ultron = ["assets/b2/*.xml", "assets/b2/LICENSE", "assets/b2/PROVENANCE.md", "assets/schemas/generic_ladder_draft_v1.json"]
+ultron = [
+    "assets/b2/*.xml",
+    "assets/b2/LICENSE",
+    "assets/b2/PROVENANCE.md",
+    "assets/schemas/generic_ladder_draft_v1.json",
+    "assets/inspection_v1/*.json",
+    "assets/inspection_v1/*.txt",
+    "assets/site_safety_v1/*.json",
+    "assets/site_safety_v1/*.txt",
+    "dashboard/static/*",
+]

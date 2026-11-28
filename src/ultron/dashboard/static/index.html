@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ladder Patrol Live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-row">
+    <div style="display:flex;gap:12px;align-items:baseline;flex-wrap:wrap">
+      <span class="brand">ULTRON</span>
+      <span class="sub" style="color:var(--head-muted)" id="site">–</span>
+      <span class="badge-sim" id="sim-badge" data-i18n="sim" hidden>SIMULATION</span>
+    </div>
+    <div class="meta">
+      <span class="live-chip idle" id="live-chip">–</span>
+      <strong class="mono" id="mission-clock">–</strong>
+      <div class="switch" role="group" data-i18n-aria="lang.toggle">
+        <button type="button" data-lang="de">DE</button><button type="button" data-lang="en">EN</button>
+      </div>
+      <button type="button" class="theme-btn" id="theme" data-i18n-aria="theme.toggle">
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path></svg>
+        <span data-theme-label></span>
+      </button>
+    </div>
+  </div>
+  <nav class="tabs" aria-label="Pages">
+    <a href="/" aria-current="page" data-i18n="nav.live">Live</a>
+    <a href="/ladder" data-i18n="nav.ladders">Leitern</a>
+    <a href="/history" data-i18n="nav.history">Verlauf</a>
+  </nav>
+</header>
+
+<main>
+  <div class="banner" id="banner" aria-live="assertive"></div>
+  <div class="live-grid">
+    <div class="col">
+      <section class="card" aria-label="Progress">
+        <h2 data-i18n="progress">Fortschritt</h2>
+        <ol class="steps" id="steps"></ol>
+      </section>
+
+      <section class="card now" id="now" hidden>
+        <div class="card-head">
+          <div><span class="sub" id="now-label" style="font-weight:700;letter-spacing:.06em;text-transform:uppercase"></span>
+            <h2 style="font-size:22px" id="now-title"></h2></div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
+            <strong class="mono" id="now-count"></strong>
+            <div class="bar"><div id="now-bar" style="width:0"></div></div>
+          </div>
+        </div>
+        <div class="groups" id="now-groups"></div>
+      </section>
+
+      <section aria-label="Ladders" style="display:flex;flex-direction:column;gap:10px">
+        <h2 data-i18n="ladders">Leitern</h2>
+        <div class="grid-cards" id="ladders"></div>
+      </section>
+
+      <section class="card" aria-label="Map">
+        <div class="card-head"><h2 data-i18n="map">Lageplan</h2>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <span class="sub mono" id="goal-info"></span>
+            <span class="sub mono" id="map-info"></span>
+            <button type="button" id="goal-btn" aria-pressed="false" hidden data-i18n="goal.set">Ziel setzen</button>
+          </div>
+        </div>
+        <svg class="map" id="map" role="img" aria-label="Map"></svg>
+      </section>
+    </div>
+
+    <aside class="col rail" aria-label="Cameras">
+      <section class="card cam">
+        <div class="card-head"><h2 data-i18n="cam.front">Frontkamera</h2><span class="sub mono">RGB</span></div>
+        <div class="frame" id="cam-front_rgb" data-i18n="cam.wait"></div>
+      </section>
+      <section class="card cam">
+        <div class="card-head"><h2 data-i18n="cam.depth">Tiefenkamera</h2><span class="sub mono">0.3–8 m</span></div>
+        <div class="frame" id="cam-front_depth" data-i18n="cam.wait"></div>
+      </section>
+      <section class="card" id="alerts-card">
+        <h2 data-i18n="alerts">Meldungen</h2>
+        <div id="alerts"></div>
+      </section>
+      <section class="card">
+        <h2 data-i18n="robot">Roboter</h2>
+        <div class="kv" id="robot"></div>
+      </section>
+      <section class="card" style="border-style:dashed">
+        <h2 data-i18n="delivery">Berichtsversand</h2>
+        <span class="sub" data-i18n="delivery.planned"></span>
+      </section>
+      <section class="card">
+        <h2 data-i18n="log">Protokoll</h2>
+        <ol class="log" id="log"></ol>
+      </section>
+    </aside>
+  </div>
+  <footer class="note" data-i18n="footer"></footer>
+</main>
+<dialog id="ladder"></dialog>
+<script src="/static/i18n.js"></script>
+<script src="/static/common.js"></script>
+<script src="/static/live.js"></script>
+</body>
+</html>
