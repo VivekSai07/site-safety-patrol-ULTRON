@@ -372,3 +372,31 @@ The test covers a single-floor kinematic MuJoCo run and dashboard HTTP goal
 submission. It does not establish 3D loop-closure reliability, localization
 recovery across outages, or physical robot performance.
 [Launch instructions](dashboard_nav_goal.md#use-the-3d-lidar-backend-in-mujoco)
+
+## Nav2 planning-only check on the recorded B2 map
+
+28 November 2026. `scripts/sim-slam.sh exec .venv-ros/bin/python -m ultron.autonomy.run_real_nav_plan runs/b2_real/slam_replay_02 runs/b2_real/nav_plan_01`. Nav2 1.1.20 map_server and planner_server (NavFn) with `nav2_params.yaml`, on map `ultron-b2-replay-e204d84dd05f` v1. No controller and no velocity output. There is no ground truth. Thresholds were fixed in the script before the run. Overall verdict: **FAIL** (obstacle-layer check).
+
+| Check | Result |
+|---|---|
+| Five goals in mapped free space, 3.6–6.4 m, start at the map origin | PASS: all planned in 1–3 ms; end error 0.00 m; minimum clearance to occupied cells 1.02–1.46 m (threshold 0.50 m); no path point outside free space. Four paths are essentially straight, one bends slightly, so routing around obstacles is hardly exercised |
+| Goals inside an obstacle, in unknown space, outside the map | PASS: refused by the adapter's footprint pre-check; the planner also aborted each |
+| Recorded walk against the map | Minimum clearance 0.56 m (assumed footprint radius 0.55 m) |
+| Obstacle layer alone (clearing disabled, slam_toolbox localization, 1× replay) against the saved map | **FAIL**: 69.9 % of 7,975 marked cells within 0.15 m of a mapped obstacle (threshold 80 %); 1,999 cells more than 0.5 m away, 1,998 of them in mapped free space |
+
+Diagnosis (after the run): the mismatched cells form trails in open space beside the walk, and their median position moves between 3 s windows. This is consistent with something moving through the hall, for example a person walking with the robot; the camera images were not checked. With clearing disabled the test accumulates every such return. Agreement was 96.9 % at 8–12 m from the start and 56.4 % within 5 m. A run with clearing enabled, as in the navigation configuration, has not been done. Images: `runs/b2_real/nav_plan_01/planned_paths.png`, `obstacle_compare.png` (local).
+
+## `ladderWithSticker` recording: 2D SLAM, 3D SLAM and Nav2 planning
+
+28 November 2026. Source downloaded directly (zip integrity and `PRAGMA quick_check` pass; two copies carried on a USB drive were corrupt). 18.36 s, 43,325 messages, 167 `/scan_cloud`. The estimated walk is one way (about 8–9 m, heading change about 165°), so loop closure is not exercised. There is no ground truth. Runs are local under `runs/b2_ladder_wt/`.
+
+| Check | Result |
+|---|---|
+| 2D map and serialization (`slam2d_01`, 1×) | PASS: 167 clouds; map saved with 5,471 occupied cells; estimated lidar height 0.721 m (0.722 m in the earlier recording) |
+| Reload and localize on the same recording | 159 scans VALID after 6 INITIALIZING; no DEGRADED/LOST. 6 cm RMSE against the mapping trajectory |
+| 3D KISS-SLAM, three trials | All 167 scans, 3 submaps, about 43,500 points, no closure edges (none expected); estimated path 8.10–8.11 m |
+| Trajectory agreement (best 2D fit) | 2D slam_toolbox vs 3D: RMSE 0.12 m, max 0.30 m; KISS-ICP vs 3D: 0.11 / 0.21 m; slam_toolbox vs KISS-ICP: 0.05 / 0.13 m. Endpoint distance from start differs: 5.12 m (2D) vs 5.54 m (3D) |
+| Nav2 planning (map_server + planner only) | All 5 intended-valid goals planned (1–6 ms), min clearance 0.98–1.95 m; two goals behind obstacles routed around them (10.5 m vs 4.5 m straight, 6.6 m vs 4.0 m). 3 invalid goals refused. **Recorded verdict FAIL**: `west_open` was chosen with 1 unknown cell inside its footprint, so the adapter pre-check refused it while the planner planned to it. The goal was not changed and rerun |
+| Obstacle layer vs saved map | PASS both ways: clearing off 94.9 % of 2,235 cells within 0.15 m; clearing on 96.4 % of 689 cells; 1 cell beyond 0.5 m (threshold 80 %) |
+
+Walked-path minimum clearance to mapped obstacles: 0.79 m. Not covered: driving, loop closure, localization on a separate recording, accuracy against ground truth.
