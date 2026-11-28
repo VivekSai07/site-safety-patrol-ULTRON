@@ -73,3 +73,67 @@ class TestRealEmbedder(unittest.TestCase):
         text = embedder.embed_text("a ladder on a construction site")
         self.assertEqual(text.shape, (512,))
         self.assertGreater(float(view_a @ text), float(noise @ text))
+
+
+@unittest.skipIf(np is None, "numpy and Pillow required")
+class TestObjectStore(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+    def memory(self, embedder="fake", **config):
+        from ultron.spatial.memory import SpatialConfig, SpatialMemory
+        return SpatialMemory(self.root, embedder=FakeEmbedder() if embedder == "fake" else embedder,
+                             config=SpatialConfig(**config))
+
+    def test_register_creates_object_with_embedding(self):
+        memory = self.memory()
+        memory.register_sighting("obj-1", img(0), (1.0, 2.0), "ladder")
+        record = memory.objects["obj-1"]
+        self.assertEqual(record["kind"], "ladder")
+        self.assertEqual(record["position"], [1.0, 2.0])
+        self.assertEqual(len(record["embedding_ids"]), 1)
+        self.assertIsNone(record["inspected"])
+
+    def test_position_follows_sightings_with_ema(self):
+        memory = self.memory()
+        memory.register_sighting("obj-1", img(0), (0.0, 0.0), "ladder")
+        memory.register_sighting("obj-1", img(0), (1.0, 0.0), "ladder")
+        self.assertAlmostEqual(memory.objects["obj-1"]["position"][0], 0.3)
+        self.assertAlmostEqual(memory.objects["obj-1"]["position"][1], 0.0)
+
+    def test_near_duplicate_sample_not_stored(self):
+        memory = self.memory()
+        memory.register_sighting("obj-1", img(0), (0.0, 0.0), "ladder")
+        memory.register_sighting("obj-1", img(10), (0.0, 0.0), "ladder")   # cos 10 deg = 0.985 >= 0.95
+        self.assertEqual(len(memory.objects["obj-1"]["embedding_ids"]), 1)
+        memory.register_sighting("obj-1", img(30), (0.0, 0.0), "ladder")   # cos 30 deg = 0.866 < 0.95
+        self.assertEqual(len(memory.objects["obj-1"]["embedding_ids"]), 2)
+
+    def test_samples_capped_oldest_dropped(self):
+        memory = self.memory()
+        for angle in range(0, 9 * 20, 20):  # nine diverse views
+            memory.register_sighting("obj-1", img(angle), (0.0, 0.0), "ladder")
+        ids = memory.objects["obj-1"]["embedding_ids"]
+        self.assertEqual(len(ids), 8)
+        self.assertEqual(ids[0], "e000002")  # the first sample made way
+
+    def test_persistence_round_trip(self):
+        self.memory().register_sighting("obj-1", img(0), (1.0, 2.0), "ladder")
+        reloaded = self.memory()
+        self.assertEqual(reloaded.objects["obj-1"]["position"], [1.0, 2.0])
+        key = reloaded.objects["obj-1"]["embedding_ids"][0]
+        self.assertAlmostEqual(float(np.linalg.norm(reloaded._embeddings[key])), 1.0, places=5)
+
+    def test_corrupt_store_moved_aside(self):
+        (self.root / "objects.json").write_text("{not json")
+        memory = self.memory()
+        self.assertEqual(memory.objects, {})
+        self.assertTrue(list(self.root.glob("objects.json.corrupt-*")))
+
+    def test_without_embedder_positions_still_tracked(self):
+        memory = self.memory(embedder=None)
+        memory.register_sighting("obj-1", img(0), (1.0, 2.0), "ladder")
+        self.assertEqual(memory.objects["obj-1"]["embedding_ids"], [])
+        self.assertEqual(memory.objects["obj-1"]["position"], [1.0, 2.0])
