@@ -44,6 +44,9 @@ Catalogue of nesseler's five other checklists is in `src/ultron/dashboard/site_c
 
 - [ ] **Pipeline → dashboard**: send each non-ladder object's checklist rows and evidence photos
       (today only a one-line `CHECKLIST_DONE` event arrives). Owner of `ultron.pipeline`.
+      Contract: `POST /api/missions/{id}/site-checks` (see `SiteCheck` in `dashboard/models.py`).
+      Until then, after a patrol: `python -m ultron.dashboard.import_site_checks runs/pipeline --mission ID`
+      reads the workspace's `objects/*/checklist.json` and posts them.
 - [ ] **Detector prompts** for the kinds the checklists ask about that nothing detects yet: first-aid
       notice, escape plan, escape sign, escape route, emergency light, gas cylinder, scaffold, dust
       extractor, person. Until then those rows show "open, no detector". Owner of `pipeline/catalog.py`.

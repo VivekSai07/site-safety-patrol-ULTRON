@@ -2,7 +2,8 @@
 # One launch point for the dashboard, in one of two modes. Ctrl+C stops everything it started.
 #
 #   scripts/dashboard.sh demo   two simulated patrols on site "demo-site", replayed into a throwaway
-#                               database (builds runs/dashboard-example first if missing, ~25 s).
+#                               database (builds runs/demo-safety first if missing, ~25 s), with the
+#                               safety props, so the site checklists have simulated data.
 #                               No robot link, no robot control.
 #   scripts/dashboard.sh live   the working dashboard for a real or simulated robot: the patrol history
 #                               in runs/dashboard.sqlite, robot control on (exploration, goals) and the
@@ -19,7 +20,7 @@ set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 export PYTHONPATH="$(pwd)/src${PYTHONPATH:+:$PYTHONPATH}"
 
-usage() { sed -n 2,17p "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n 2,18p "$0" | sed 's/^# \{0,1\}//'; }
 mode=${1:-}
 case $mode in
     demo|live) shift ;;
@@ -43,13 +44,13 @@ while (($#)); do
 done
 url="http://127.0.0.1:$port"
 
-DEMO_RUN=runs/dashboard-example
+DEMO_RUN=runs/demo-safety
 tmp=''
 if [[ $mode == demo ]]; then
     if [[ ! -e $DEMO_RUN/manifest.json ]]; then
         [[ -e $DEMO_RUN ]] && { echo "$DEMO_RUN exists but is incomplete; move it away first." >&2; exit 2; }
         echo "Building the simulated demo run in $DEMO_RUN (about 25 s) ..."
-        MUJOCO_GL=egl $PY -m ultron demo --out "$DEMO_RUN" --patrols 2 >/dev/null
+        MUJOCO_GL=egl $PY -m ultron demo --out "$DEMO_RUN" --patrols 2 --safety >/dev/null
     fi
     tmp=$(mktemp -d -t ultron-demo-XXXX)  # demo patrols never enter the real history
     pass+=(--db "$tmp/demo.sqlite" --media "$tmp/media")
@@ -98,9 +99,9 @@ if ((sim)); then
     pids+=($!)
     if [[ -n ${DISPLAY:-} ]]; then  # viewer window, as scripts/launch-demo.sh runs it
         OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 LP_NUM_THREADS=2 MUJOCO_GL=glfw \
-            nice -n 10 $PY -m ultron demo --out "$sim_run" --patrols 1 --viewer &
+            nice -n 10 $PY -m ultron demo --out "$sim_run" --patrols 1 --safety --viewer &
     else
-        MUJOCO_GL=egl $PY -m ultron demo --out "$sim_run" --patrols 1 &
+        MUJOCO_GL=egl $PY -m ultron demo --out "$sim_run" --patrols 1 --safety &
     fi
     pids+=($!)
 fi

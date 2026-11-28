@@ -25,8 +25,11 @@ CREATE INDEX IF NOT EXISTS poses_by_mission ON poses (mission_id);
 CREATE TABLE IF NOT EXISTS mission_maps (
   mission_id TEXT PRIMARY KEY, resolution REAL NOT NULL, origin_x REAL NOT NULL, origin_y REAL NOT NULL,
   width INTEGER NOT NULL, height INTEGER NOT NULL, png BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS site_checks (
+  mission_id TEXT NOT NULL, object_id TEXT NOT NULL, kind TEXT NOT NULL, received TEXT NOT NULL,
+  payload TEXT NOT NULL, PRIMARY KEY (mission_id, object_id));
 '''
-# poses and mission_maps are additive tables: CREATE IF NOT EXISTS adds them to an older database
+# poses, mission_maps and site_checks are additive tables: CREATE IF NOT EXISTS adds them to an older database
 # without touching its existing rows, so no migration step is needed.
 
 
@@ -163,6 +166,17 @@ class Store:
                 {'mission_id': record['mission_id'], 'status': record['status'], 'reason': record['reason'],
                  'ladder_type': record['ladder_type']})
         return history
+
+    # Site checks: non-ladder objects and their checklist rows, one record per object and patrol.
+    # A later post for the same object replaces it (the pipeline may read an object again).
+    def put_site_check(self, mission_id, check):
+        self._run('INSERT OR REPLACE INTO site_checks VALUES (?,?,?,?,?)',
+                  (mission_id, check.object_id, check.kind, now(), check.model_dump_json()))
+
+    def site_checks(self, mission_id):
+        rows = self._all('SELECT payload, received FROM site_checks WHERE mission_id=? ORDER BY kind, object_id',
+                         (mission_id,))
+        return [{**json.loads(r['payload']), 'received': r['received']} for r in rows]
 
     # Alerts
     def add_alert(self, alert):

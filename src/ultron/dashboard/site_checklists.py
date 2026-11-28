@@ -274,6 +274,106 @@ def kinds():
     return sorted({k for c in CHECKLISTS.values() for r in c.rows for k in r.kinds})
 
 
+# Kinds the pipeline detects today, named as on the site; with NO_DETECTOR this names every kind above.
+DETECTED_LABELS = {
+    'fire_extinguisher': 'Feuerlöscher',
+    'fire_hydrant': 'Wandhydrant / Löschschlauchschrank',
+    'fire_alarm': 'Meldeeinrichtung (Brandmelder)',
+    'first_aid_kit': 'Verbandkasten',
+}
+KIND_LABELS = {**DETECTED_LABELS, **NO_DETECTOR}
+
+# What a patrol says about one row. The robot's own answers use the form's words (ja / nein / offen);
+# the rest say why there is no answer, so a gap is never shown as "nein".
+YES, NO, OPEN = 'ja', 'nein', 'offen'
+NOT_FOUND = 'nicht_gefunden'   # the patrol did not see such an object: not proof it is missing
+NO_DETECTOR_YET = 'kein_detektor'
+BY_PERSON = 'person'
+ROBOT_ANSWERS = (YES, NO, OPEN)
+ANSWER_ORDER = (NO, OPEN, NOT_FOUND, NO_DETECTOR_YET, YES, BY_PERSON)  # worst first, for a checklist's headline
+
+
+def _worst(answers):
+    for answer in ANSWER_ORDER:
+        if answer in answers:
+            return answer
+    return NOT_FOUND
+
+
+def _derived(row, ladders, checklist_answers):
+    """WK rows filled from this patrol's other results. A robot never answers "measures sufficient":
+    a defect found is a "nein", anything else stays open for the person signing the form."""
+    if row.source == 'ladders':
+        if not ladders:
+            return NOT_FOUND, 'keine Leiter auf dieser Patrouille geprüft'
+        flagged = sum(1 for l in ladders if l.get('status') == 'FLAGGED')
+        note = f'{len(ladders)} Leiter(n) geprüft, {flagged} mit Mangel'
+        return (NO if flagged else OPEN), note
+    answers = checklist_answers.get(row.source, [])
+    robot = [a for a in answers if a in ROBOT_ANSWERS]
+    if not robot:
+        return NOT_FOUND, f'nichts zu {CHECKLISTS[row.source].title} gesehen'
+    return (NO if NO in robot else OPEN), f'aus {CHECKLISTS[row.source].title}'
+
+
+def patrol_summary(objects, ladders=()):
+    """Every checklist row for one patrol, plus which object kinds it found.
+
+    objects: the site checks posted for this patrol, each {'object_id', 'kind', 'rows': {row_id:
+    {'answer', 'remark', 'photo', ...}}, ...}. ladders: this patrol's ladder inspections (status only).
+    """
+    by_kind = {}
+    for obj in objects:
+        by_kind.setdefault(obj['kind'], []).append(obj)
+
+    def evaluate(row):
+        if row.mode == PERSON:
+            return {'answer': BY_PERSON, 'objects': [], 'remark': '', 'photo': None}
+        seen = [o for k in row.kinds for o in by_kind.get(k, [])]
+        if not seen:
+            missing = all(k in NO_DETECTOR for k in row.kinds)
+            return {'answer': NO_DETECTOR_YET if missing else NOT_FOUND, 'objects': [], 'remark': '', 'photo': None}
+        given = [(o, o.get('rows', {}).get(row.id)) for o in seen]
+        answers = [g['answer'] for _, g in given if g]
+        if row.mode == PRESENCE:
+            # "there" needs a confirmed object or a "ja" from its own reading: a detector hit alone may be
+            # a false one, and a missing extinguisher must not read as present. Missing, empty or
+            # damaged on any object makes it "nein".
+            confirmed = YES in answers or any(o.get('verified') for o in seen)
+            answer = NO if NO in answers else YES if confirmed else OPEN
+        else:
+            answer = _worst(answers) if answers else OPEN
+        cited = next(((o, g) for o, g in given if g and g['answer'] == answer), (seen[0], None))
+        return {'answer': answer, 'objects': [o['object_id'] for o in seen],
+                'remark': (cited[1] or {}).get('remark', ''), 'photo': (cited[1] or {}).get('photo'),
+                'photo_object': cited[0]['object_id']}
+
+    results, checklist_answers = [], {}
+    order = sorted(CHECKLISTS.values(), key=lambda c: any(r.mode == DERIVED for r in c.rows))  # sources first
+    for checklist in order:
+        rows = []
+        for row in checklist.rows:
+            if row.mode == DERIVED:
+                answer, remark = _derived(row, list(ladders), checklist_answers)
+                result = {'answer': answer, 'objects': [], 'remark': remark, 'photo': None}
+            else:
+                result = evaluate(row)
+            rows.append({'id': row.id, 'section': row.section, 'text': row.text, 'english': row.english,
+                         'mode': row.mode, **result})
+        answers = [r['answer'] for r in rows]
+        checklist_answers[checklist.key] = answers
+        robot = [a for a in answers if a != BY_PERSON]
+        results.append({'key': checklist.key, 'title': checklist.title, 'english': checklist.english,
+                        'document': checklist.document, 'headline': _worst(robot) if robot else BY_PERSON,
+                        'counts': {a: answers.count(a) for a in ANSWER_ORDER if a in answers}, 'rows': rows})
+    results.sort(key=lambda c: list(CHECKLISTS).index(c['key']))
+
+    presence = [{'kind': kind, 'label': KIND_LABELS[kind], 'detector': kind not in NO_DETECTOR,
+                 'found': len(by_kind.get(kind, [])), 'objects': [o['object_id'] for o in by_kind.get(kind, [])]}
+                for kind in kinds()]
+    return {'checklists': results, 'presence': presence}
+
+
 def describe():
     """JSON-ready structure for the dashboard pages and the exports."""
     return [{'key': c.key, 'title': c.title, 'english': c.english, 'document': c.document,
