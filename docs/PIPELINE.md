@@ -230,21 +230,29 @@ What the open yard forced (the hall recording had none of it):
   "empty"): the look-through test sees an empty place only in front of open space. Where L10
   leaned, the container wall stands at the footprint's distance and reads as "something there". The
   same holds for every wall-mounted kind (extinguisher, hose cabinet, alarm box).
-- **So gone is also "reliably found, now missed in clear view"** (`survey.py`). Every object counts
-  the frames that had its place in clear view (footprint inside the image at 1-4.5 m, not hidden:
-  `look_through` gives a verdict) and the frames of those that detected it. A stored object found
-  in at least 40 % of at least 10 such views on earlier patrols is marked moved (`object_moved`,
-  `reason: "not detected in clear view"`) when a lined-up patrol never detects it, yet has its
-  place in clear view in enough distinct looks (a new look after 0.2 m or 10 degrees of motion,
-  whatever the frame rate) from two places 0.5 m apart. Enough looks: as many as make missing a
-  present object every time under 2 % likely, at least 4 (0.45 needs 7, 0.71 needs 4). Detected
-  later, it is `object_back`. D2 (noisy): L10 (found in 61 of 117 clear views on A and B) reported
-  moved after 6 looks; no other object marked moved on C, D or D2, no flip-flops.
-  Real recording, run 2 on run 1's map with one object's detections dropped (the object stays in
-  the depth image, as a wall would): LAD-001, LAD-002, FEX-001 reported moved after 4 looks, ALM-001
-  (0.45) after 7; HYD-001 (found in 2 of 7 clear views) is not judged. Unchanged run 2 at rates 4,
-  8 and 16: nothing marked moved. Its limit: an object that is present but that the detector stops
-  finding (new lighting, a cover) is reported moved, then back if found again.
+- **So gone is also "reliably found, now missed in clear view"** (`survey.py`). Every object counts,
+  per viewing side (45 degree steps), the frames that had its place in clear view (footprint inside
+  the image at 1-4.5 m, not hidden: `look_through` gives a verdict) and those that detected it. A
+  side counts once the object was found in at least 40 % of at least 5 clear views from it. A
+  lined-up patrol that never detects a stored object, but has its place in clear view from such
+  sides in distinct looks (a new look after 0.2 m or 10 degrees, whatever the frame rate) from two
+  places 0.5 m apart, until missing a present object every time would be under 2 % likely by those
+  sides' rates (at least 4 looks), marks it moved (`object_moved`, `reason: "not detected in clear
+  view"`). It is judged when the survey settles, after fragments are merged, so it never flips back
+  within a patrol. `status` lists per object the sides it can be judged from (`gone_if_missed_from`).
+  - Why per side: in the simulated yard the leaning ladders L10 and L11 were found in 42/42 and 49/49
+    clear views from one side and 13/67 and 0/33 from another; with one overall rate, present L10
+    went unfound for 9 looks from 3 places (C) and L11 for 6 (D): that would have been a false
+    "moved". Per side, the longest such run on C, D and D2 is 3 looks (no verdict). D2's stop
+    faces L10's empty place from its poorly detected side: no verdict there either.
+  - Why at settle: on the hall recording at 16 frames a second the A-frame's sightings went to a
+    fragment for 14 looks; the fragment joins it only when the survey settles.
+  - Real recording, run 2 on run 1's map with one object's detections dropped (the object stays in
+    the depth image, as a wall would): LAD-001 (9 looks), LAD-002 (16), FEX-001 (5), ALM-001 (7)
+    reported moved; HYD-001 (found in 2 of 7 clear views) is not judged. Unchanged run 2 at rates 4,
+    8 and 16: nothing moved. Sim C, D, D2 (noisy): only L49, by look-through.
+  - Its limit: an object present that the detector stops finding from its good sides (new lighting,
+    a cover) is reported moved, and back when found again in a later patrol.
 - **Sightings beyond 12 m are not used.** With the D457's noise (`depth=noisy`, fitted by the
   simulator to the real camera: 6 mm at 2 m, 97 mm at 8 m) ladders seen up to 12.5 m still land
   inside their footprint (90th percentile); from 15 m on they lie 0.25-0.9 m off, a ladder 40 m

@@ -181,7 +181,19 @@ def command_status(args):
         result = site_object.result
         print(f"{site_object.id:8} {site_object.kind:18} {site_object.status:11} "
               f"position={site_object.position} sightings={site_object.sightings} "
-              f"{result.get('status', '')} open={result.get('open', '')} missing_views={len(result.get('missing_views', []))}")
+              f"{result.get('status', '')} open={result.get('open', '')} missing_views={len(result.get('missing_views', []))} "
+              f"gone_if_missed_from={gone_check(site_object)}")
+
+
+def gone_check(site_object):
+    """Sides (map bearing from the object, 45 degree steps: 0 = east, 2 = north) from which a later
+    patrol that misses this object counts it as gone; "none" says why not. Patrol 1 must have seen it
+    within 1-4.5 m for there to be any."""
+    from .survey import reliable_sides
+    sides = reliable_sides(site_object)
+    if sides:
+        return ",".join(f"{side}({rate:.0%})" for side, rate in sorted(sides.items()))
+    return f"none({site_object.detected}/{site_object.views}_clear_views)"
 
 
 def main(argv=None):

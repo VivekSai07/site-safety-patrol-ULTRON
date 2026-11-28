@@ -13,6 +13,7 @@ from .catalog import KINDS
 from .lift import lift
 from .moved import look_through
 from .objects import MIN_SHARE, footprint, offset, touching
+from .types import Sighting
 from .verify import NONE
 
 
@@ -25,19 +26,19 @@ EMPTY_VIEWS = 3         # views from places this far apart (below) that saw a st
 EMPTY_SPREAD = 0.3      # metres
 # An object in front of a wall (a wall box, a ladder leaning on the wall) cannot be looked through:
 # where it stood the wall is at its distance, so its place never looks empty. That it is gone shows
-# as not being detected where it would be in clear view. A detector misses things, so this counts
-# only for an object it found in most of its clear views before, and only after many views from
-# more than one place. (Simulated yard: the detector found one ladder in 1 of 57 clear views.)
-# (Hall recording: ladders 0.69 and 0.87, extinguisher 0.71, alarm box 0.46, hydrant cabinet 0.33.)
-RELIABLE = 0.4          # share of its earlier clear views an object was detected in ...
-MIN_VIEWS = 10          # ... over at least this many
+# as not being detected where it would be in clear view. A detector misses things, and how often
+# depends on the side it looks from (a leaning ladder seen edge-on): a look counts only from a side
+# the object was found from in most clear views before. (Simulated yard: present leaning ladders
+# went unfound for 9 looks from 3 places; the detector found one ladder in 1 of 57 clear views.)
+RELIABLE = 0.4          # share of its earlier clear views from a side an object was detected in ...
+MIN_VIEWS = 5           # ... over at least this many from that side
 # Frames from one spot are one look, whatever the frame rate: a view counts as a new one only after
 # the robot moved or turned this much.
 LOOK_STEP = (0.2, math.radians(10))  # metres, radians
 # Looks in this patrol with its place in clear view and no detection: as many as make missing a
-# present object every time unlikely (below CHANCE, were looks independent), at least MIN_LOOKS ...
+# present object every time unlikely (below CHANCE, by each side's rate, were looks independent) ...
 CHANCE = 0.02
-MIN_LOOKS = 4           # (0.45 needs 7 looks, 0.71 needs 4)
+MIN_LOOKS = 4           # ... and at least this many
 MISSED_PLACES = 2       # ... from places this far apart
 MISSED_SPREAD = 0.5     # metres
 # The depth camera's error grows with the square of the range. With the D457's noise (as fitted
@@ -46,6 +47,12 @@ MISSED_SPREAD = 0.5     # metres
 # sightings split objects, and their frames are useless for inspection: they are not used.
 MAX_RANGE = 12.0        # metres
 ANNOUNCE = 3            # sightings before an object is announced: single boxes are often false hits or parts
+
+
+def reliable_sides(site_object):
+    """{side: share of its clear views the detector found it in} for the sides it was found from
+    reliably: from those, not finding it in a later patrol counts toward its being gone."""
+    return {int(k): d / v for k, (v, d) in site_object.sides.items() if v >= MIN_VIEWS and d >= RELIABLE * v}
 
 
 def overlap(a, b):
@@ -85,10 +92,9 @@ class Survey:
         stored = objects.all() if map_id else []
         self.anchoring = Anchoring(stored) if stored else None
         self._empty = {}  # stored object id -> robot positions from which its place looked empty
-        # Stored objects the detector has found reliably: not finding them in clear view says something.
-        self.reliable = {o.id: max(MIN_LOOKS, math.ceil(math.log(CHANCE) / math.log(1 - min(o.detected / o.views, 0.95))))
-                         for o in stored if o.views >= MIN_VIEWS and o.detected >= RELIABLE * o.views}  # id -> looks needed
-        self._missed = {}  # stored object id -> [looks without a detection, places they were from, last pose]
+        # Sides each stored object was found reliably from: not finding it there says something.
+        self.reliable = {o.id: reliable_sides(o) for o in stored if reliable_sides(o)}  # id -> {side: rate}
+        self._missed = {}  # stored object id -> [looks without a detection, log chance of that, places, last pose]
         self.created = set()  # objects this patrol created: provisional until it is lined up
         # Objects announced (`object_found`) in this workspace: resuming does not announce them twice.
         self.announced = {e["object"] for e in store.events(limit=None) if e["kind"] == "object_found"}
@@ -186,14 +192,15 @@ class Survey:
         if not (frame.pose and self.calibration) or self.anchoring and self.anchoring.state != Anchoring.ANCHORED:
             return
         here = {o.id for o in seen}
-        in_view = []
+        in_view = {}
         for site_object in self.objects.all():
             if site_object.status not in ("FOUND", "INSPECTED"):
                 continue
             verdict = look_through(frame, self.calibration, site_object)
             if verdict is None:
                 continue  # out of view, too near or far, or hidden: says nothing
-            in_view.append(site_object.id)
+            side = Sighting(None, position=site_object.position).side(frame.pose)
+            in_view[site_object.id] = side
             if (not self.anchoring or site_object.id not in self.anchoring.stored or site_object.id in here
                     or self.seen_now.get(site_object.id)):
                 continue
@@ -206,17 +213,29 @@ class Survey:
                 if len(places) >= EMPTY_VIEWS:
                     self._gone(site_object, "place seen empty", len(places))
                     continue
-            if site_object.id in self.reliable:
-                missed = self._missed.setdefault(site_object.id, [0, [], None])
-                last = missed[2]
+            rate = self.reliable.get(site_object.id, {}).get(side)
+            if rate is not None:
+                missed = self._missed.setdefault(site_object.id, [0, 0.0, [], None])
+                last = missed[3]
                 turned = last and abs(math.remainder(frame.pose[2] - last[2], math.tau))
                 if last is None or math.dist(last[:2], frame.pose[:2]) >= LOOK_STEP[0] or turned >= LOOK_STEP[1]:
-                    missed[0], missed[2] = missed[0] + 1, tuple(frame.pose)
-                if all(math.dist(p, frame.pose[:2]) >= MISSED_SPREAD for p in missed[1]):
-                    missed[1].append(tuple(frame.pose[:2]))
-                if missed[0] >= self.reliable[site_object.id] and len(missed[1]) >= MISSED_PLACES:
-                    self._gone(site_object, "not detected in clear view", missed[0])
+                    missed[0], missed[1], missed[3] = missed[0] + 1, missed[1] + math.log(1 - min(rate, 0.95)), tuple(frame.pose)
+                if all(math.dist(p, frame.pose[:2]) >= MISSED_SPREAD for p in missed[2]):
+                    missed[2].append(tuple(frame.pose[:2]))
         self.objects.count_views(in_view, here)
+
+    def judge_missed(self):
+        """Stored objects found reliably before, in clear view often enough in this patrol and never
+        detected: gone. Judged when the survey settles, after fragments were merged: on the hall
+        recording at 16 frames a second, the ladder's sightings went for 14 looks to a fragment that
+        only then joined it."""
+        if not (self.anchoring and self.anchoring.state == Anchoring.ANCHORED):
+            return
+        for object_id, (looks, chance, places, _) in self._missed.items():
+            site_object = self.objects.get(object_id)
+            if (site_object and site_object.status in ("FOUND", "INSPECTED") and not self.seen_now.get(object_id)
+                    and looks >= MIN_LOOKS and chance <= math.log(CHANCE) and len(places) >= MISSED_PLACES):
+                self._gone(site_object, "not detected in clear view", looks)
 
     def _gone(self, site_object, reason, views):
         self.objects.update(site_object.id, status="MOVED")
@@ -297,6 +316,7 @@ class Survey:
             self._replace(removed, target)
             self.store.emit("object_merged", object=removed, into=target, announced=removed in self.announced)
             self.announced.discard(removed)
+        self.judge_missed()
         self.announce(min_sightings, settled=True)
         self.verify(min_sightings)
         self.announce(min_sightings, settled=True)  # a confirmed object counts as found whatever its sightings

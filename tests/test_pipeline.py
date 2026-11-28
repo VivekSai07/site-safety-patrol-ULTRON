@@ -819,7 +819,9 @@ class AnchoringTest(unittest.TestCase):
         self.assertEqual(len(survey.objects.all()), 3)
         self.assertEqual(survey.objects.get("FEX-002").status, "FOUND")
 
-    def test_an_object_the_detector_misses_is_not_marked_moved(self):
+    def test_an_object_the_detector_misses_is_not_marked_moved_without_a_record_of_finding_it(self):
+        """Present (its place looks occupied) and missed, with too few earlier views to know the
+        detector finds it from these sides. With such a record, missing it would mean gone."""
         self.first_patrol()
         survey, store, _ = self.patrol("run-2", [self.LEFT, self.LADDER, self.RIGHT], new=False, missed=[2])
         self.assertEqual(self.events(store, "object_moved"), [])
@@ -827,10 +829,11 @@ class AnchoringTest(unittest.TestCase):
 
     def test_an_object_taken_from_in_front_of_a_wall_is_marked_moved(self):
         """The wall stands where the extinguisher stood: its place never looks empty. Found in
-        every clear view on two patrols, then in none from three places: it is gone."""
+        every clear view from these sides on two patrols, then in none from three places: gone."""
         self.first_patrol()
-        self.patrol("run-1b", [self.LEFT, self.LADDER, self.RIGHT], new=False)
-        self.assertGreaterEqual(ObjectMap(self.folder).get("FEX-002").views, 10)
+        self.patrol("run-1b", [self.LEFT, self.LADDER, self.RIGHT, self.RIGHT], new=False)
+        sides = ObjectMap(self.folder).get("FEX-002").sides
+        self.assertTrue(sides and all(views == detected >= 5 for views, detected in sides.values()), sides)
         survey, store, _ = self.patrol("run-2", [self.LEFT, self.LADDER, self.RIGHT, self.RIGHT], new=False,
                                        gone=[2], wall=True)
         moved = self.events(store, "object_moved")

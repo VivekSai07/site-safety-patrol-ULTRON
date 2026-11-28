@@ -87,6 +87,9 @@ def _join(target, other):
     target.sightings += other.sightings
     target.views += other.views
     target.detected += other.detected
+    for side, (views, detected) in other.sides.items():
+        mine = target.sides.setdefault(side, [0, 0])
+        mine[0], mine[1] = mine[0] + views, mine[1] + detected
     for key, count in other.cells.items():
         target.cells[key] = target.cells.get(key, 0) + count
     if target.cells:
@@ -292,7 +295,8 @@ class ObjectMap:
             else:
                 target = SiteObject(self._new_id(kind), kind, wrong.position, wrong.sightings,
                                     wrong.first_seen, wrong.last_seen, verified=True, cells=dict(wrong.cells),
-                                    views=wrong.views, detected=wrong.detected)
+                                    views=wrong.views, detected=wrong.detected,
+                                    sides={k: list(v) for k, v in wrong.sides.items()})
                 self._objects[target.id] = target
             for found in self._objects.values():
                 found.apart = [i for i in found.apart if i != object_id]
@@ -307,12 +311,15 @@ class ObjectMap:
             self._save()
 
     def count_views(self, in_view, detected):
-        """Objects (ids) whose place a frame had in clear view, and which of them it detected."""
+        """Objects whose place a frame had in clear view ({id: viewing side}), and which it detected."""
         with self._lock:
-            for object_id in in_view:
+            for object_id, side in in_view.items():
                 found = self._objects[object_id]
+                hit = object_id in detected
                 found.views += 1
-                found.detected += object_id in detected
+                found.detected += hit
+                counts = found.sides.setdefault(str(side), [0, 0])
+                counts[0], counts[1] = counts[0] + 1, counts[1] + hit
             if in_view:
                 self._save()
 

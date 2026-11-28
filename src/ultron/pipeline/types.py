@@ -51,6 +51,7 @@ class SiteObject:
     zband: list = None       # mean (low, high) height band relative to the camera: where to look for it
     views: int = 0           # frames that had its place in clear view (near, in the image, not hidden) ...
     detected: int = 0        # ... and of those, the frames the detector found it in
+    sides: dict = field(default_factory=dict)  # {"side": [views, detected]} by viewing direction (45 degree steps)
 
     def to_json(self):
         return asdict(self)
