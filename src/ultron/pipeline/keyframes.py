@@ -68,10 +68,14 @@ class KeyframeStore:
         """The single best frame of an object, or None."""
         return max(self.for_object(object_id), key=quality, default=None)
 
-    def offer(self, frame, site_object, sighting, sharpness):
-        """Keep this frame if it beats what its cell already holds. Returns the Keyframe or None."""
+    def offer(self, frame, site_object, sighting, sharpness, any_range=False):
+        """Keep this frame if it beats what its cell already holds. Returns the Keyframe or None.
+
+        A frame too close or too far for any view is kept only with `any_range`: for an object
+        with no other frame (one the vision-model sweep found), so that it can be checked at all.
+        It serves no view: the robot is still sent to take them."""
         view = view_name(site_object.kind, sighting.distance)
-        if view is None:  # too close or too far to be useful for any view
+        if view is None and not any_range:
             return None
         with self._lock:
             candidate = Keyframe(f"KF-{self._count + 1:05}", site_object.id, "", frame.stamp, sighting.detection.box,
@@ -102,5 +106,6 @@ class KeyframeStore:
         ranked = []
         for (view, _), members in cells.items():
             for rank, keyframe in enumerate(sorted(members, key=quality, reverse=True)):
-                ranked.append((rank, order.index(view), -quality(keyframe), keyframe.id, keyframe))
+                ranked.append((rank, order.index(view) if view in order else len(order), -quality(keyframe),
+                               keyframe.id, keyframe))
         return [entry[-1] for entry in sorted(ranked)[:budget]]

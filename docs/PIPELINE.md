@@ -109,6 +109,7 @@ nothing an earlier mission inspected (it still inspects stored objects never ins
 | `checklists.py` | Fire, alarm and first-aid rows quoted from nesseler's form, prompt, answer rules | run on the real recording with Qwen3-VL |
 | `calibrate.py` | Chooses detector prompt and threshold per kind, judged by the vision model | run on the real recording |
 | `verify.py` | Vision model confirms, relabels or rejects each object | run on the real recording |
+| `sweep.py` | Vision-model sweep: frames from distinct places are sent to the vision model for every catalogued object; what YOLOE missed is added when two frames agree | real recording (ladders switched off in YOLOE: both recovered); simulated yard |
 
 `ultron.protocol` (the earlier reader) supplies frames, sources, the vision client, the ladder
 form and rules, the ladder store and the dashboard publisher.
@@ -374,7 +375,38 @@ python -m ultron.pipeline inspect --calibration bag:BAG --detector yolo
 |---|---|---|---|
 | Prompt choice | `calibrate.py` | Every candidate prompt of a kind (listed in `catalog.py`) is run on sample frames; the model judges six of its boxes; the prompt expected to deliver the most real boxes wins | 80 s. Picked "ladder" and "red fire extinguisher", as tuned by hand before; refuted all 14 "first aid" boxes (there is no kit in the recording) |
 | Object check | `verify.py`, `Survey.verify` | Each well-seen object is shown to the model in up to three keyframes; a majority confirms, relabels or rejects it | Ladders, extinguisher and hose cabinet confirmed in every run; the alarm box confirmed or left "unclear" (never mislabelled). The model is told each object's measured height, and a relabel that contradicts it is refused: before that it called the 0.8 m hose cabinet an alarm box |
+| Missed objects | `sweep.py`, `Survey.apply_sweep` | During the patrol, one frame every 1.5 m or 45° (at most 40) goes to the model in the background ("list every ladder, extinguisher, ... with boxes"). At the end its boxes are placed like YOLOE's. A box on a mapped object marks it seen; a new object needs two frames agreeing on its place, must not lie on a mapped object of another kind, and is announced only once verified | See "Vision-model sweep" below |
 | Resolution rule | `protocol/assess.py`, `form.py` | A form row counts only if the cited photo resolves enough pixels per metre for that kind of finding; label text and sticker dates need a close-up | See below |
+
+### Vision-model sweep: recall for layouts nobody tuned for
+
+YOLOE scores some objects too low to pass its threshold (a ladder seen edge-on, an object that
+looks unlike its prompt), and then nothing says they were missed. The sweep is the safety net: about
+one vision-model call per 1.5 m walked, in the background, at most 40 per patrol (16 on the hall
+recording, 33 on the simulated yard), so YOLOE stays the per-frame detector. Without the vision
+model (offline robot, `--no-sweep`, `--no-verify`) the survey runs as before.
+
+| Run (Qwen3-VL 8B) | Without sweep | With sweep |
+|---|---|---|
+| Hall recording, normal prompts | 5/5 | 5/5, same ids and positions, nothing added; the sweep saw 4 of the 5 itself |
+| Hall recording, YOLOE ladder threshold 0.99 (ladders "missed") | 3/5, no ladder | 5/5: both ladders added (0.16-0.19 m from where YOLOE places them), verified and announced |
+| Simulated yard patrol A (sim evidence) | 14 ladders; first-aid point A01 and ladder L03 missed | 16: A01 (0.00 m) and L03 (0.32 m) added, nothing else; no duplicates, same ids |
+
+On a stored map (repeat patrols) the sweep frames are placed with the patrol's final line-up. Hall
+run 2 on run 1's map: anchored, same 5 ids, nothing added; with YOLOE's ladders switched off the sweep
+saw both stored ladders, so a detector miss is not reported as "ladder gone". With 2° + 0.5 m pose
+error: anchored, same ids, nothing added; with 3° + 0.8 m: suspect, nothing kept (as without the
+sweep). Simulated yard B, C, D on A's map (sim evidence): nothing added, no duplicates; L49 still
+reported moved and found at its new place, the twins L52/L53 still two objects.
+
+A sweep box is placed by its rectangle as outline: on the hall recording that lands on the object
+segmentation finds for all wall boxes and 88 % of ladders (median 1-2 cm off); the rest land up to
+3 m off, which the two-frame rule keeps out. Single-frame candidates are listed in the
+`vision_sweep` event, not added: Qwen proposes 1-5 such false "fire alarm" boxes per hall run, and
+once (before poses were corrected as above) two frames agreed on one; verification rejected it, so it
+was never announced. The sweep needs the vision model during the patrol: on an offline robot every
+call fails and the survey is as without it (stand-in container: 5/5, 16 calls failed, no delay).
+Not yet measured with gpt-5 (box precision may differ).
 
 **The form reader fabricates when allowed to.** In the first real inspection Qwen3-VL 8B marked all
 23 rows of both ladders fine at 0.86 to 0.99 confidence from blurred frames two to three metres

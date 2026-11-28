@@ -25,6 +25,7 @@ from .objects import ObjectMap
 from .gate import DashboardMap, Fence, Gate
 from .online import OnlinePatrol, stdin_commands
 from .survey import Survey
+from .sweep import Sweep
 from .verify import Verifier
 from ..protocol.__main__ import build_vlm, connect_dashboard
 from ..protocol.lidar import Calibration
@@ -80,11 +81,13 @@ def object_folder(args):
     return Path(args.sites) / args.site / known if known else Path(args.data)
 
 
-def build_survey(args, store, vlm):
+def build_survey(args, store, vlm, sweep_workers=None):
     folder = object_folder(args)
+    checked = vlm and not args.no_verify  # sweep objects are announced only once verified
+    sweep = Sweep(VlmDetector(vlm), **({"workers": sweep_workers} if sweep_workers else {})) if checked and not args.no_sweep and args.detector != "vlm" else None
     survey = Survey(build_detector(args, vlm), ObjectMap(folder), KeyframeStore(folder), store,
                     load_calibration(args), args.interval, args.min_sharpness,
-                    verifier=Verifier(vlm) if vlm and not args.no_verify else None, map_id=map_id(args))
+                    verifier=Verifier(vlm) if checked else None, map_id=map_id(args), sweep=sweep)
     survey.fence = load_fence(args)
     if survey.fence:
         survey.inside = survey.fence.contains  # objects beyond the fence are reflections or behind glass
@@ -231,7 +234,8 @@ def command_online(args):
     checked by the vision model, collected until the robot is done with it, then read on a worker
     thread while the survey goes on to the next one. Leftovers are inspected when the stream ends."""
     store, mission, vlm = Store(args.data), args.mission or "PATROL-" + uuid.uuid4().hex[:6], build_vlm(args)
-    survey = build_survey(args, store, vlm)
+    # One sweep call at a time: the online checks and reads share the vision model with it.
+    survey = build_survey(args, store, vlm, sweep_workers=1)
     publisher = connect_dashboard(store, args, mission)
     print_events(store, quiet={"look"} if args.navigator == "operator" else ())
     # operator: a person drives by teleop, follows the `focus` events and types n when done with one
@@ -354,6 +358,8 @@ def main(argv=None):
     common.add_argument("--no-glass-guard", action="store_true",
                         help="keep detections with no depth or seen over a sill (lift.doubt drops them)")
     common.add_argument("--no-verify", action="store_true", help="survey without the vision model's second opinion")
+    common.add_argument("--no-sweep", action="store_true",
+                        help="no vision-model sweep for objects the detector misses (sweep.py)")
     commands = parser.add_subparsers(dest="command", required=True)
 
     survey = commands.add_parser("survey", parents=[common], help="stage 1: build the object map")
