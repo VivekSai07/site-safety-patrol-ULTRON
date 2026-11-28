@@ -4,12 +4,14 @@ Feed it frames at any rate. It keeps no state of its own beyond the rate limit: 
 and keyframes are on disk after every frame, so pausing is simply not feeding it.
 """
 import copy
+import math
 
 from PIL import Image
 
 from .anchor import Anchoring
 from .catalog import KINDS
 from .lift import lift
+from .moved import look_through
 from .objects import MIN_SHARE, footprint, offset, touching
 from .verify import NONE
 
@@ -19,6 +21,8 @@ VERIFY_VIEWS = 3        # keyframes of an object shown to the vision model, one 
 SAME_BOX_OVERLAP = 0.5  # boxes of one kind overlapping this much (intersection over union) are one object
 PART_OF_BOX = 0.7       # a box of one kind lying this much inside a better one is a part of it
 WIDE = 0.5              # metres: objects larger than this look different from every side
+EMPTY_VIEWS = 3         # views from places this far apart (below) that saw a stored object's place empty
+EMPTY_SPREAD = 0.3      # metres
 ANNOUNCE = 3            # sightings before an object is announced: single boxes are often false hits or parts
 
 
@@ -58,6 +62,7 @@ class Survey:
         # On a shared map, objects stored by earlier patrols are landmarks this one is lined up with.
         stored = objects.all() if map_id else []
         self.anchoring = Anchoring(stored) if stored else None
+        self._empty = {}  # stored object id -> robot positions from which its place looked empty
         # Objects announced (`object_found`) in this workspace: resuming does not announce them twice.
         self.announced = {e["object"] for e in store.events(limit=None) if e["kind"] == "object_found"}
         self.seen_now = {}  # object id -> sightings in this run: a patrol reports what it saw itself
@@ -112,6 +117,10 @@ class Survey:
                     self._landmark(landmark, sighting)
             if site_object is None:
                 continue  # between two known objects and no way to tell which, or waiting to line up
+            if site_object.status == "MOVED":  # it is back (or was never gone)
+                site_object = self.objects.update(site_object.id, status="FOUND")
+                self._empty.pop(site_object.id, None)
+                self.store.emit("object_back", object=site_object.id, position=site_object.position)
             if detection.track is not None:
                 self._tracks[detection.track] = site_object.id
             self.keyframes.offer(frame, site_object, sighting, sharpness)
@@ -121,6 +130,7 @@ class Survey:
             together = [o.id for o in seen if o.kind == kind]
             if len(together) > 1:
                 self.objects.seen_together(together)
+        self.check_moved(frame, seen)
         self.announce()
         self.store.save_live(frame)
         best = max(detections, key=lambda d: d.score, default=None)
@@ -129,6 +139,30 @@ class Survey:
                         view=None, box=best.box if best else None, pose=frame.pose,
                         note=", ".join(known) or ("nothing confirmed yet" if seen else "nothing found"))
         return seen
+
+    def check_moved(self, frame, seen):
+        """Stored objects whose place this frame looks right through, from a trusted pose.
+
+        Only a patrol lined up with the stored objects can say a place is empty; one view is not
+        enough, nor are views from one spot. An object detected in this patrol is not gone."""
+        if not (self.anchoring and self.anchoring.state == Anchoring.ANCHORED and frame.pose):
+            return
+        here = {o.id for o in seen}
+        for site_object in self.objects.all():
+            if (site_object.id not in self.anchoring.stored or site_object.id in here
+                    or self.seen_now.get(site_object.id) or site_object.status not in ("FOUND", "INSPECTED")):
+                continue
+            verdict = look_through(frame, self.calibration, site_object)
+            if verdict == "occupied":
+                self._empty.pop(site_object.id, None)
+            elif verdict == "empty":
+                places = self._empty.setdefault(site_object.id, [])
+                if all(math.dist(p, frame.pose[:2]) >= EMPTY_SPREAD for p in places):
+                    places.append(tuple(frame.pose[:2]))
+                if len(places) >= EMPTY_VIEWS:
+                    self.objects.update(site_object.id, status="MOVED")
+                    self.store.emit("object_moved", object=site_object.id, object_kind=site_object.kind,
+                                    position=site_object.position, views=len(places))
 
     def _landmark(self, object_id, sighting):
         """A stored object was seen (positions in the stored map's frame, as corrected so far).

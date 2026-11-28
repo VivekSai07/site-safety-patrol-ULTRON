@@ -160,6 +160,10 @@ class ObjectMap:
                 found = SiteObject(self._new_id(kind), kind, first_seen=stamp)
                 self._objects[found.id] = found
             found.sightings += 1
+            if sighting.zband and found.id not in frozen:
+                n = found.sightings - 1  # running mean over the sightings that measured it
+                found.zband = list(sighting.zband) if not found.zband else [
+                    round((found.zband[i] * n + sighting.zband[i]) / (n + 1), 3) for i in range(2)]
             if found.id in frozen:
                 pass
             elif sighting.cells:
@@ -201,7 +205,7 @@ class ObjectMap:
             return math.dist(o.position, site_object.position) <= (
                 radius if o.id in site_object.apart else MERGE_REACH * radius)
         return [o for o in self._objects.values() if o.kind == site_object.kind and o.id != site_object.id
-                and o.position and o.status != "REJECTED" and touches(o)]
+                and o.position and o.status not in ("REJECTED", "MOVED") and touches(o)]
 
     def fragment_of(self, weak, min_sightings=3):
         """The well-seen neighbour (see `beside`) that `weak` is a fragment of, or None: a detector

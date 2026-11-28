@@ -98,13 +98,13 @@ class Rendered:
     """Detector for rendered frames: one segmented box per visible shape, of the shape's kind in
     `kinds` (ladder by default) and as tall as such an object looks, tracked by `tracks`."""
 
-    def __init__(self, kind="ladder", tracks=None, kinds=None):
-        self.kind, self.tracks, self.kinds = kind, tracks, kinds
+    def __init__(self, kind="ladder", tracks=None, kinds=None, missed=()):
+        self.kind, self.tracks, self.kinds, self.missed = kind, tracks, kinds, missed
 
     def detect(self, frame):
         found = []
         for n, o in enumerate(frame.outlines):
-            if not o:
+            if not o or n in self.missed:
                 continue
             kind = self.kinds[n] if self.kinds else self.kind
             if kind != "ladder":  # rows of a box as tall as this kind looks from where it stands
@@ -571,14 +571,14 @@ class AnchoringTest(unittest.TestCase):
         return ([rectangle(*self.LADDER, 1.5, 0.5)] + [rectangle(x, y, 0.3, 0.3) for x, y in places[1:]],
                 ["ladder", "fire_extinguisher", "fire_extinguisher", "fire_extinguisher"])
 
-    def patrol(self, run, targets, error=(0.0, 0.0, 0.0), moved=None, new=True):
+    def patrol(self, run, targets, error=(0.0, 0.0, 0.0), moved=None, new=True, gone=(), missed=()):
         """Look at each target from three nearby directions; the robot believes it stands where
         `error` (angle, dx, dy about the origin) puts it. The new object exists from run 2 on."""
         from ultron.pipeline.anchor import apply
         shapes, kinds = self.shapes(moved)
-        present = range(4) if new and run != "run-1" else range(3)
+        present = [n for n in (range(4) if new and run != "run-1" else range(3)) if n not in gone]
         store = Store(self.root / run)
-        survey = Survey(Rendered(kinds=kinds), ObjectMap(self.folder), KeyframeStore(self.folder), store,
+        survey = Survey(Rendered(kinds=kinds, missed=missed), ObjectMap(self.folder), KeyframeStore(self.folder), store,
                         CALIBRATION, interval=0, map_id="hall-v1")
         stamp = 0.0
         for target in targets:
@@ -628,6 +628,29 @@ class AnchoringTest(unittest.TestCase):
         survey, store, _ = self.patrol("run-2", [self.LEFT, self.LADDER, self.NEW], moved=(8.0, 3.5))
         self.assertEqual(len(self.events(store, "localisation_suspect")), 1)
         self.assertEqual(len(survey.objects.all()), 3)
+
+    def test_an_object_taken_away_is_marked_moved_not_left_silently(self):
+        self.first_patrol()
+        survey, store, _ = self.patrol("run-2", [self.LEFT, self.LADDER, self.RIGHT], new=False, gone=[2])
+        self.assertEqual([e["object"] for e in self.events(store, "object_moved")], ["FEX-002"])
+        self.assertEqual({o.id: o.status for o in survey.objects.all()},
+                         {"LAD-001": "FOUND", "FEX-001": "FOUND", "FEX-002": "MOVED"})
+        # ... and when it is back in its place, it is found again under its id.
+        survey, store, _ = self.patrol("run-3", [self.LEFT, self.LADDER, self.RIGHT], new=False)
+        self.assertEqual([e["object"] for e in self.events(store, "object_back")], ["FEX-002"])
+        self.assertEqual(len(survey.objects.all()), 3)
+        self.assertEqual(survey.objects.get("FEX-002").status, "FOUND")
+
+    def test_an_object_the_detector_misses_is_not_marked_moved(self):
+        self.first_patrol()
+        survey, store, _ = self.patrol("run-2", [self.LEFT, self.LADDER, self.RIGHT], new=False, missed=[2])
+        self.assertEqual(self.events(store, "object_moved"), [])
+        self.assertEqual(survey.objects.get("FEX-002").status, "FOUND")
+
+    def test_nothing_is_marked_moved_before_the_patrol_is_lined_up(self):
+        self.first_patrol()
+        survey, store, _ = self.patrol("run-2", [self.RIGHT, self.LEFT], new=False, gone=[2])
+        self.assertEqual(self.events(store, "object_moved"), [])  # one landmark seen before the empty place
 
     def test_the_same_patrol_again_lines_up_without_correction(self):
         self.first_patrol()

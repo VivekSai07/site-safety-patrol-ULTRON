@@ -81,6 +81,15 @@ def _along_bearing(frame, box, calibration, distance):
     return (x + distance * math.cos(yaw + angle), y + distance * math.sin(yaw + angle))
 
 
+def _zband(box, calibration, distance):
+    """Heights relative to the camera that the box spans at `distance`; None for a box cut off
+    at the top or bottom of the image, which shows only part of the object."""
+    if box[1] <= 10 or box[3] >= 990:
+        return None
+    return tuple(round((calibration.cy - v / 1000 * calibration.height) / calibration.fy * distance, 3)
+                 for v in (box[3], box[1]))
+
+
 def _box_height(box, calibration, distance):
     """Height in metres of what the box spans at `distance`."""
     return (box[3] - box[1]) / 1000 * calibration.height / calibration.fy * distance
@@ -105,7 +114,7 @@ def lift(frame, detection, calibration=None):
             if cells:
                 # The middle of the visible surface, not a point along the box's centre ray.
                 return Sighting(detection, centre, distance, height=_box_height(detection.box, calibration, distance),
-                                cells=cells)
+                                cells=cells, zband=_zband(detection.box, calibration, distance))
     if distance:
         return Sighting(detection, _along_bearing(frame, detection.box, calibration, distance), distance,
                         height=_box_height(detection.box, calibration, distance))

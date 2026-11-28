@@ -60,7 +60,7 @@ class Anchoring:
     def __init__(self, stored):
         # Wide objects are poor landmarks: the middle of what is seen of a ladder depends on the view.
         self.stored = {o.id: (o.kind, tuple(o.position), 1.0 / max(KINDS[o.kind].extent, 0.25))
-                       for o in stored if o.position and o.status != "REJECTED"}
+                       for o in stored if o.position and o.status not in ("REJECTED", "MOVED")}
         self.measured = {}  # stored id -> [sum x, sum y, sightings], in this run's own frame
         self.transform = None
         self.state, self.details = self.UNANCHORED, {}

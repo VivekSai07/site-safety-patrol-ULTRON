@@ -24,6 +24,7 @@ class Sighting:
     approximate: bool = False  # True when no range sensor hit the object and the range was assumed
     height: float = None     # physical height of the box in metres at the measured range
     cells: list = None       # [[i, j], ...] floor cells (CELL metres) the object's visible surface covers
+    zband: tuple = None      # (low, high) metres above (+) or below (-) the camera that the box spans
 
     def side(self, robot_pose):
         """Viewing direction as a 45 degree step, 0..7: the map bearing from object to camera."""
@@ -41,11 +42,13 @@ class SiteObject:
     sightings: int = 0
     first_seen: float = 0.0
     last_seen: float = 0.0
-    status: str = "FOUND"    # FOUND -> INSPECTED (or UNREACHABLE); REJECTED if the vision model says it is nothing
+    status: str = "FOUND"    # FOUND -> INSPECTED (or UNREACHABLE); REJECTED if the vision model says it is nothing;
+                             # MOVED once its place was seen empty
     verified: bool = False   # the vision model looked at a keyframe and agreed with the kind
     result: dict = field(default_factory=dict)  # what the inspection concluded
     apart: list = field(default_factory=list)   # ids seen in the same frame: certainly other objects
     cells: dict = field(default_factory=dict)   # {"i,j": sightings covering that floor cell}: the footprint
+    zband: list = None       # mean (low, high) height band relative to the camera: where to look for it
 
     def to_json(self):
         return asdict(self)

@@ -29,7 +29,10 @@ if len(ITEM_KEY) != sum(len(g[5]) for g in GROUPS) or any(
 FORWARDED = {"object_found": "OBJECT_FOUND", "object_merged": "OBJECT_MERGED", "object_verified": "OBJECT_VERIFIED",
              "object_relabelled": "OBJECT_RELABELLED", "object_rejected": "OBJECT_REJECTED",
              "object_unclear": "OBJECT_UNCLEAR", "view_requested": "VIEW_REQUESTED", "view_failed": "VIEW_FAILED",
-             "checklist": "CHECKLIST_DONE", "stage": "STAGE", "localisation_suspect": "LOCALISATION_SUSPECT"}
+             "checklist": "CHECKLIST_DONE", "stage": "STAGE", "localisation_suspect": "LOCALISATION_SUSPECT",
+             "localisation_anchored": "LOCALISATION_ANCHORED", "object_moved": "OBJECT_MOVED", "object_back": "OBJECT_BACK"}
+# Events about objects known from earlier patrols, forwarded whether or not this one announced them.
+ABOUT_STORED = {"object_moved", "object_back"}
 
 ITEM_RESULT = {form.OK: "OK", form.DEFECT: "DEFECT", form.NOT_VISIBLE: "UNKNOWN",
                form.HUMAN_CHECK: "NOT_CHECKED", form.NOT_APPLICABLE: "N_A"}
@@ -189,7 +192,7 @@ class Publisher:
             subject = event.get("object")
             if kind == "object_found":
                 self.announced.add(subject)
-            elif kind.startswith("object_") and subject not in self.announced:
+            elif kind.startswith("object_") and kind not in ABOUT_STORED and subject not in self.announced:
                 return  # never announced: nothing on the dashboard to update
             if kind == "object_merged":
                 self.announced.discard(subject)
