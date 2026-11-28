@@ -2,9 +2,19 @@
 
 Nov 27, 2026 · @Aravind
 
+**Historical planning document; superseded where it conflicts with the
+[Pass 7 Build Bible](bible/BUILD_BIBLE_PASS7.md) and
+[simulation-to-hardware policy](SIM_TO_HARDWARE.md).** The current first
+milestone is operator-positioned simulation capture and an evidence-linked
+draft. This plan's hardware, model, timing and interface statements are
+proposals, not verified capabilities or permission to operate hardware.
+
 ## Goal
 
-We build a Unitree B2 patrol that finds every ladder on the test course, checks what it can see, and writes a digital inspection record automatically. That covers nesseler's three deliverables: every ladder assessed, an automatic digital protocol, and a live demo on the test course.
+This plan proposed a Unitree B2 patrol that finds ladders on a test course,
+checks what it can see and drafts a digital inspection record. Its list of
+three deliverables was a planning assumption, not a verified organizer hand-in
+requirement; confirm the actual event material separately.
 
 This plan is the 48-hour cut of the 25-page build bible. It keeps the bible's safety logic and its minimum demo (Appendix E), and drops everything marked Tier 2 or Tier 3.
 
@@ -33,7 +43,9 @@ We keep every item in the bible's minimum demo, but get to the ladders the low-r
 
 ## Architecture
 
-The robot only walks, streams and stops; every model runs on the laptop, so a laptop crash never makes the robot unsafe.
+The proposed architecture separates laptop inference from robot control.
+This separation alone does not establish that a laptop or network failure is
+safe; the full control and stop chain needs independent validation.
 
 &#91;embedded content: System architecture · robot, laptop, outputs\]
 
@@ -41,7 +53,7 @@ What each part is for:
 
 - **Sensors:** the camera takes the inspection photos and its depth places each ladder on the map; the LiDAR is for mapping and obstacle avoidance.
 - **Nav2 + saved map:** knows where the robot is, walks the patrol waypoints and drives to each ladder's recorded overview and close-up poses.
-- **Safety:** remote E-stop and laptop watchdog; stops the robot if someone presses the stop or the laptop link drops.
+- **Safety:** proposed remote takeover and watchdog; their interfaces and stop behavior require independent verification and do not replace a functional physical E-stop.
 - **Detect + pin:** SAM 3 finds ladders in the frames; the depth inside the mask turns each sighting into a fixed map position.
 - **VLM reader:** Qwen3-VL reads the close-up into the checklist (label date, foot caps, rungs, spreader). It reports what it sees and never decides pass or fail.
 - **Rules:** plain if/else logic turns those observations into a verdict, hard fails first. This is the part we can explain and defend to nesseler.
@@ -51,7 +63,9 @@ What each part is for:
 
 ## How one patrol works
 
-The whole patrol runs without anyone touching the sticks. Setup (Mode 1) is the only time we drive by hand.
+The following autonomous sequence is a historical proposal, not current
+behavior or authorization to drive a robot. Operator-positioned simulation
+capture comes first.
 
 0. **Setup, once (Mode 1):** drive the B2 by remote to build and save the LiDAR map. Record 4–6 patrol waypoints, plus an overview pose (about 2.0–2.5 m) and a close-up pose (about 0.8–1.0 m) for each ladder spot.
 1. **Patrol:** the B2 localizes on the saved map and walks the waypoints. It streams 2–5 keyframes per second, with depth and its map pose, to the laptop.
@@ -64,7 +78,9 @@ The whole patrol runs without anyone touching the sticks. Setup (Mode 1) is the 
 
 ## Compute plan
 
-Everything fits on our RTX 4060 laptops (8 GB VRAM), but only just. Nothing heavy runs on the robot.
+The following compute allocation and memory estimates are proposals, not
+measurements on the current system. Whether either laptop can run these
+models, alone or together, remains to be tested.
 
 | Part | Runs on | VRAM (approx.) | Notes |
 | --- | --- | --- | --- |
@@ -73,11 +89,14 @@ Everything fits on our RTX 4060 laptops (8 GB VRAM), but only just. Nothing heav
 | Qwen3-VL reader | Laptop 2 (4060) | \~3 GB (4B, 4-bit) | Fallback: 2B variant at \~2 GB. Runs only when the robot is stopped |
 | Rules, registry, dashboard, PDF | Laptop 2 (CPU) | – | FastAPI + SQLite |
 
-**If only one 4060 is free:** SAM 3 and the 4B reader together need about 7 of 8 GB. That works because they never run at the same moment: SAM 3 runs while the robot walks, the reader while it stands still.
+**If only one 4060 is free:** sequential execution was proposed as a possible
+fallback. The estimated combined footprint does not establish that it fits;
+model loading, memory peaks and latency must be measured.
 
 **If the organizers' RTX 6000 Ada is available** (the bible lists it): run both models there and upgrade the reader to Qwen3-VL-8B for better label reading. The 4060s become dev machines, the dashboard screen and the backup.
 
-These VRAM numbers come from model cards and blog posts. Check them tonight with `nvidia-smi` on a few ladder photos.
+The estimates were attributed to model cards and blog posts; verify their
+sources and measure with approved local images before relying on them.
 
 ## Verdicts
 
@@ -98,15 +117,19 @@ The system never silently passes a ladder it could not fully see.
 
 ## Safety
 
-Three layers stop the robot. Only the first is guaranteed by the hardware, so it must always be in someone's hands.
+The earlier plan described remote takeover, software priority and a laptop
+heartbeat. Their interfaces and behavior have not been independently
+verified; a remote button sequence or software command is not assumed to be
+a physical E-stop. The proposed 0.5-second watchdog and 0.3-second command
+timeout are unmeasured targets, not guaranteed stopping times.
 
-1. **Remote E-stop (hardware):** L1 + A on the Unitree remote puts the B2 into damping mode and it settles to the ground. One teammate is the safety person, holds the remote whenever the robot is powered, and does nothing else during runs.
-2. **twist\_mux (software priority):** Nav2 has the lowest priority and the joystick sits above it, so any stick input instantly overrides autonomy. That takeover is logged as an operator intervention. Reuse the twist\_mux from the MYBOTSHOP stack rather than building one.
-3. **Laptop heartbeat (watchdog):** the laptop publishes a heartbeat about 10 times a second. If it stops for 0.5 s (Wi-Fi drop, laptop crash), a twist\_mux lock blocks Nav2 and the robot stops. The joystick still works.
-
-**Check on Friday:** what the B2 does when velocity commands just stop arriving. As a backstop, the bridge to the B2 sends zero velocity after about 0.3 s of silence.
-
-**Before any autonomy, test in open space at 0.3–0.5 m/s:** pull the laptop's Wi-Fi while walking (stops within 500 ms), move the joystick during a Nav2 goal (joystick takes over), press L1 + A while walking (damping).
+Any later authorized motion requires a responsible operator, verified RC
+priority, an independently tested watchdog and a functional physical E-stop.
+Integrated deployment additionally requires the documented full-system
+simulation gate and separate real-world readiness. Component tests require
+their own authorization, bounded risk-assessed plan and safeguards. Do not
+perform real motion or link-loss tests on the authority of this historical
+document.
 
 ## Team and timeline
 
@@ -137,12 +160,14 @@ Settle only these three things in the first hour; everything else can wait until
 - [ ] **Route (bible D2):** confirm Nav2 with recorded poses on the organizer stack, and that we may record waypoints in Mode 1
 - [ ] **Inspection sticker (bible D5):** photograph a real Prüfplakette on the course and ask the mentor what "overdue" means on it
 - [ ] Ask whether the RTX 6000 Ada is ours to use (changes the compute plan)
-- [ ] Practise L1 + A once with the organizers
+- [ ] Verify approved stop interfaces and safeguards under a separately authorized test plan.
 - [ ] Request SAM 3 weights on Hugging Face before the event if not done yet (gated access)
 
 ## Demo and deliverables
 
-The live demo is one hands-off patrol of under 3 minutes with two or three staged ladders. Each staged defect is labelled as test evidence, never as a real finding.
+The proposed live demo was one hands-off patrol with staged ladders; it is not
+a verified current capability or permission for motion. Each staged defect
+must be labelled as test evidence, never as a real finding.
 
 | Case | What we stage | Expected result |
 | --- | --- | --- |
@@ -152,7 +177,8 @@ The live demo is one hands-off patrol of under 3 minutes with two or three stage
 
 Then run a second patrol: the same LAD-IDs come back, and the dashboard shows each ladder's history.
 
-**Final deliverables (bible WBS-11/12, before Sunday 12:00):**
+**Historical proposed deliverables (bible WBS-11/12):** confirm current event
+requirements, authorization, privacy and asset rights before publication.
 
 - [ ] Uncut ≤2-minute backup video of the real robot, locked by Saturday 22:00
 - [ ] Repo with README and start commands

@@ -28,9 +28,9 @@ def main(argv=None):
     parser.add_argument('--media', default='runs/dashboard-media', help='folder for evidence photos')
     parser.add_argument('--port', type=int, default=8000)
     parser.add_argument('--lan', action='store_true',
-                        help='listen on all network interfaces so phones and other laptops can connect')
+                        help='listen on all interfaces without authentication; unsafe on shared networks')
     parser.add_argument('--goals', action='store_true',
-                        help='let the map send navigation goals (simulation only; anyone who can open the page can move the robot)')
+                        help='enable unauthenticated goals; a connected ROS bridge may reach hardware')
     parser.add_argument('--notify', help='notification config JSON (see config/notify.example.json)')
     args = parser.parse_args(argv)
 

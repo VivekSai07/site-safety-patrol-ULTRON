@@ -1,17 +1,29 @@
 # API prompt packs
 
-The versioned prompts below are ready for team integration. They produce evidence proposals, not safety certification. They are separate from simulator oracles, image-generation recipes and completed evaluation results.
+The versioned prompts below are available for local, fixture-based team
+integration. They produce evidence proposals, not safety certification. They
+are separate from simulator oracles, image-generation recipes and completed
+evaluation results. The existing ladder and site-safety rubrics include
+source-derived material whose reuse rights remain unverified; their presence
+on main does not establish permission to transmit or redistribute them.
+Review rights and privacy for both text and images before any external use.
 
 | Pack | Files | Scope |
 |---|---|---|
-| `inspection_v1` (default) | [Prompt folder](../src/ultron/assets/inspection_v1/) | Seven nesseler ladder sections, 23 exact criterion IDs |
+| `inspection_v1` (default) | [Prompt folder](../src/ultron/assets/inspection_v1/) | Seven proposed ladder sections and 23 internal criterion IDs; form equivalence and rights unverified |
 | `site_safety_v1` | [Prompt folder](../src/ultron/assets/site_safety_v1/) | Four site-safety sections, nine criteria: fire extinguisher, first aid, escape routes and PPE |
 
 Each folder contains `system.txt`, numbered `section_*.txt` instructions, `rubric.json` and `response_schema.json`. Keep them versioned together. The common system instructions and all section instructions belong in the same request; the rubric and strict schema define the permitted criterion IDs and states.
 
 ## Request construction
 
-The published [assessment adapter](../src/ultron/assessment.py) loads the selected pack, reads hash-verified local JPEGs and builds a Responses API body. It does not call OpenAI or read an API key. Use a vision/structured-output model available to your project; credentials belong only in the backend environment.
+The published [assessment adapter](../src/ultron/assessment.py) loads the selected pack, reads hash-verified local JPEGs and builds a Responses API body. It does not call OpenAI or read an API key. The resulting local request file contains image data and prompt text; keep it private and do not transmit or publish it without separate authorization and rights/privacy review. A future live caller must keep credentials in its backend environment.
+
+The separate `ultron.assessment_live` and `scripts/first-milestone.sh` paths
+can send images and prompt text to an external API. Do not run them without
+separate authorization and rights/privacy review; they were not run in this
+reconciliation. The optional `perception.openai_adapter` is another distinct
+live path.
 
 ```bash
 python3 -m pip install -e . Pillow

@@ -1,4 +1,10 @@
-# Model-backed safety sweep (no sim-oracles) — design
+# Model-backed safety sweep — historical design
+
+> Historical teammate design, superseded where it conflicts with
+> [Pass 7](../../bible/BUILD_BIBLE_PASS7.md) and
+> [site-safety limits](../../SITE_SAFETY.md). Model confirmation uses
+> pixels, but target kinds, positions and routing still use simulated scene
+> truth. External uploads and hardware use require separate authorization.
 
 Date: 2026-11-28 · Owner: Vivek · Branch: `feature/model-safety-perception` (from main after the site-safety merge)
 

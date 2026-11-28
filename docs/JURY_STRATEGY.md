@@ -12,8 +12,13 @@ The official weighting is 30% real-hardware operation, 25% reliability, 20% tech
 
 ## Freeze order
 
+This is a historical delivery plan, not authorization for physical work. The
+current first milestone is operator-positioned simulation capture and an
+evidence-linked draft; integrated hardware use needs the separate
+[simulation and hardware gates](SIM_TO_HARDWARE.md).
+
 1. Real sensor frame -> one detected ladder -> evidence crop -> official protocol field -> report. Record this early.
-2. Integrate Sahil's verified mapping/navigation adapter for a bounded, operator-approved route. The organizer kit supplies standing/DDS simulation, not a navigation baseline. Keep model inference outside the control/watchdog loop.
+2. Later integrate and independently verify Sahil's mapping/navigation work for a bounded, operator-approved route. The organizer kit supplies standing/DDS simulation, not a navigation baseline. Keep model inference outside the control/watchdog loop.
 3. Add persistent identity/history and explicit unresolved items. Measure duplicate IDs and missing expected assets.
 4. Freeze the real baseline before second-look navigation, tilt, new mapping stacks or model fine-tuning. Team target: Saturday 13:30.
 5. Capture the backup real-hardware video by Saturday 22:00. Final packaging on Sunday before noon.

@@ -6,12 +6,33 @@ Deliver a reusable prompt/rubric/schema pack, a deterministic request builder/re
 
 Current dashboard contract inspected at `feature/dashboard` commit `42330758a62197122b56d56098a49c8c442350bc`: `dashboard/models.py`, `checklist.py`, `app.py`. Existing `feature/protocol-reader` at `698a571c4b3631cf3ed535212a80b660ee071fe2` also contains a VLM reader/publisher. This pack does not merge either branch or replace that reader. It uses the dashboard's 23 exact criterion IDs across seven sections and its `OK/DEFECT/UNKNOWN/NOT_CHECKED/N_A` states. Any change to dashboard keys requires an explicit contract update.
 
-360-degree capture is a required acceptance gate, not an optional feature in the target architecture. The planned audit grid is eight target-relative azimuth sectors (45-degree spacing), each with lower/middle/upper evidence: 24 accepted keyframes, plus a readable label detail when possible. Angles refer to the observed ladder frame, not the robot's own yaw. Distinct bins alone do not establish surface visibility, structural integrity or functional operation. Independent pose/quality/identity/region checks and immutable evidence are required. The grid and thresholds are proposed engineering acceptance parameters, not measured hardware guarantees.
+The upstream live-assessment milestone requires a sampling audit of eight
+target-relative azimuth sectors (45-degree spacing), each with lower/middle/
+upper evidence: 24 accepted keyframes, plus label detail when possible.
+That is a requirement of that particular adapter, not a proven minimum or a
+prerequisite for the current operator-positioned label-first draft. Angles
+refer to the observed ladder frame, not the robot's own yaw. Distinct bins
+alone do not establish surface visibility, structural integrity or functional
+operation. The grid and thresholds are proposals, not measured hardware
+guarantees.
 
-Unavailable or blocked rear/upper views must fail the full-coverage gate and be displayed as incomplete; do not silently fall back and call the inspection 360. Preserve partial defect findings and route gaps to human review. No path may cross obstacles, reduce keep-outs or command unverified tilt/height movement just to complete the grid. The legacy open-A-frame patrol demonstrates eight horizontal views. The new isolated `inspect360` runner has captured 24 angle/band views with virtual pan/tilt, returned to base and passed its disclosed synthetic sampling audit; it does not establish physical 360 completion or actual all-surface visibility. The new capture requirement supersedes the earlier optional-orbit product target, not the physical hardware authorization gates or existing conservative runtime path limits.
+Unavailable or blocked rear/upper views must fail the specific full-coverage
+gate and be displayed as incomplete; do not call a partial survey 360.
+Preserve partial defect findings and route gaps to human review. No path may
+cross obstacles, reduce keep-outs or command unverified tilt/height movement
+just to complete the grid. The isolated `inspect360` runner uses virtual
+pan/tilt, kinematic movement and oracle visibility; it does not establish
+physical completion or all-surface visibility. The optional experiment does
+not supersede the baseline or hardware gates.
 
 API requests carry one asset's keyframes and explicit image IDs, all seven section prompts and a strict schema with every criterion present. A bundle fingerprint binds exact images/job context/prompts; stale answers cannot be applied to a different mission or changed evidence. The model proposes evidence only. Local validation checks IDs, states, confidence, references and human-only constraints. An uncalibrated clean proposal never emits an automated pass. The dashboard adapter preserves `safe_to_use=false`, functional checks and sign-off pending. It requires an actual map position; unknown position is an integration error rather than a made-up origin. Published photo IDs are content/asset-bound and distinct from local frame names, preventing cross-ladder overwrites within a mission.
 
 Dashboard publication order: start the mission, upload evidence JPEGs, emit progress events, then post one final inspection. Its current duplicate rule rejects a second verdict for the same asset/mission, so incremental coverage/proposals remain events until finalization. No cloud credentials go to the browser. No notification channels or live endpoints are invoked by preparing or testing this pack.
 
-The generation ZIP contains a ChatGPT start prompt, per-section recipes, a 23-criterion scenario matrix, full 360 keyframe prompts, a small first-batch list, review templates, evaluation instructions, the API prompt/schema assets and checksums. Generate one image at a time. Keep all views/condition variants of a base physical identity in one split; generated sibling images and seed-derived variants are not independent evaluation groups. Intended labels stay `reviewed=false` until the actual image is inspected. Missing/incorrect damage, impossible geometry, inconsistent identities and unreadable generated text are rejection cases. Real held-out ladder/session data is required for real performance claims.
+The generation ZIP contains prompts, review templates and API assets,
+including source-derived rubric material with unverified reuse rights. Do
+not upload it or generate images externally without separate authorization
+and rights/privacy review. If generation is approved, keep all views and
+condition variants of one physical identity in one split. Intended labels
+stay `reviewed=false` until the actual image is inspected. Real held-out
+ladder/session data is required for real performance claims.

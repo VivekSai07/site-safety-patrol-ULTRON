@@ -3,8 +3,8 @@
     python -m ultron.dashboard.replay runs/history-demo --speed 4
 
 Posts, in mission-time order: mission start (with the site map), robot poses, front RGB and
-depth frames, events, evidence photos + inspections, and mission end. Uses only the HTTP API,
-the same one the ROS side will use on the real robot.
+depth frames, events, evidence photos + inspections, and mission end. Uses only the HTTP API.
+A future robot integration is not established by this simulation replay.
 """
 import argparse
 import io

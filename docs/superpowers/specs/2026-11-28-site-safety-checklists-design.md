@@ -1,5 +1,9 @@
 # Site safety checklists beyond ladders — design
 
+> Historical teammate design, not current operating authority. See
+> [Pass 7](../../bible/BUILD_BIBLE_PASS7.md) and [site-safety limits](../../SITE_SAFETY.md).
+> External uploads and hardware use require separate authorization.
+
 Date: 2026-11-28 · Owner: Vivek · Branch: `feature/site-safety-checklists` (from origin/main after the dashboard merge)
 
 ## Goal

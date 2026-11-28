@@ -1,11 +1,12 @@
 # Site Safety Patrol: Build Bible, Pass 7
 
-**Working team reference — 27 November 2026.** This reconciles Om's Pass 6
-plan and research integration with ULTRON's implementation at team baseline
-`0b97edb` and the changes on this branch. It is a build and verification plan,
-not evidence of physical deployment, approval, legal compliance or a
-completed inspection. Unresolved decisions and pending figures remain
-explicitly marked.
+**Working team reference.** Team baseline `0b97edb` and the Pass 6 material
+remain historical comparison points. Team main at `79fb408` added a
+dashboard and versioned assessment prompt packs; `0e7eff6` added a separate
+24-view simulator, site-safety sweep and live-assessment path. This
+reconciliation also includes label-first and detection-world work. Use `git rev-parse HEAD`
+to identify the actual snapshot under review. This is not evidence of physical
+deployment, approval, legal compliance or a completed inspection.
 
 **Read first:** develop primarily in simulation; complete integrated hardware
 deployment requires the full-system simulation gate **and** separate real-world
@@ -19,9 +20,16 @@ hardware test is authorized by this document.
 [jury strategy](../JURY_STRATEGY.md), [event handoff](../EVENT_HANDOFF.md),
 [pitch](../PITCH.md) and [historical validation](../VALIDATION.md). Om's Pass 6
 Bible, eight research reports and 81-row integration ledger remain in the
-personal workspace; they are not included in this team checkout. Organizer
-and DGUV source PDFs are not present in this checkout, so verify their actual
-text and edition when available. Team comparison documents are retained.
+personal workspace; they are not included in this team checkout. The organizer source PDFs are not included in this team checkout. The
+Nesseller ladder checklist was checked in the local organizer source
+checkout. The source-specific local catalog is excluded from distribution
+pending rights review. The public synthetic example and
+[baseline summary](../LABEL_FIRST_BASELINE.md) are not the official form or
+evidence of complete form coverage; the PDF is not copied here. The DGUV
+source edition still requires verification. Team comparison documents are
+retained. For the next review, use the
+[attachment list](BUILD_BIBLE_PASS7_ATTACHMENTS.md) and
+[review prompt](BUILD_BIBLE_PASS7_REVIEW_PROMPT.md).
 
 ## Status legend
 
@@ -46,6 +54,20 @@ patrol. The robot discovers a ladder, associates a persistent identity,
 approaches a validated observation pose, captures stationary evidence,
 records a conservative screening outcome and resumes patrol. It retains
 history, uncertainty and coverage gaps for a qualified human.
+
+**Current priority correction (synthetic HTTP probe):** the baseline
+is a simulation-only, operator-positioned, label-first ladder evidence
+capture followed by an evidence-linked checklist draft for qualified human
+completion. A minimal synthetic form example and the limits of the locally
+retained source-specific map are described in
+[LABEL_FIRST_BASELINE.md](../LABEL_FIRST_BASELINE.md). The existing
+autonomous-style demo remains a separate simulation reference; autonomous
+acquisition is later work. A rendered synthetic capture-to-draft probe used
+HTTP inputs and manual fixture transcription; bounded browser controls and
+focus were checked separately in specified simulation setups. Automatic label
+reading remains untested. Neither this priority nor the form map claims a
+completed inspection or physical operation. See
+[validation](../VALIDATION.md).
 
 | Tier | Scope | Admission and fallback |
 |---|---|---|
@@ -82,9 +104,19 @@ area was visible or every ladder was detected.
 | Discovery | **EXISTS: SIM.** Fixture-key observations and segmentation provide detections; three sightings are counted, but this is not a real consistency or recall test. |
 | Inspection | **EXISTS: SIM.** Findings and label dates are scripted fixtures; one optional side recovery is scripted, not proof of component visibility. |
 | History | **EXISTS: SIM.** SQLite stores map-scoped assets and ordered inspections; ambiguous neighbors are not silently merged. |
-| Model adapters | **EXISTS: ADAPTER.** Optional YOLOE/YOLO-World and Qwen paths exist separately; weights, inference and real accuracy are not validated here. |
+| Model adapters | **EXISTS: ADAPTER, limited smoke tests.** A local CPU YOLO-World ladder predictor was exercised on synthetic views and four real photos. The real sample is not independently annotated or held out; label accuracy and real-world performance remain unvalidated. See [evaluation](../DETECTION_EVALUATION.md). |
+| Label-first capture/draft | **EXISTS: SIM, bounded probes.** Rendered 1280×720 synthetic capture, HTTP movement/STOP and a local source-specific manual-fixture draft were observed; browser controls and focus were checked separately. The public example is not an official form. Automatic label reading and real inspection remain unverified. See [validation](../VALIDATION.md). |
+| Detection test hall | **EXISTS: SIM.** An independent example has a stationary B2, free virtual camera, synthetic labels and segmentation-derived visible ground truth. The previously tested Sahil hall requires an explicitly supplied local source pending rights review. Neither is a calibrated robot camera or real detection result. See [world usage](../DETECTION_WORLD_USAGE.md). |
+| Optional sampling and site safety | **EXISTS: SIM.** `inspect360` uses a virtual pan/tilt camera, kinematic movement and oracle visibility; its 24-cell audit is not a proven minimal image count or physical full-surface inspection. The opt-in site-safety sweep uses known simulated target positions; default PPE flags are oracle-based, and optional model judgments are uncalibrated proposals. These do not replace the label-first baseline. See [assessment runbook](../ASSESSMENT_RUNBOOK.md) and [site safety](../SITE_SAFETY.md). |
+| Organizer B2 DDS | **EXISTS: SIM, bounded probes.** Headless LowState and a separately wrapped isolated viewer/stand run with finite command/state samples were observed. Browser GUI/host access, walking and hardware remain untested. See [organizer B2 simulation](../ORGANIZER_B2_SIM.md). |
 | Robot interface | **EXISTS: ADAPTER.** A B2 SDK hook exists but is not a hardware safety supervisor or proof of a functioning robot interface. The demo never connects to it. |
-| ROS, Nav2, UI, replay | **PROPOSED/PARTIAL.** ROS replay is visualization only; live Nav2, real-bag ingestion, dynamic dashboard, PDF/n.core and the proposed executive are not implemented. Rerun and DimOS runtimes remain unverified. |
+| Dashboard and assessment | **EXISTS: ADAPTER.** The dashboard and its per-ladder PDF path are separate from the legacy report. `assessment` constructs hash-bound requests without calling an API; `assessment_live` and the separate optional OpenAI adapter can transmit images and prompts and require separate authorization and rights/privacy review. No live call was made in this reconciliation. End-to-end robot/API integration remains unverified. See [dashboard](../DASHBOARD.md) and [API prompts](../API_PROMPTS.md). |
+| ROS and Nav2 | **PARTIAL.** ROS replay is visualization only. A separate dashboard bridge can send Nav2 goals when goals are enabled; it does not prove simulation isolation. Real Nav2, real-bag ingestion and the proposed executive remain unverified. Rerun and DimOS runtimes remain unverified. |
+
+Dashboard goals are off by default. Do not start the goal bridge where a real
+action server could be reached: the bridge has no independent hardware or
+network-isolation guard. A localhost URL, namespace or ROS domain alone is not
+proof of isolation. No hardware connection is authorized here.
 
 ## 2. Deployment policy and acceptance
 
@@ -451,15 +483,18 @@ The existing end-of-run HTML/JSON report provides simulated events, frames,
 assets, reasons and history; the per-file SHA-256 map supports integrity
 checks of exported files. Portable replay and optional visualization are
 separate from inspection authority. It is not a signed report, a canonical
-manifest hash, a real-time site dashboard or a formal inspection certificate.
+manifest hash or a formal inspection certificate. A separate dashboard and
+PDF export path now exist; their presence does not establish an integrated
+live robot feed, verified official-form rights or a completed inspection.
 
-A future dashboard should display the map and coverage state, asset/history
+A dashboard should display the map and coverage state, asset/history
 list, latest record, evidence crops, reasons, uncertainty, source and
 operator interventions. Show the difference between stale data, an
 unreadable label, a physical failure and a missing expected asset. Exports
-may include an unsigned prescreening PDF and an n.core-oriented interchange
-mapping, but confirm partner fields and interface provenance first. Do not
-invent an n.core endpoint, signature or legal compliance claim.
+may include an unsigned prescreening PDF; the separate n.core-oriented
+interchange mapping remains a proposal. Confirm form rights, partner fields
+and interface provenance first. Do not invent an n.core endpoint, signature
+or legal compliance claim.
 
 A future canonical manifest needs a versioned definition of ordering,
 serialization, included files, exclusions and verification; the existing
@@ -471,8 +506,11 @@ resolution as a new authorized event rather than rewriting the old history.
 
 ### 8.1 Team roles
 
-Assign named people at kickoff; the following role mapping is a proposal,
-not an assertion that anyone has accepted responsibility.
+The [team handoff](../../README.md#team-owners-and-deliverables) describes
+Sahil's autonomy, Om's detection/evaluation, Kaan's spatial memory, Vivek's
+assessment/integration and Aravind's dashboard workstreams. Confirm current ownership
+with the team; these descriptions are not verified GitHub issue assignments.
+The following role mapping remains a planning aid.
 
 | Role | Primary responsibilities | Review boundary |
 |---|---|---|
@@ -675,12 +713,12 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 PYTHONPATH=src MUJOCO_GL=egl ULTRON_RENDER_TESTS=1 python -m unittest discover -s tests -v
 ```
 
-For this reconciliation, the rendered suite completed **42 tests, all
-passing**, in an isolated Python 3.10.12 environment with MuJoCo 3.17.0,
-NumPy 2.2.6, Pillow 12.3.0 and EGL. This is a scoped software test result,
-not the formal AT catalog, the full integrated simulation gate, model
-evaluation, an SDK test or hardware acceptance. Run again for the actual
-baseline and retain its output with the gate record.
+An earlier reconciliation ran 42 rendered tests in an isolated Python 3.10.12
+environment with MuJoCo 3.17.0, NumPy 2.2.6, Pillow 12.3.0 and EGL. That is
+historical evidence for its then-current checkout, not a result for a later
+merge. See [validation](../VALIDATION.md) for subsequent checks; rerun the
+actual baseline and retain its output with the gate record. None of these
+checks is the formal full-system gate or hardware acceptance.
 
 ## Appendix B. Tool and dependency boundaries
 
@@ -692,7 +730,7 @@ baseline and retain its output with the gate record.
 | ROS 2 Humble, Nav2, TF2, MCAP | Proposed real integration/replay stack. Exact packages, topic names, QoS and hardware image remain to verify; no live navigation stack is provided by this repo. |
 | Rerun 0.32.0 | Optional viewer dependency pinned by the repository. SDK/viewer operation must be verified in the target environment. |
 | DimOS | Optional adapter based on inspected APIs; runtime and B2 compatibility are not validated end to end. |
-| YOLOE/YOLO-World, Qwen3-VL | Optional model experiments, installed separately from the simulator. Weights, licenses, detector vocabulary, calibration, hardware fit and real performance require verification. |
+| YOLOE/YOLO-World, Qwen3-VL | Optional model experiments, installed separately from the simulator. A limited local YOLO-World smoke run is documented; licenses, calibration, hardware fit and real generalization require further verification. |
 | Isaac Sim, PatchCore, System One | Optional research directions; no implementation or claimed validated version is required for the baseline. |
 
 Keep a reproducible dependency/model manifest for any chosen build. Review

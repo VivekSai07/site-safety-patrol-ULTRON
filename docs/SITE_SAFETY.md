@@ -6,10 +6,14 @@
 |---|---|
 | ![helmet and vest](images/safety-ppe-ok.jpg) | ![no helmet, no vest](images/safety-ppe-violation.jpg) |
 
-## Model-backed mode (no sim-oracles)
+## Model-backed confirmation and judgment (synthetic scene)
 
-With model backends configured, discovery confirmation and all criteria
-verdicts come from pixels, not scene truth:
+With model backends configured, confirmation and criterion proposals use
+pixels, but target kinds, positions and routing still come from the simulated
+scene. This is not independent site discovery or a real-world inspection.
+Model outputs are uncalibrated proposals requiring human review.
+The following optional model command downloads weights; first review the
+specific model and dependency licenses and obtain any required approval.
 
     HF_HUB_DISABLE_IMPLICIT_TOKEN=1 PYTHONPATH=src MUJOCO_GL=osmesa python3 -m ultron demo \
       --out runs/model-safety --patrols 1 --safety \
@@ -24,10 +28,10 @@ verdicts come from pixels, not scene truth:
   states and the model's literal reason (`source=MODEL_PROPOSAL`);
   `SAFETY_VIOLATION` fires when the model judges `psa.helm`/`psa.warnweste`
   DEFECT.
-- Measured on this scene (2026-11-28): YOLOE (`yoloe-11s-seg`) detects
-  nothing on primitive renders — kept wired because it is the adapter for
-  real imagery; Qwen3-VL-2B confirmed and judged all 5 stations, flagging
-  the bare-headed mannequin from front and side views.
+- A teammate reported a local synthetic-scene smoke run on 2026-11-28:
+  YOLOE detected nothing on primitive renders; Qwen3-VL-2B proposed
+  confirmation and judgments for five stations. This reconciliation did
+  not reproduce the model run and it is not real-world accuracy evidence.
 - The segmentation oracle runs only with the default flags (CI/no-GPU).
 
 ## Live dashboard (end-to-end, as site manager)
@@ -105,8 +109,10 @@ change to `Event` is a contract update and needs both sides.
 
 ## Limits
 
-Prop discovery and PPE flags are segmentation-oracle outputs from scene ground
-truth, not learned perception. The VLM judges only captured frames; unseen
-stations stay UNKNOWN/NOT_CHECKED. Nothing here certifies the site as safe.
+Default prop confirmation and PPE flags use segmentation/fixture oracles.
+With model backends enabled, confirmation and judgments are model proposals
+for known synthetic target positions, not independent discovery. The VLM
+judges only captured frames; unseen stations stay UNKNOWN/NOT_CHECKED.
+Nothing here certifies the site as safe.
 The other three nesseler checklists (scaffold, low-dust, subcontractor
 briefing) are future data-only pack additions.

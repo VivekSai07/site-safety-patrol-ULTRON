@@ -1,5 +1,9 @@
 # Site Safety Checklists Implementation Plan
 
+> Historical teammate planning record, not current operating authority. See
+> [Pass 7](../../bible/BUILD_BIBLE_PASS7.md) and [site-safety limits](../../SITE_SAFETY.md).
+> External uploads and hardware use require separate authorization.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a `site_safety_v1` checklist pack (fire/first-aid/escape/PPE) that the MuJoCo patrol discovers via scene props and oracle detection, feeds through the existing VLM request builder, and publishes as dashboard events — including a PPE violation.
