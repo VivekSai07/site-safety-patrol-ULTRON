@@ -64,7 +64,9 @@ def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, 
             planner=None
             if nav=='auto':
                 from .patrol_planner import CoveragePlanner
-                planner=CoveragePlanner(grid)
+                # 2.2 m observation radius approximates reliable visual discovery
+                # range; smaller discs mean more goals and more DISCOVER bursts.
+                planner=CoveragePlanner(grid,sense_range=2.2)
                 planner.observe(sim.pose[:2])
             interventions=1 if variant=='intervention' and patrol==0 else 0
             mode='DEGRADED_TELEOP_ASSISTED' if interventions else 'AUTONOMOUS_SIMULATION'

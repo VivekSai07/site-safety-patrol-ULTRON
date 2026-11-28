@@ -30,6 +30,34 @@ verdicts come from pixels, not scene truth:
   the bare-headed mannequin from front and side views.
 - The segmentation oracle runs only with the default flags (CI/no-GPU).
 
+## Live dashboard (end-to-end, as site manager)
+
+Three terminals — dashboard, live tailer, autonomous patrol:
+
+    # 1. Dashboard (http://127.0.0.1:8000)
+    PYTHONPATH=src python3 -m ultron.dashboard --db runs/dashboard.sqlite --media runs/dashboard-media
+
+    # 2. Live tailer: streams the run to the dashboard as it is written
+    PYTHONPATH=src python3 -m ultron.dashboard.live_tail runs/live-e2e --url http://127.0.0.1:8000 --idle-timeout 600
+
+    # 3. Autonomous, model-backed patrol (no scripted route, no sim-oracles)
+    HF_HUB_DISABLE_IMPLICIT_TOKEN=1 PYTHONPATH=src MUJOCO_GL=osmesa LP_NUM_THREADS=2 python3 -m ultron demo \
+      --out runs/live-e2e --patrols 1 --safety --nav auto \
+      --detector yolo --weights weights/yoloe-11s-seg.pt \
+      --inspector qwen --qwen Qwen/Qwen3-VL-2B-Instruct --allow-download
+
+What the site manager sees live: robot pose on the zone map (bounds/keepouts
+from the mission), the front camera, the event feed — `PATROL_GOAL_SELECTED`
+(autonomous coverage goals, `ultron.navigation_goal/v1` records aligned with
+the Nav2 contract on `sahil/sim-slam-nav2`), `SAFETY_STATION_JUDGED`,
+`SAFETY_VIOLATION` — and, at mission end, review-pending ladder inspections
+with evidence photos. Verified 2026-11-28: PPE violations arrived in the live
+feed with `source=MODEL_PROPOSAL`; ladder records posted as `MANUAL_REVIEW`.
+
+`--nav auto` honesty: autonomy here is goal selection (coverage planner on
+the A* grid); base motion stays kinematic. Real locomotion and Nav2 execution
+live in the organizer simulator / `sahil/sim-slam-nav2` lane.
+
 Beyond the ladder protocol, patrol 0 can sweep nesseler-style site-safety
 stations. Checklists are data: `src/ultron/assets/site_safety_v1/` mirrors
 `inspection_v1` (rubric, strict response schema, system + section prompts) and

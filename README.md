@@ -198,7 +198,9 @@ PYTHONPATH=src MUJOCO_GL=egl python3 -m ultron demo --out runs/ultron-demo
 Checklists are data, not code: `--safety` makes patrol 0 also check a fire
 extinguisher, first-aid station, escape-route sign and two workers (one without
 helmet/vest → `SAFETY_VIOLATION` events with evidence frames), then writes
-`safety_sweep.json` for the 9-criterion `site_safety_v1` VLM assessment. See
+`safety_sweep.json` for the 9-criterion `site_safety_v1` VLM assessment.
+`--nav auto` replaces the scripted route with coverage-planner goal selection,
+and `ultron.dashboard.live_tail` streams a running patrol to the dashboard. See
 [docs/SITE_SAFETY.md](docs/SITE_SAFETY.md).
 
 ```bash
