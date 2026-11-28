@@ -170,7 +170,7 @@ class OnlinePatrol:
         (merge fragments, judge missing objects, announce the rest) and inspect what is left: objects
         beside one of their kind are announced only then, and none should fare worse than offline."""
         if self.goal:
-            self.goal[0].result()
+            wait([self.goal[0]])  # a navigator that failed must not cost the inspection of what was found
             self.goal = None
         while self.jobs:
             wait([job[0] for job in self.jobs])
