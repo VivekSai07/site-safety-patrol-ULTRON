@@ -25,6 +25,7 @@ def main():
     demo.add_argument('--device',default='cpu')
     demo.add_argument('--detector-family',choices=['yoloe','world','custom'],default='yoloe')
     demo.add_argument('--motion',choices=['smooth','legacy'],default='smooth')
+    demo.add_argument('--safety',action='store_true',help='Also check fire/first-aid/escape/PPE props during patrol 0')
     demo.add_argument('--rerun',action='store_true',help='Export/open Rerun after simulation')
     query=sub.add_parser('query')
     query.add_argument('database',type=Path)
@@ -80,7 +81,7 @@ def main():
                 os.environ.setdefault('MUJOCO_GL','egl')
             from .mission import run_demo
             output=args.out or Path('runs')/(datetime.now().strftime('%Y%m%d-%H%M%S-')+uuid.uuid4().hex[:6])
-            result=run_demo(output,args.database,args.patrols,args.variant,not args.no_recovery,args.viewer,args.motion,args.view_policy,args.detector,args.weights,args.inspector,args.qwen,args.allow_download,args.device,args.detector_family)
+            result=run_demo(output,args.database,args.patrols,args.variant,not args.no_recovery,args.viewer,args.motion,args.view_policy,args.detector,args.weights,args.inspector,args.qwen,args.allow_download,args.device,args.detector_family,safety=args.safety)
             print(json.dumps({'output':str(output),'missions':[{k:m[k] for k in ['mission_id','status','found','missing_expected']} for m in result['missions']]},indent=2))
             if args.rerun:
                 from .rerun_view import export_rerun
