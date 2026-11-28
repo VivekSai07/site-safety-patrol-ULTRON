@@ -430,6 +430,13 @@ class NavigationTest(unittest.TestCase):
                                      headers={'content-type': 'image/png'}).status_code, 400)
         self.assertEqual(client.get('/api/map.png').status_code, 404)
 
+    def test_pages_and_scripts_are_revalidated(self):
+        # a cached old live.js against a new index.html hid the Start exploration button
+        client, _ = self.make()
+        for path in ('/', '/history', '/ladder', '/static/live.js', '/static/i18n.js'):
+            response = client.get(path)
+            self.assertEqual((response.status_code, response.headers.get('cache-control')), (200, 'no-cache'), path)
+
     def test_goals_are_off_unless_enabled(self):
         client, published = self.make(allow_goals=False)
         self.assertEqual(client.post('/api/goal', json={'x': 1, 'y': 2, 'yaw': 0}).status_code, 403)
@@ -448,6 +455,81 @@ class NavigationTest(unittest.TestCase):
         self.assertEqual(client.post('/api/goal/status', json={'seq': 1, 'status': 'SUCCEEDED'}).status_code, 409)
         self.assertEqual(client.post('/api/goal/status', json={'seq': 2, 'status': 'BOGUS'}).status_code, 422)
         self.assertEqual(client.get('/api/goal').json()['seq'], 2)
+
+
+@unittest.skipUnless(HAVE_DASHBOARD, 'dashboard extras not installed')
+class ExplorationTest(unittest.TestCase):
+    """Start exploration / Finish mapping from the dashboard; only the bridge confirms what the robot does."""
+
+    make = NavigationTest.make
+
+    def ask(self, client, action):
+        return client.post('/api/exploration', json={'action': action})
+
+    def report(self, client, seq, state, **extra):
+        return client.post('/api/exploration/status', json={'seq': seq, 'state': state, **extra})
+
+    def state(self, client):
+        return client.get('/api/exploration').json()['state']
+
+    def test_off_in_demo_mode(self):
+        client, published = self.make(allow_goals=False)
+        self.assertEqual(self.ask(client, 'start').status_code, 403)
+        self.assertEqual(client.get('/api/live').json()['exploration']['state'], 'IDLE')
+        self.assertEqual(published, [])
+
+    def test_operator_starts_and_finishes(self):
+        client, published = self.make()
+        started = self.ask(client, 'start').json()
+        self.assertEqual((started['seq'], started['state'], started['by']), (1, 'STARTING', 'operator'))
+        self.assertEqual(published[-1], ('exploration', started))
+        self.assertEqual(self.report(client, 1, 'EXPLORING').json()['state'], 'EXPLORING')
+        self.assertEqual(self.ask(client, 'finish').json()['state'], 'FINISHING')
+        done = self.report(client, 2, 'MAPPED').json()
+        self.assertEqual((done['state'], done['by']), ('MAPPED', 'operator'))
+        self.assertEqual(published[-1], ('exploration', done))
+        # mapping again later is the operator's call
+        self.assertEqual(self.ask(client, 'start').json()['state'], 'STARTING')
+
+    def test_explorer_ends_it_when_no_frontiers_are_left(self):
+        client, _ = self.make()
+        self.ask(client, 'start')
+        self.report(client, 1, 'EXPLORING')
+        done = self.report(client, 1, 'MAPPED', by='explorer', detail='no frontiers left').json()
+        self.assertEqual((done['state'], done['by'], done['detail']), ('MAPPED', 'explorer', 'no frontiers left'))
+        self.assertEqual(self.ask(client, 'finish').status_code, 409)
+
+    def test_requests_that_make_no_sense_are_refused(self):
+        client, _ = self.make()
+        self.assertEqual(self.ask(client, 'finish').status_code, 409)       # nothing running
+        self.ask(client, 'start')
+        self.assertEqual(self.ask(client, 'start').status_code, 409)        # already starting
+        self.assertEqual(self.ask(client, 'pause').status_code, 422)        # unknown action
+        self.assertEqual(self.report(client, 1, 'STARTING').status_code, 422)  # the operator's state, not the bridge's
+        self.ask(client, 'finish')
+        self.assertEqual(self.report(client, 1, 'EXPLORING').status_code, 409)  # stale: seq 2 is current
+        self.assertEqual(self.state(client), 'FINISHING')
+
+    def test_bridge_failure_is_shown_and_can_be_retried(self):
+        client, _ = self.make()
+        self.ask(client, 'start')
+        failed = self.report(client, 1, 'FAILED', detail='explore node did not come up').json()
+        self.assertEqual((failed['state'], failed['detail']), ('FAILED', 'explore node did not come up'))
+        self.assertEqual(self.ask(client, 'start').json()['state'], 'STARTING')
+
+    def test_goals_and_exploration_exclude_each_other(self):
+        # both drive Nav2's navigate_to_pose, and pausing the explorer cancels every goal on it
+        client, _ = self.make()
+        self.ask(client, 'start')
+        self.assertEqual(client.post('/api/goal', json={'x': 1, 'y': 1}).status_code, 409)
+        self.report(client, 1, 'EXPLORING')
+        self.assertEqual(client.post('/api/goal', json={'x': 1, 'y': 1}).status_code, 409)
+        self.ask(client, 'finish')
+        self.report(client, 2, 'MAPPED')
+        self.assertEqual(client.post('/api/goal', json={'x': 1, 'y': 1}).status_code, 201)
+        self.assertEqual(self.ask(client, 'start').status_code, 409)        # goal SENT, not finished
+        client.post('/api/goal/status', json={'seq': 1, 'status': 'SUCCEEDED'})
+        self.assertEqual(self.ask(client, 'start').status_code, 201)
 
 
 @unittest.skipUnless(HAVE_DASHBOARD, 'dashboard extras not installed (pip install -e .[dashboard])')

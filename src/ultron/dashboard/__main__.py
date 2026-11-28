@@ -41,7 +41,9 @@ def main(argv=None):
     config = load_config(args.notify)
     if args.notify is None:
         config['public_url'] = f'http://127.0.0.1:{args.port}'
-    uvicorn.run(create_app(args.db, args.media, config, allow_goals=args.goals), host='0.0.0.0' if args.lan else '127.0.0.1', port=args.port)
+    # Open browser tabs hold the live stream; without a limit, shutdown waits for them to close.
+    uvicorn.run(create_app(args.db, args.media, config, allow_goals=args.goals), host='0.0.0.0' if args.lan else '127.0.0.1',
+                port=args.port, timeout_graceful_shutdown=3)
 
 
 if __name__ == '__main__':
