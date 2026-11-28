@@ -23,10 +23,13 @@ frame ─▶ survey (detect, lift, object map, keyframes)            main thread
 - **Only model calls run on the worker.** Every write to the object map, the keyframes and the
   ladder store stays on the main thread, so the survey code is unchanged. The worker serves object
   checks before form reads.
-- **The next object is chosen by geometry and time, never by a model answer.** The focus is the
-  nearest object still collecting. Its next missing view is announced as a `focus` event. With
+- **When the robot is done with an object, and which comes next, is decided by geometry and time.**
+  The model's check can drop an object from the queue (rejected) or rename it (relabelled), as it
+  does offline; form answers steer nothing. The focus is the nearest object still collecting. Its next missing view is announced as a `focus` event. With
   `--navigator dashboard|contract` it is also sent as a goal, off-thread, so frames keep flowing
   while the robot walks.
+- **A second read never clears the first.** The worse status stays, earlier results are kept in
+  `result["earlier"]`, and the ladder sheet keeps every inspection with its own evidence.
 - **Leftovers are handled as before.** When the stream ends, the ordinary inspection settles the
   survey (merges fragments, judges missing objects) and reads whatever was not read online. That
   covers objects that stood beside one of their kind, which are only announced at settle.
@@ -53,7 +56,10 @@ python -m ultron.pipeline online --source relay:5600 --detector yolo --interval 
     --dashboard http://127.0.0.1:8010 --mission HALL-ONLINE
 ```
 
-Tuning: `--leave-seconds`, `--leave-distance`, `--budget-seconds`, `--max-reads`.
+Tuning: `--leave-seconds`, `--leave-distance`, `--budget-seconds`. `--max-reads 2` reads an object
+again when the robot comes back with views it lacked. It is off by default because the dashboard
+takes one ladder verdict per mission (HTTP 409 for the second): a re-read ladder is in its local
+sheet only.
 
 ## Discovery from the lidar
 
@@ -64,12 +70,12 @@ Tuning: `--leave-seconds`, `--leave-distance`, `--budget-seconds`, `--max-reads`
 
 Walls, containers and fences are larger than that, so they are dropped. A candidate that shows up
 in two clouds counts. An object found within 1.5 m explains it. If the camera looks at it from
-1–5 m five times and finds nothing, it is dismissed. While no object is collecting, the nearest
+1–5 m in five looks (at least 1 s apart) and finds nothing, it is dismissed for this patrol. While no object is collecting, the nearest
 open candidate becomes a look goal: stand 2.5 m away and face it.
 
 Simulated patrol A, scored against the yard's ground truth: all 11 ladders the route passes within
 8 m were found, including the five leaning on containers. There were also 12 candidates with no
-ladder near them (scaffold, pallet and fence parts), which the camera has to dismiss.
+ladder within 1.2 m (not identified further), which the camera has to dismiss.
 
 **On the real robot it is not wired yet.** Two things are missing:
 1. The relay has to forward the cloud with the frame, transformed to `map` with TF
@@ -111,6 +117,16 @@ These runs used YOLOE and Qwen3-VL 8B through Ollama on the RTX 5090 workstation
   extinguisher's and alarm box's checklists were back during the walk.
 - The extinguisher was reopened once (another side).
 - The ladder sheets and the hose cabinet were done just after the stream ended.
+
+**Against the offline `patrol` on the hall recording:** the form reader saw the same number of frames
+per object (ladders 6 and 2, extinguisher 3, cabinet 2). Ladder coverage was 0.33 vs 0.22 and
+0.22 vs 0.25, which is within the model's run-to-run spread, and the checklists came out the same.
+The same run with `--dashboard` delivered the `FOCUS`, `OBJECT_READY` and `OBJECT_REOPENED` events,
+both ladder inspections and all four checklists.
+
+The cost of reading early: an object flushed when the robot leaves keeps the frames it had then.
+In the sim yard one ladder was read from 2 frames at coverage 0.0. Seen better later, it is read
+again only with `--max-reads 2`.
 
 Unit tests: `tests/test_pipeline_online.py`. A gated reader proves the survey keeps finding and
 collecting the next ladder while the first is being read. The other tests cover reject before

@@ -15,8 +15,12 @@
 
 Only the vision model calls run on the worker (`Verifier.classify`, `Inspection.ask`), on frames
 loaded into memory when the job is made; every write to the object map, keyframes and ladder
-store stays on the main thread. Which object comes next is decided by geometry and time, never
-by a model's answer: model output carries no motion authority.
+store stays on the main thread. When the robot is done with an object, and which one is next, is
+decided by geometry and time. The model's check can remove an object from the queue (rejected) or
+rename it (relabelled), as it does offline; its form answers never steer anything.
+
+A second read of an object (it came back with views it lacked) never clears what an earlier read
+found: the worse status stays and earlier results are kept in `result["earlier"]`.
 
 What the robot does meanwhile is up to whoever drives it. With `--navigator passive` (a person
 teleoperates, or a recording plays) the focus and its next missing view are announced as events
@@ -28,7 +32,7 @@ look. A candidate no object explains is looked at (`look_candidate`) once nothin
 `discover.LidarCandidates` is one (upright, ladder-sized blobs); only `sim:PATH,lidar=1` frames
 carry the cloud it needs so far, see docs/ONLINE.md.
 """
-from concurrent.futures import Future, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 import itertools
 from dataclasses import dataclass, field
 import math
@@ -38,7 +42,6 @@ import threading
 
 from .coverage import missing_views
 from .types import ViewRequest
-from ..protocol.vlm import VlmError
 
 COLLECTING, CHECKING, READING, DONE = "collecting", "checking", "reading", "done"
 LOOK_RANGE = 2.5          # metres from a candidate a look goal stands
@@ -46,7 +49,9 @@ CANDIDATE_MERGE = 1.0     # metres: candidates closer than this are one
 EXPLAINED = 1.5           # metres: an object this near a candidate explains it
 LOOKED_AT = (1.0, 5.0)    # range at which a candidate in front of the camera counts as looked at ...
 LOOK_CONE = math.radians(35)  # ... within this angle of the heading
-DISMISS_LOOKS = 5         # frames that looked at a candidate and found nothing there: dismissed
+DISMISS_LOOKS = 5         # looks (at least LOOK_GAP apart) at a candidate that found nothing: dismissed
+LOOK_GAP = 1.0            # seconds
+SEVERITY = {"aussondern": 4, "reparatur": 3, "MANGEL": 3, "OFFEN": 2, "io": 1, "IN_ORDNUNG": 1}
 CANDIDATE_HITS = 2        # clouds a candidate must show up in before it counts (sim yard: 28 of 40 did)
 
 
@@ -104,6 +109,7 @@ class Candidate:
     position: tuple
     hits: int = 1
     looks: int = 0
+    last_look: float = None
     state: str = "new"           # new (seen once) | open | explained | dismissed
     explained_by: str = None
 
@@ -172,9 +178,9 @@ class OnlinePatrol:
         if self.goal:
             wait([self.goal[0]])  # a navigator that failed must not cost the inspection of what was found
             self.goal = None
-        while self.jobs:
-            wait([job[0] for job in self.jobs])
-            self._apply_results()  # a read applied here may reopen nothing: the stream is over
+        while self.jobs:  # each result goes out (dashboard included) as soon as it is in
+            wait([job[0] for job in self.jobs], return_when=FIRST_COMPLETED)
+            self._apply_results()
         self.worker.shutdown()
         if self.driver:
             self.driver.shutdown()
@@ -276,7 +282,7 @@ class OnlinePatrol:
             return
         try:
             answer = future.result()
-        except (VlmError, OSError, ValueError) as error:
+        except Exception as error:  # an unreachable model or a malformed answer fails this object, not the walk
             track.failures += 1
             self.store.emit("error", stage="online " + kind, object=object_id, message=str(error))
             if kind == "check":
@@ -297,10 +303,26 @@ class OnlinePatrol:
                 self.focus = new_id if self.focus == object_id else self.focus
             return
         job, missing = payload
-        self.inspection.finish(site_object, job, answer, missing)
+        earlier = dict(site_object.result) if track.reads and site_object.result.get("mission") == self.mission else None
+        try:
+            self.inspection.finish(site_object, job, answer, missing)
+        except Exception as error:
+            self.store.emit("error", stage="online read", object=object_id, message=str(error))
+        if earlier:
+            self._keep_earlier(object_id, earlier)
         track.state, track.reads = DONE, track.reads + 1
         if self.focus == object_id:
             self.focus = None
+
+    def _keep_earlier(self, object_id, earlier):
+        """A later read must not clear what an earlier one found: keep the worse status, and the
+        earlier result itself (its sheet entry and evidence stay in the ladder store as they were)."""
+        result = dict(self.objects.get(object_id).result)
+        previous = earlier.pop("earlier", [])
+        result["earlier"] = previous + [earlier]
+        if SEVERITY.get(earlier.get("status"), 0) > SEVERITY.get(result.get("status"), 0):
+            result["status"], result["status_from"] = earlier["status"], "earlier read"
+        self.objects.update(object_id, result=result)
 
     # --- where to go -------------------------------------------------------------------------
     def _distance(self, position):
@@ -312,7 +334,8 @@ class OnlinePatrol:
         collecting = [t for t in self.tracks.values() if t.state in (COLLECTING, CHECKING)]
         if collecting:
             def order(track):
-                distance = self._distance(self.objects.get(track.object_id).position)
+                found = self.objects.get(track.object_id)
+                distance = self._distance(found.position) if found else None
                 return (distance is None, distance or 0.0, track.since)
             self.focus = min(collecting, key=order).object_id
         else:
@@ -330,6 +353,8 @@ class OnlinePatrol:
 
     def _next_view(self):
         site_object = self.objects.get(self.focus)
+        if site_object is None:
+            return None
         requests = missing_views(site_object, self.keyframes.for_object(self.focus), self.is_free,
                                  self.tried.get(self.focus, set()))
         return requests[0] if requests else None
@@ -384,8 +409,9 @@ class OnlinePatrol:
             if near and math.dist(near.position, candidate.position) <= EXPLAINED:
                 candidate.state, candidate.explained_by = "explained", near.id
                 self.store.emit("candidate_explained", candidate=candidate.id, object=near.id)
-            elif candidate.state == "open" and self._in_view(candidate.position):
-                candidate.looks += 1
+            elif (candidate.state == "open" and self._in_view(candidate.position)
+                  and (candidate.last_look is None or self.stamp - candidate.last_look >= LOOK_GAP)):
+                candidate.looks, candidate.last_look = candidate.looks + 1, self.stamp
                 if candidate.looks >= DISMISS_LOOKS:
                     candidate.state = "dismissed"
                     self.store.emit("candidate_dismissed", candidate=candidate.id, looks=candidate.looks)

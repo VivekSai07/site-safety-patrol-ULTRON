@@ -85,8 +85,10 @@ def build_survey(args, store, vlm):
                   verifier=Verifier(vlm) if vlm and not args.no_verify else None, map_id=map_id(args))
 
 
-def print_events(store):
-    store.subscribe(lambda event: print(json.dumps(event, ensure_ascii=False), flush=True))
+def print_events(store, quiet=()):
+    """Every event as a JSON line on stdout; kinds in `quiet` (the per-frame `look` while a person
+    follows the focus events in the terminal) only go to events.jsonl."""
+    store.subscribe(lambda event: event["kind"] in quiet or print(json.dumps(event, ensure_ascii=False), flush=True))
 
 
 def command_survey(args):
@@ -199,7 +201,7 @@ def command_online(args):
     store, mission, vlm = Store(args.data), args.mission or "PATROL-" + uuid.uuid4().hex[:6], build_vlm(args)
     survey = build_survey(args, store, vlm)
     publisher = connect_dashboard(store, args, mission)
-    print_events(store)
+    print_events(store, quiet={"look"} if args.navigator == "operator" else ())
     # operator: a person drives by teleop, follows the `focus` events and types n when done with one
     navigator, is_free = (None, None) if args.navigator == "operator" else build_navigator(args, mission)
     inspection = Inspection(survey.objects, survey.keyframes, vlm, store, survey, Passive(), is_free=is_free,
@@ -303,7 +305,9 @@ def main(argv=None):
     live.add_argument("--leave-seconds", type=float, default=6.0, help="an object unseen this long ...")
     live.add_argument("--leave-distance", type=float, default=3.5, help="... and this far away (m) is read")
     live.add_argument("--budget-seconds", type=float, default=120.0, help="read an object after this long whatever its views")
-    live.add_argument("--max-reads", type=int, default=2, help="reads per object when the robot comes back with new views")
+    live.add_argument("--max-reads", type=int, default=1,
+                      help="reads per object: 2 reads it again when the robot comes back with views it lacked "
+                           "(the dashboard keeps the first ladder verdict of a mission)")
     live.add_argument("--realtime", action="store_true", help="replay a recording at the pace it was recorded")
     live.add_argument("--candidates", choices=["none", "lidar"], default="none",
                       help="where things worth a look come from besides the detector")

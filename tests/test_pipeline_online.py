@@ -101,6 +101,18 @@ class OnlineTest(Workspace):
         online.finish()
         self.assertEqual(len(self.store.ladder("LAD-001")["inspections"]), 2)
 
+    def test_a_clean_second_read_does_not_clear_what_the_first_found(self):
+        online = self.online(FormVlm())
+        for stamp in range(3):
+            self.step(online, A, 0, 3.0, float(stamp))
+        earlier = {"form": "fire_extinguisher", "status": "MANGEL", "open": [], "mission": "PATROL-1"}
+        self.objects.update("LAD-001", result={"form": "ladder", "status": "IN_ORDNUNG", "mission": "PATROL-1"})
+        online._keep_earlier("LAD-001", earlier)
+        result = self.objects.get("LAD-001").result
+        self.assertEqual((result["status"], result["status_from"]), ("MANGEL", "earlier read"))
+        self.assertEqual(result["earlier"], [earlier])
+        online.finish()
+
     def test_view_goals_are_driven_off_thread_and_the_focus_gets_them(self):
         navigator = Teleport()
         online = self.online(FormVlm(), navigator=navigator, leave_seconds=100.0)
