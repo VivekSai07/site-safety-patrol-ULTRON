@@ -21,12 +21,12 @@ opts=$(findmnt -no OPTIONS -T "$BAG") || { echo "cannot inspect bag mount" >&2; 
 mkdir "$OUT" || { echo "refusing: output exists or parent missing" >&2; exit 2; }
 export ULTRON_MAP_ROOT="$OUT/maps"
 MAP_ID=${MAP_ID:-replay-$SRC}
-launch= recorder= audit=
+launch= recorder= audit= timing=
 cleanup() {
-  for p in "$recorder" "$audit" "$launch"; do
+  for p in "$recorder" "$audit" "$timing" "$launch"; do
     [[ -z $p ]] || kill -TERM "$p" 2>/dev/null || true
   done
-  for p in "$recorder" "$audit" "$launch"; do
+  for p in "$recorder" "$audit" "$timing" "$launch"; do
     [[ -z $p ]] || wait "$p" 2>/dev/null || true
   done
 }
@@ -40,11 +40,17 @@ python3 "$TOOLS/replay_eval.py" --out "$OUT" --namespace "$NS" > "$OUT/recorder.
 recorder=$!
 python3 "$TOOLS/replay_audit.py" --out "$OUT/audit.json" > "$OUT/audit.log" 2>&1 &
 audit=$!
+python3 "$TOOLS/replay_tf_timing.py" --out "$OUT" > "$OUT/tf_timing.log" 2>&1 &
+timing=$!
 "${CMD[@]}" > "$OUT/launch.log" 2>&1 &
 launch=$!
 sleep 12
 ros2 node list > "$OUT/nodes.txt" 2>&1
 ros2 topic list -t > "$OUT/topics.txt" 2>&1
+{
+  ros2 param get "$NS/slam_toolbox" scan_queue_size
+  ros2 param get "$NS/localization_monitor" replay_clock_watchdog
+} > "$OUT/replay_params.txt" 2>&1
 for t in "$NS/sensors/lidar/points" "$NS/sensors/scan" /clock /tf /tf_static \
          "$NS/bag/tf_xsens" "$NS/state/odom" "$NS/map" "$NS/state/localization"; do
   echo "== $t"; ros2 topic info "$t" -v
@@ -59,6 +65,8 @@ for _ in $(seq "${BAG_TIMEOUT_S:-180}"); do
 done
 printf '%s\n' "$finished" > "$OUT/player_finished.txt"
 if [[ $finished == true ]]; then
+  # Let the steady-clock watchdog publish STALE after /clock stops.
+  sleep 1
   timeout 90 ros2 service call "$NS/map/save" ultron_b2_interfaces/srv/SaveMap \
     "{schema_version: ultron.save_map/v1, map_id: '$MAP_ID', save_3d: false}" > "$OUT/save.log" 2>&1 || true
 fi
@@ -79,7 +87,8 @@ def read_json(name):
     except (OSError, ValueError):
         errors.append(f'missing or invalid {name}')
         return {}
-summary, audit, probe = (read_json(n) for n in ('summary.json', 'audit.json', 'foxglove_probe.json'))
+summary, audit, probe, timing = (read_json(n) for n in
+                                 ('summary.json', 'audit.json', 'foxglove_probe.json', 'tf_timing.json'))
 if (out / 'player_finished.txt').read_text().strip() != 'true':
     errors.append('bag player did not finish cleanly')
 log = (out / 'launch.log').read_text()
@@ -91,6 +100,11 @@ if player_exit and 'process has died' in log[:player_exit.start()]:
     errors.append('a launch process died before playback completed')
 if not summary.get('odom_msgs') or not summary.get('scans') or not summary.get('slam', {}).get('poses'):
     errors.append('missing odometry, scans, or map-frame poses')
+loc = summary.get('localization', {})
+if loc.get('last_state') != 'STALE' or 'clock stopped' not in loc.get('last_reason', '').lower():
+    errors.append('replay clock stop did not produce STALE localization')
+if not timing.get('scans'):
+    errors.append('missing scan/TF timing observations')
 if not audit.get('samples') or not audit.get('tf_diagnostic_messages'):
     errors.append('missing graph or TF authority diagnostics')
 diag = audit.get('tf_diagnostics') or {}
@@ -110,7 +124,14 @@ if not probe.get('msgs', {}).get('/ultron/replay/map'):
     errors.append('Foxglove received no map')
 if not re.search(r'success=True', (out / 'save.log').read_text() if (out / 'save.log').exists() else ''):
     errors.append('map save did not succeed')
-(out / 'checks.json').write_text(json.dumps({'errors': errors, 'scope': 'replay observations only'}, indent=2) + '\n')
+tf_counts = None
+if 'tf2_ros_message_filter' in log:
+    tf_counts = {k: log.count(s) for k, s in {
+        'incoming': 'Added message in frame', 'ready': 'Message ready in frame',
+        'queue_full': 'Removed oldest message because buffer is full',
+        'transform_failure': 'Discarding message in frame'}.items()}
+(out / 'checks.json').write_text(json.dumps(
+    {'errors': errors, 'tf_filter_debug_counts': tf_counts, 'scope': 'replay observations only'}, indent=2) + '\n')
 print('Replay checks:', 'FAILED: ' + '; '.join(errors) if errors else 'observed; review loss and localization state')
 sys.exit(bool(errors))
 PY

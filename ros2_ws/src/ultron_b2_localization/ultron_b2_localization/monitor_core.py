@@ -156,6 +156,14 @@ class LocalizationMonitor:
         if self.last_rx_stamp is None or stamp > self.last_rx_stamp:
             self.last_rx_stamp = stamp
 
+    def invalidate_clock(self, now, reason):
+        """Invalidate all temporal evidence when replay time stops or jumps."""
+        self._set('STALE', reason, now)
+        self.good_run = self.lost_run = 0
+        self.degraded_since = None
+        self.last_scan_stamp = self.last_rx_stamp = self.last_pose_stamp = None
+        self.last_pose = self.last_score = None
+
     def update_scan(self, stamp, pose, endpoints_base, matcher):
         """Process one scan whose estimated pose (map frame) at ``stamp`` is ``pose`` or None."""
         self.last_scan_stamp = stamp

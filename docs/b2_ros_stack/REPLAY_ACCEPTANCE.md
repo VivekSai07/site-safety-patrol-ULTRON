@@ -79,12 +79,71 @@ limits some history depths to 5. See `graph_publishers.txt` and `launch.log`.
 The scan's 0.35–12 m range differs from slam_toolbox's configured 0.3–20 m and
 the backend emits range warnings; these are not calibrated field settings.
 
-The final state is not a live freshness guarantee: after player exit `/clock`
-stops, so ROS-time timers and age checks stop advancing. Localization was LOST
-during reload and the queue drops, proposed extrinsics, unverified geometry and
-no independent ground truth prevent claiming full replay mapping/localization
-acceptance. Investigate timestamp/TF filter loss, clock-stop handling and
-localization robustness; measure mounts and evaluate against independent truth.
+The results above predate the watchdog and queue follow-up below. They do not
+establish replay mapping/localization accuracy.
+
+## Follow-up: TF queue and clock-stop investigation
+
+The original `slam_toolbox` `scan_queue_size` was 1. Debug logging confirmed the
+filter waits for `odom -> base_footprint` at the **original scan timestamp**.
+The first scan was at 1795823322.948456764 and the first MOLA odometry TF was
+at 1795823322.9983892, approximately 49.9 ms later: no earlier TF exists for
+interpolation, so that scan is legitimately out of the TF cache. Subsequent
+scans also arrive before the corresponding MOLA TF. An independent timestamp
+probe found none ready at arrival, with a 19.8 ms median / 27.0 ms p95 wait
+for resolved scans in the final 0.7x mapping run. This probe measures TF
+availability, not slam_toolbox processing or geometric correctness.
+
+Replay now uses a **10-scan TF filter queue**; sim/live defaults are unchanged.
+This buffers while retaining acquisition stamps and does not extrapolate or
+relax localization thresholds. The first out-of-cache scan still cannot be used.
+The clock watchdog uses a 0.5 s **proposed** monotonic-wall timeout and 0.1 s
+wall-timer period in replay only. A stopped clock publishes STALE even while
+ROS time is frozen; startup without a clock cannot validate. Resume and clock
+jumps discard pending scans and temporal evidence and require the existing
+`recover_consecutive` matches. A jump also clears the monitor's dynamic TF cache
+and restores the latest observed static transforms. The 0.5 s forward-jump
+cutoff is proposed, not hardware timing validation. Consumer-side independent
+wall-time heartbeat checks are still needed if the monitor process itself
+blocks or dies.
+
+The following are real-bag observations in separate `--network none` containers,
+domain 72, 4 CPU / 8 GiB limits; camera on for mapping. TF debug counts are from
+`Added message`, `Message ready`, `Removed oldest`, and `Discarding message` log
+lines, not the normally throttled INFO drop messages.
+
+| Run (local `ros2_ws/runs/`) | TF filter input / ready / queue-full / out-of-cache | Other observations |
+|---|---|---|
+| `replay_tf_base_07` (0.7x, queue 1) | 364 / 361 / 2 / 1 | Recorder saw 364 scans and 364 odom. |
+| `replay_tf_clock_verified` (0.7x, queue 10) | 364 / 363 / 0 / 1 | Recorder saw 364 scans, 364 odom; monitor 263 VALID, 65 DEGRADED, 27 LOST, 26 INITIALIZING, 4 STALE messages. |
+| `replay_tf_clock_verified_10` (1x, queue 10) | 363 / 362 / 0 / 1 | Recorder saw 363 scans, 361 odom; MOLA logged worker-busy losses. 239 VALID, 113 DEGRADED, 32 INITIALIZING, 5 STALE messages. |
+| `replay_tf_clock_reload` (0.7x, queue 10, camera off) | 364 / 363 / 0 / 1 | Saved pose graph loaded; recorder saw 364 scans, 363 odom; MOLA logged worker-busy loss. 330 VALID, 29 DEGRADED, 25 STALE messages. |
+
+These are message counts, not time-weighted fractions or independent accuracy.
+Both mapping runs and reload ended with `STALE: Replay clock stopped advancing`.
+The 1x recorder saw fewer scans than the bag's 364 clouds, but counts from
+different subscribers do not locate the loss. MOLA's worker-busy percentages
+are its periodically reported statistics, not an exact whole-run loss count.
+The 0.7x reload also lost one odometry output in this run.
+
+A real-bag `replay_loop:=true replay_start_offset:=30` localization check is
+in `replay_clock_loop_short/`. The monitor failed closed on the backward jump,
+but **MOLA did not rewind**: after the first 66 odometry messages it logged
+backward lidar timestamps and emitted no odometry for the 35 subsequent clouds
+observed before shutdown. Restart the replay stack for each pass; looping with
+MOLA remains unsupported, not a recovery demonstration. Unit and isolated ROS
+transport tests separately cover watchdog startup, stop, resume and backward and
+forward jumps; their matching scans are fixtures, not real perception evidence.
+
+Run the mapping command above with `replay_tf_debug:=true` in `EXTRA_ARGS`
+for filter counts; `replay_scan_queue_size:=1` reproduces the old queue for
+comparison. `tf_timing.json`, `checks.json`, `replay_params.txt`, `summary.json`,
+and `launch.log` contain the measurements. The script waits for and checks the
+post-playback STALE state, but its zero exit still does not certify accuracy.
+Full replay acceptance remains blocked by MOLA worker-busy losses, the
+non-rewinding loop, degraded/lost localization in some runs, unverified mounts,
+and absence of independent ground truth. The initial out-of-cache scan is an
+explicit remaining loss, not fixed by relabeling its timestamp.
 
 ## Configuration provenance
 

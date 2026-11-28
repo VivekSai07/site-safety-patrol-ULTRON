@@ -37,6 +37,8 @@ REPLAY_ARGS = {
     'replay_start_offset': ('0.0', 'Start this many seconds into the bag'),
     'replay_delay': ('2.0', 'Seconds to wait before playing so subscribers can discover the player'),
     'replay_cameras': ('true', 'Also play the head RealSense topics (~110 MB/s at 1x)'),
+    'replay_scan_queue_size': ('10', 'Replay slam_toolbox TF filter queue size'),
+    'replay_tf_debug': ('false', 'Log tf2 message-filter counters for replay diagnostics'),
 }
 
 
