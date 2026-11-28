@@ -57,6 +57,7 @@ NAV_DEFAULTS = {
     'settle_timeout_s': 10.0,          # PROPOSED
     'cancel_confirm_timeout_s': 5.0,   # PROPOSED
     'stop_ack_timeout_s': 2.0,         # PROPOSED
+    'odom_max_age_s': 0.5,             # PROPOSED
     'gate_status_max_age_s': 0.5,      # PROPOSED
 }
 GATE_IGNORED = ('', 'NO_COMMAND', 'COMMAND_STALE')
@@ -118,7 +119,7 @@ class NavContractServer(Node):
         self.operator = (None, None)
         self.gate = None
         self.gate_stamp = None
-        self.speed = self.yaw_rate = 0.0
+        self.odom_sample = None
         self.keepout = None
         cb = ReentrantCallbackGroup()
         reliable = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
@@ -195,8 +196,21 @@ class NavContractServer(Node):
         self.gate, self.gate_stamp = msg, self.now()
 
     def _on_odom(self, msg):
-        self.speed = math.hypot(msg.twist.twist.linear.x, msg.twist.twist.linear.y)
-        self.yaw_rate = msg.twist.twist.angular.z
+        self.odom_sample = (
+            math.hypot(msg.twist.twist.linear.x, msg.twist.twist.linear.y),
+            msg.twist.twist.angular.z, msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
+            time.monotonic())
+
+    def _fresh_odom(self):
+        sample = self.odom_sample
+        if sample is None:
+            return None
+        speed, yaw_rate, stamp, received_at = sample
+        if (math.isfinite(speed) and math.isfinite(yaw_rate)
+                and abs(self.now() - stamp) <= self.p['odom_max_age_s']
+                and 0 <= time.monotonic() - received_at <= self.p['odom_max_age_s']):
+            return speed, yaw_rate
+        return None
 
     def _on_map(self, msg):
         self.footprint = GridFootprint(msg)
@@ -297,11 +311,22 @@ class NavContractServer(Node):
                                         f'within {self.p["cancel_confirm_timeout_s"]} s', now)
                 status = tracker.status
             if status == 'REACHED':
+                why = tracker.cancel_requested or self._interrupt_reason(handle)
+                if why:
+                    with self.lock:
+                        r = tracker._finish('TIMEOUT' if why == 'TIMEOUT' else 'CANCELLED',
+                                            f'{why}: backend already finished',
+                                            now, self._pose())
+                    r.stop_acknowledged = self._wait_still()
+                    return self._finish(handle, r)
                 reached_at = reached_at if reached_at is not None else now
                 pose = self._pose()
-                within = pose is not None and math.hypot(pose[0] - goal.x, pose[1] - goal.y) <= goal.xy_tolerance_m \
-                    and abs(wrap(pose[2] - goal.yaw)) <= goal.yaw_tolerance_rad
-                if tracker.settle(now, self.speed, self.yaw_rate, within, pose or [math.nan] * 3):
+                odom = self._fresh_odom()
+                within = (pose is not None and odom is not None
+                          and math.hypot(pose[0] - goal.x, pose[1] - goal.y) <= goal.xy_tolerance_m
+                          and abs(wrap(pose[2] - goal.yaw)) <= goal.yaw_tolerance_rad)
+                if tracker.settle(now, *(odom or (math.nan, math.nan)), within,
+                                  pose or [math.nan] * 3):
                     return self._finish(handle, tracker.result)
                 if now - reached_at > self.p['settle_timeout_s']:
                     with self.lock:
@@ -364,7 +389,9 @@ class NavContractServer(Node):
     def _wait_still(self):
         deadline = time.monotonic() + self.p['stop_ack_timeout_s']
         while time.monotonic() < deadline:
-            if abs(self.speed) <= self.p['settle_speed_m_s'] and abs(self.yaw_rate) <= self.p['settle_yaw_rate_rad_s']:
+            odom = self._fresh_odom()
+            if (odom is not None and abs(odom[0]) <= self.p['settle_speed_m_s']
+                    and abs(odom[1]) <= self.p['settle_yaw_rate_rad_s']):
                 return True
             time.sleep(0.05)
         return False

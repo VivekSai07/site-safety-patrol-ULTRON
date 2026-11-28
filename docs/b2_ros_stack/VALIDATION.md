@@ -428,8 +428,13 @@ _Not assembled. Reviewer decision: pending (human)._
   The dev image has Nav2 1.1.20, tf2 0.25.23 and tf2_ros 0.25.24. The upstream
   [geometry2 issue 995](https://github.com/ros2/geometry2/issues/995) reports a
   similar persistent TF-listener stall and a suspected lock inversion for Humble tf2
-  0.25.23. This is a plausible lead, not proof of the cause here; no local backtrace or
-  controlled version comparison has established it. Do not treat a downgrade as validated.
+  0.25.23. An isolated comparison with source-built tf2/tf2_ros 0.25.20
+  (`518e0801d419ba1bcb24cfbe039a99903fd2d710`) reached two inspection views and captured
+  two simulated frames after a moving HOLD; its 54 post-allowance HOLD command samples were
+  zero. It still failed in AWAIT_OPERATOR after a cancelled goal returned without a stop
+  acknowledgment. Artifacts: `ros2_ws/runs/sim_tf2_02520_result/`. This single mixed-ABI
+  comparison supports further investigation but does not establish a root cause or validate
+  a downgrade. Hardware use remains NO-GO.
 - Replay checkpoint `7d7444f` from `om/b2-ros-stack-replay-accept` is integrated.
   Its 32 tests passed; the replay clock guard reports stale
   localization when the clock stops, and measured queue-overflow drops fell to zero. One
