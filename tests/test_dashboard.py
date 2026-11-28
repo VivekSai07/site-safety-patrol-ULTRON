@@ -1,4 +1,5 @@
 import asyncio
+import io
 import json
 import unittest
 from pathlib import Path
@@ -433,7 +434,7 @@ class NavigationTest(unittest.TestCase):
     def test_pages_and_scripts_are_revalidated(self):
         # a cached old live.js against a new index.html hid the Start exploration button
         client, _ = self.make()
-        for path in ('/', '/history', '/ladder', '/static/live.js', '/static/i18n.js'):
+        for path in ('/', '/history', '/ladder', '/patrol', '/static/live.js', '/static/i18n.js', '/static/patrol.js'):
             response = client.get(path)
             self.assertEqual((response.status_code, response.headers.get('cache-control')), (200, 'no-cache'), path)
 
@@ -573,6 +574,40 @@ class SiteCheckTest(unittest.TestCase):
     def test_catalogue_is_served(self):
         catalogue = self.client.get('/api/site-checklists').json()
         self.assertEqual([c['key'] for c in catalogue][0], 'erste_hilfe_brandschutz')
+
+    def csv(self, path):
+        import csv as _csv
+        response = self.client.get(path)
+        self.assertEqual((response.status_code, response.headers['content-type'].split(';')[0]), (200, 'text/csv'))
+        return list(_csv.DictReader(io.StringIO(response.text)))
+
+    def test_downloads(self):
+        self.post(self.EXT)
+        rows = {r['row']: r for r in self.csv('/api/missions/PATROL-01/site-checks.csv')}
+        self.assertEqual((rows['BS-1']['answer'], rows['BS-1']['objects'], rows['BS-1']['photo']),
+                         ('ja', 'FEX-001', '/media/PATROL-01/fex-1.jpg'))
+        self.assertEqual(rows['EH-4']['answer'], 'person')
+        self.assertEqual(len(rows), 92)
+        objects = self.csv('/api/missions/PATROL-01/objects.csv')
+        by_kind = {o['kind']: o for o in objects}
+        self.assertEqual((by_kind['fire_extinguisher']['found'], by_kind['fire_extinguisher']['object'],
+                          by_kind['fire_extinguisher']['x_m'], by_kind['fire_extinguisher']['confirmed']), ('ja', 'FEX-001', '2.0', 'ja'))
+        self.assertEqual(by_kind['first_aid_kit']['found'], 'nein')          # looked for, not found
+        self.assertEqual(by_kind['scaffold']['found'], 'kein Detektor')      # nothing looks for it yet
+        export = self.client.get('/api/missions/PATROL-01/export.json').json()
+        self.assertEqual(export['site_checks'][0]['object_id'], 'FEX-001')
+        self.assertIn('presence', export['site_summary'])
+
+    def test_site_view_across_patrols(self):
+        self.post(self.EXT)
+        self.client.post('/api/missions', json={'mission_id': 'PATROL-02', 'site_id': 'site-a'})
+        site = self.client.get('/api/sites/site-a/site-checks').json()
+        by_id = {p['mission_id']: p for p in site['patrols']}
+        self.assertEqual((by_id['PATROL-01']['objects'], by_id['PATROL-02']['objects']), (1, 0))
+        self.assertEqual(by_id['PATROL-01']['headlines']['erste_hilfe_brandschutz'], 'offen')
+        self.assertIn({'kind': 'scaffold', 'label': 'Gerüst', 'detector': False}, site['kinds'])
+        matrix = {r['kind']: r for r in self.csv('/api/sites/site-a/objects.csv')}
+        self.assertEqual((matrix['fire_extinguisher']['PATROL-01'], matrix['fire_extinguisher']['PATROL-02']), ('1', '0'))
 
 
 @unittest.skipUnless(HAVE_DASHBOARD, 'dashboard extras not installed (pip install -e .[dashboard])')

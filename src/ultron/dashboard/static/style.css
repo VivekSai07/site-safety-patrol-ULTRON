@@ -175,6 +175,28 @@ details.patrol.has-flag { border-left: 4px solid var(--flag-dot); }
 details.patrol > summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; min-height: 32px; }
 details.patrol > summary .counts { display: flex; gap: 12px; margin-left: auto; font-size: 13px; }
 .empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
+.patrol-links { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+
+/* Patrol page: route map beside downloads and ladders; found objects; nesseler's other checklists */
+.patrol-head { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
+.patrol-head h1 { font-size: 24px; margin: 0; }
+.patrol-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start; }
+@media (max-width: 1000px) { .patrol-grid { grid-template-columns: minmax(0, 1fr); } }
+.patrol-grid svg.map { max-height: 520px; }
+.downloads { display: flex; flex-wrap: wrap; gap: 8px; }
+.downloads .btn { display: inline-flex; gap: 8px; align-items: center; text-decoration: none; color: var(--ink); }
+.object-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.object-card { margin: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.object-card img, .object-card .no-photo { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; }
+.object-card .no-photo { display: flex; align-items: center; justify-content: center; background: var(--soft); color: var(--muted); font-size: 13px; }
+.object-card figcaption { padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.missing { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+details.checklist-card > summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-height: 32px; }
+details.checklist-card > summary .counts { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+details.checklist-card.has-flag { border-left: 4px solid var(--flag-dot); }
+details.person-rows > summary { cursor: pointer; }
+details.person-rows ol { margin: 6px 0 0; padding-left: 20px; font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 3px; }
+img.thumb { width: 72px; height: 54px; object-fit: cover; border-radius: 4px; display: block; }
 dialog { width: min(980px, 96vw); border: 0; border-radius: 12px; padding: 0; background: var(--surface); color: var(--ink); }
 dialog::backdrop { background: rgba(10, 11, 12, .6); }
 .dlg { padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
