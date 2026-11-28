@@ -1,95 +1,92 @@
 # Record data on the real B2: quick start
 
-Commands to record a ROS 2 bag on the robot, with or without the patrol running. No container
-is needed: everything runs with the ROS already installed on the robot computer. Options,
-costs and measurements: [docs/RECORDING.md](docs/RECORDING.md).
+Everything goes through one script on the robot computer, `scripts/b2.sh`. It sources ROS
+itself, checks that the sensors are live before recording, and runs the recording in tmux so an
+SSH drop doesn't stop it. No container, no `PYTHONPATH`, no `.bashrc` changes. Options and costs:
+[docs/RECORDING.md](docs/RECORDING.md).
 
-Wi-Fi, SSH and robot passwords are **not** in this repository. Ask the team or the robot operator.
+Robot computer: **`byte`, `icom@192.168.123.222`**. Wi-Fi and SSH passwords are **not** in this
+repository; ask the team.
 
 ## 0. Get onto the robot network (laptop)
 
-Either option works:
+- **Ethernet cable to the robot (preferred)**, keeping university Wi-Fi for internet, or
+- **the robot's 5G hotspot `RUT_B1D5_5G`** (replaces your normal Wi-Fi while connected).
 
-- **Ethernet cable to the robot (preferred).** You can stay on university Wi-Fi at the same
-  time, so internet and other sessions keep working.
-- **The robot's 5G hotspot `RUT_B1D5_5G`.** This replaces your normal Wi-Fi while connected.
-
-Set the robot connection's IPv4 to manual:
-
-| Field | Value |
-|---|---|
-| Address | `192.168.123.190`, `.191`, `.192`, … **a different number for each laptop** (two laptops with the same address knock each other off) |
-| Netmask | `255.255.255.0` |
-| Gateway | **leave empty** (on Ubuntu also tick *Routes → "Use this connection only for resources on its network"*) |
-
-Check: `ping 192.168.123.222` answers. That is the robot computer.
+IPv4 manual: address `192.168.123.190`, `.191`, `.192`, … **a different number for each
+laptop**. Netmask `255.255.255.0`. **Gateway empty** (on Ubuntu tick *Routes → "Use this
+connection only for resources on its network"*). Check: `ping 192.168.123.222`.
 
 ## 1. Copy the code to the robot (laptop, in this repo after `git pull`)
 
 ```bash
-rsync -a --exclude .git --exclude runs --exclude datasets ./ unitree@192.168.123.222:~/ultron/
-```
-
-## 2. Check the sensor topics (on the robot)
-
-```bash
-ssh unitree@192.168.123.222
-ls /opt/ros                                 # which ROS is installed; use it below
-source /opt/ros/humble/setup.bash
-ros2 topic list | grep -E "camera|scan|tf"
-df -h ~                                     # recording needs about 7 GB per minute
-```
-
-Nothing listed? Then the recorder has nothing to record. Possible causes: wrong computer, the
-camera and lidar drivers aren't running, or a ROS setup file is missing (e.g.
-`source ~/unitree_ros2/setup.sh`, matching `ROS_DOMAIN_ID`). Ask whoever recorded the hall bag
-how they started the drivers.
-
-## 3. Start recording (on the robot, inside tmux)
-
-```bash
-tmux new -s rec
-source /opt/ros/humble/setup.bash
+rsync -a --exclude .git --exclude runs --exclude datasets ./ icom@192.168.123.222:~/ultron/
+ssh icom@192.168.123.222
 cd ~/ultron
 ```
 
-Then **one** of:
+## 2. Check the sensors
 
 ```bash
-# A. record only (no GPU machine needed)
-PYTHONPATH=src:$PYTHONPATH python3 -m ultron.recording --out ~/ultron-bags --note "hall run 1"
-
-# B. run the patrol and record at the same time
-#    (start the patrol on the GPU machine/laptop first, see README)
-python3 scripts/ros_relay.py --to LAPTOP_IP:5600 --record ~/ultron-bags
+scripts/b2.sh check
 ```
 
-- If the camera topic names differ from `/camera_depth/head/...`, add `--profile all` (A) or
-  `--record-profile all` (B) to record every topic.
-- Disk tight? Use `--profile light` / `--record-profile light`, which drops raw images
-  (about 10 MB/s).
-- Recording stops by itself when free disk falls to 10 GB. The relay keeps running.
-- `Ctrl-b d` detaches and leaves it running; `tmux attach -t rec` gets back.
-- **Ctrl-C stops it** and closes the bag properly.
+This prints a table and ends with `READY` or `NOT READY`. Required: **camera** (RealSense
+`/camera_depth/head/...`), **lidar** (`/scan_cloud` or `/rslidar_points`) and **IMU**
+(`/imu/data`). It also shows `/tf`, Unitree state and odometry when they exist. Each missing
+sensor gets a line saying which driver provides it.
 
-## 4. Check after 30 seconds (second SSH window on the robot)
+- **NOT READY, or almost no topics visible:** run `scripts/b2.sh doctor` and send the saved
+  report (`~/ultron-doctor-<time>.txt`) to the team. It records what is installed and running:
+  drivers, configs, network, devices, and how drivers were started before. It changes nothing.
+- **Don't** change `ROS_DOMAIN_ID`, `RMW_IMPLEMENTATION` or `.bashrc` to make topics appear.
+  The drivers have to be started in the same setup they were configured for.
+- Two drivers can't share one sensor. If a driver is already running somewhere, don't start
+  a second copy.
+
+## 3. Record
+
+```bash
+scripts/b2.sh record                    # refuses unless camera, lidar and IMU are live
+scripts/b2.sh record --camera-only      # knowingly record camera data only
+scripts/b2.sh record --force            # skip the check, record whatever is there
+scripts/b2.sh record --note "hall run 2" --profile all    # extra options go to the recorder
+```
+
+Run the patrol and record at the same time (start the patrol on the laptop first, see README):
+
+```bash
+scripts/b2.sh relay LAPTOP_IP           # e.g. 192.168.123.191
+```
+
+It runs in tmux (`ultron-rec` or `ultron-relay`). **Ctrl-C stops it** and closes the bag
+properly. `Ctrl-b d` detaches and leaves it running; `tmux attach -t ultron-rec` gets back.
+Bags go to `~/ultron-bags/<YYYYmmdd-HHMMSS>/`, at about 7 GB per minute. Recording stops by
+itself at 10 GB free disk.
+
+## 4. Check the bag after 30 seconds (second SSH window)
 
 ```bash
 source /opt/ros/humble/setup.bash
 ros2 bag info $(ls -d ~/ultron-bags/*/bag | tail -1)
 ```
 
-Expect about 30 colour images per recorded second. Near zero means the camera topic isn't being
-recorded: see step 2, or use `--profile all`. Fewer than expected means the disk is too slow:
-use `light`.
+Expect about 30 colour images and 10 lidar clouds per second.
 
 ## 5. Copy the bags to the laptop
 
 ```bash
-rsync -a --progress unitree@192.168.123.222:~/ultron-bags/ ./b2-bags/
+rsync -a --progress icom@192.168.123.222:~/ultron-bags/ ./b2-bags/
 ```
 
-Each run is one folder, `<YYYYmmdd-HHMMSS>/`, holding `bag/` and `recording.json` (what was
-recorded, git commit, how it stopped). Use it in the pipeline with `--source bag:b2-bags/<time>/bag`.
+If a recorder is ever left running: `pkill -INT -f "ros2 bag record"` on the robot.
 
-If a recorder is ever left running: `pkill -INT -f "ros2 bag record"` (on the robot).
+## What happened on 28 November
+
+Today's bags (`20261128-14*`) have only camera data. Only the RealSense driver was running, so
+there was no lidar, IMU or `/tf`. Last night's hall bag shows the drivers that were running then:
+- `rslidar_sdk` publishing `/scan_cloud` in `lidar_link`, plus `/rslidar_packets`
+- `xsens_mti_ros2_driver` publishing `/imu/*`, `/filter/*` and `/tf world→imu_link`
+- RealSense as `camera_depth/head`
+
+`b2.sh check` now catches a missing sensor before recording starts.

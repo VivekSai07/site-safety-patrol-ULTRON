@@ -61,13 +61,13 @@ CONTEXT = [
     "/goal_pose", "/plan", "/cmd_vel", "/joint_states",
     "/sportmodestate", "/lf/sportmodestate", "/lowstate", "/lf/lowstate",
 ]
-HEAVY = [COLOR, DEPTH, CLOUD, "/rslidar_packets"]  # best-effort only if asked
+HEAVY = [COLOR, DEPTH, CLOUD, "/rslidar_points", "/rslidar_packets"]  # best-effort only if asked
 
 PROFILES = {
     # What the pipeline reads (protocol/bag.py) plus pose sources: the default.
-    "pipeline": [COLOR, COLOR_INFO, DEPTH, DEPTH_INFO, EXTRINSICS, CLOUD, *CONTEXT],
+    "pipeline": [COLOR, COLOR_INFO, DEPTH, DEPTH_INFO, EXTRINSICS, CLOUD, "/rslidar_points", *CONTEXT],
     # Same without raw images: about 10 MB/s, for long runs or a slow disk.
-    "light": [COLOR_INFO, DEPTH_INFO, EXTRINSICS, CLOUD, *CONTEXT],
+    "light": [COLOR_INFO, DEPTH_INFO, EXTRINSICS, CLOUD, "/rslidar_points", *CONTEXT],
     # Everything published, including raw lidar packets and camera metadata.
     "all": None,
 }
