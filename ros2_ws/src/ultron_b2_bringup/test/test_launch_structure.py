@@ -41,6 +41,17 @@ def test_every_sub_launch_exists_and_loads():
         assert set(SUB_ARGS) <= declared, name
 
 
+@pytest.mark.parametrize('run_mode', ['sim', 'replay', 'live'])
+def test_slam_sub_launch_forwards_run_mode(run_mode):
+    from launch import LaunchContext
+
+    ld = _load(LAUNCH / 'sub' / 'slam.launch.py')
+    include = ld.entities[-1]
+    context = LaunchContext()
+    context.launch_configurations['run_mode'] = run_mode
+    assert dict(include.launch_arguments)['run_mode'].perform(context) == run_mode
+
+
 def test_replay_stack_excludes_command_sub_launches():
     def includes(run_mode):
         return {getattr(a, 'ultron_sub_launch', None) for a in build_stack(run_mode).get_sub_entities()} - {None}

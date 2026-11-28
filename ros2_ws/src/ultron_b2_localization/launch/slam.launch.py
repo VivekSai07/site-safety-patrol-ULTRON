@@ -39,6 +39,7 @@ def _nodes(context):
     from ultron_b2_localization.map_manager_node import default_map_root
     cfg = lambda name: os.path.join(get_package_share_directory(PKG), 'config', name)
     mode = LaunchConfiguration('mode').perform(context)
+    run_mode = LaunchConfiguration('run_mode').perform(context)
     map_ref = LaunchConfiguration('map').perform(context)
     map_root = os.path.expanduser(LaunchConfiguration('map_root').perform(context) or default_map_root())
     pose = [float(v) for v in LaunchConfiguration('initial_pose').perform(context).split(',')]
@@ -61,11 +62,13 @@ def _nodes(context):
             if not info['posegraph_path']:
                 raise RuntimeError(f'map {directory} has no slam_toolbox pose graph')
             manager_params['initial_map'] = info['yaml_path']
+            # Simulation scans can arrive in bursts before the corresponding MOLA odometry TF.
+            sim_scan_queue = {'scan_queue_size': 10} if run_mode == 'sim' else {}
             actions += [
                 LogInfo(msg=f'[slam] localization on {info["map_id"]} v{info["map_version"]} ({directory})'),
                 Node(package='slam_toolbox', executable='localization_slam_toolbox_node', name='slam_toolbox',
                      output='screen',
-                     parameters=[cfg('slam_toolbox_localization.yaml'), sim_time,
+                     parameters=[cfg('slam_toolbox_localization.yaml'), sim_time, sim_scan_queue,
                                  {'map_file_name': info['posegraph_path'], 'map_start_pose': pose}])]
         else:
             actions.append(LogInfo(msg='[slam] WARNING: no map:= given; localization backend not started '
@@ -81,6 +84,7 @@ def _nodes(context):
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('mode', default_value='mapping', choices=['mapping', 'localization', 'nav', 'mission']),
+        DeclareLaunchArgument('run_mode', default_value='', choices=['', 'sim', 'replay', 'live']),
         DeclareLaunchArgument('map', default_value='', description='map_id, map_id:version, or map dir/yaml'),
         DeclareLaunchArgument('map_root', default_value='', description='default $ULTRON_MAP_ROOT or $ROS_HOME/ultron_maps'),
         DeclareLaunchArgument('initial_pose', default_value='0,0,0', description='x,y,yaw in the map frame'),
