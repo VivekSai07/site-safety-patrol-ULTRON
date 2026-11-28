@@ -51,5 +51,20 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertTrue(p.model_safety_mode)
 
 
+class RunDemoGuardTests(unittest.TestCase):
+    def test_existing_output_dir_fails_fast_before_model_load(self):
+        import tempfile
+        from pathlib import Path
+        from ultron.mission import run_demo
+        with tempfile.TemporaryDirectory() as tmp:
+            existing = Path(tmp) / 'run'
+            existing.mkdir()
+            # detector='yolo' without weights would raise ValueError in RuntimePerception;
+            # the directory guard must trigger first.
+            with self.assertRaises(SystemExit) as ctx:
+                run_demo(existing, detector='yolo')
+            self.assertIn('already exists', str(ctx.exception))
+
+
 if __name__ == '__main__':
     unittest.main()

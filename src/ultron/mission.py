@@ -15,9 +15,13 @@ from .scene import scenarios, safety_assets as default_safety_assets
 
 
 def run_demo(output, database=None, patrols=2, variant='normal', recovery=True, viewer=False, motion='smooth', view_policy='bounded', detector='oracle', weights=None, inspector='oracle', qwen=None, allow_download=False, device='cpu', detector_family='yoloe', safety=False):
+    output=Path(output)
+    # Evidence runs are immutable; refuse reuse BEFORE loading any model weights.
+    if output.exists():
+        raise SystemExit(f"Output directory '{output}' already exists; evidence runs are immutable. "
+                         "Pick a new --out or remove the old run first.")
     from .runtime_perception import RuntimePerception
     perception=RuntimePerception(detector=detector,weights=weights,inspector=inspector,qwen=qwen,allow_download=allow_download,device=device,family=detector_family)
-    output=Path(output)
     output.mkdir(parents=True,exist_ok=False)
     (output/'frames').mkdir()
     run_id=uuid.uuid4().hex
