@@ -215,6 +215,14 @@ What the open yard forced (the hall recording had none of it):
   0.74-0.79 m above it). Masks that take in an object's shadow otherwise put it on the floor
   in front, and a stored height band that reaches below the floor made the empty floor where a
   moved ladder stood look occupied.
+- Patrol D (north start, noisy depth, on the A+B map; L10 removed, L49 moved 4 m, two identical
+  stepladders 0.3 m apart edge to edge): lined up (0.02 m); L49's old place reported moved, the
+  ladder at its new place a new object; the twins two objects, each on the right one; no
+  duplicates. L10's removal is not reported: D passed no nearer than 5.3 m.
+- **Gone against a wall cannot be seen**: the look-through test sees an empty place only in front of
+  open space. Where L10 leaned, the container wall stands at the footprint's distance and reads as
+  "something there". The same holds for every wall-mounted kind (extinguisher, hose cabinet, alarm
+  box): their removal is never reported. Not yet addressed.
 - **Sightings beyond 12 m are not used.** With the D457's noise (`depth=noisy`, fitted by the
   simulator to the real camera: 6 mm at 2 m, 97 mm at 8 m) ladders seen up to 12.5 m still land
   inside their footprint (90th percentile); from 15 m on they lie 0.25-0.9 m off, a ladder 40 m
