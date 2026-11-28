@@ -137,3 +137,53 @@ class TestObjectStore(unittest.TestCase):
         memory.register_sighting("obj-1", img(0), (1.0, 2.0), "ladder")
         self.assertEqual(memory.objects["obj-1"]["embedding_ids"], [])
         self.assertEqual(memory.objects["obj-1"]["position"], [1.0, 2.0])
+
+
+@unittest.skipIf(np is None, "numpy and Pillow required")
+class TestReId(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        from ultron.spatial.memory import SpatialMemory
+        self.memory = SpatialMemory(Path(self._tmp.name), embedder=FakeEmbedder())
+        self.memory.register_sighting("ladder-1", img(0), (0.0, 0.0), "ladder")
+
+    def test_same_object_recognised_across_position_drift(self):
+        matches = self.memory.advise(img(5), (2.0, 0.0), "ladder")  # 2 m off, nearly identical look
+        self.assertEqual(matches[0][0], "ladder-1")
+        self.assertEqual(self.memory.classify(matches[0][1]), "same")
+
+    def test_adjacent_lookalike_kept_distinct(self):
+        matches = self.memory.advise(img(90), (0.5, 0.0), "ladder")  # 0.5 m away, looks different
+        self.assertEqual(self.memory.classify(matches[0][1]), "different")
+
+    def test_mid_similarity_is_undecided(self):
+        matches = self.memory.advise(img(45), (0.0, 0.0), "ladder")  # cos 45 deg = 0.707
+        self.assertEqual(self.memory.classify(matches[0][1]), "undecided")
+
+    def test_geometry_gate_and_kind_filter(self):
+        self.assertEqual(self.memory.advise(img(0), (10.0, 0.0), "ladder"), [])      # beyond 3 m
+        self.assertEqual(self.memory.advise(img(0), (0.0, 0.0), "extinguisher"), []) # other kind
+        self.assertEqual(self.memory.neighbours((1.0, 0.0), "ladder"), ["ladder-1"])
+
+    def test_explicit_candidates_override_the_gate(self):
+        matches = self.memory.advise(img(0), (10.0, 0.0), "ladder", candidate_ids=["ladder-1"])
+        self.assertEqual(matches[0][0], "ladder-1")
+
+    def test_without_embedder_advice_is_empty(self):
+        from ultron.spatial.memory import SpatialMemory
+        silent = SpatialMemory(Path(self._tmp.name), embedder=None)
+        self.assertEqual(silent.advise(img(0), (0.0, 0.0), "ladder"), [])
+
+    def test_cross_score_between_stored_objects(self):
+        self.memory.register_sighting("ladder-2", img(5), (0.5, 0.0), "ladder")
+        self.assertGreaterEqual(self.memory.cross_score("ladder-1", "ladder-2"), 0.99)
+        self.memory.register_sighting("bare", None, (5.0, 5.0), "ladder")
+        self.assertIsNone(self.memory.cross_score("ladder-1", "bare"))
+
+    def test_inspection_guard_survives_reload(self):
+        self.assertIsNone(self.memory.was_inspected("ladder-1"))
+        self.memory.mark_inspected("ladder-1", "HALL-1")
+        from ultron.spatial.memory import SpatialMemory
+        reloaded = SpatialMemory(Path(self._tmp.name), embedder=FakeEmbedder())
+        self.assertEqual(reloaded.was_inspected("ladder-1"), "HALL-1")

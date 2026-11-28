@@ -126,3 +126,65 @@ class SpatialMemory:
                 self._embeddings[key] = embedding
                 record["embedding_ids"].append(key)
         self._save()
+
+    # re-identification -------------------------------------------------------
+    def advise(self, crop, position, kind, candidate_ids=None):
+        """Appearance scores for candidate objects, best first.
+
+        [] means appearance has no say (no embedder, no candidates, or no samples):
+        the caller keeps its purely geometric behaviour. Candidates default to the
+        stored objects of this kind within `gate_radius` of the sighting.
+        """
+        embedding = self._embed(crop)
+        if embedding is None:
+            return []
+        if candidate_ids is None:
+            candidate_ids = self.neighbours(position, kind)
+        scored = []
+        for object_id in candidate_ids:
+            record = self.objects.get(object_id)
+            samples = [self._embeddings[key] for key in (record or {}).get("embedding_ids", [])
+                       if key in self._embeddings]
+            if samples:
+                scored.append((object_id, max(float(embedding @ sample) for sample in samples)))
+        return sorted(scored, key=lambda pair: -pair[1])
+
+    def neighbours(self, position, kind=None):
+        """Stored objects (of `kind`, if given) within the geometry gate of `position`."""
+        if position is None:
+            return []
+        return [object_id for object_id, record in self.objects.items()
+                if (kind is None or record["kind"] == kind) and record["position"] is not None
+                and math.dist(record["position"], position) <= self.config.gate_radius]
+
+    def classify(self, score):
+        """'same' / 'different' / 'undecided' for one advise() score.
+
+        Conservative on purpose: a wrong 'same' loses an inspection, a wrong
+        'different' only duplicates one, so the 'same' threshold is the strict one.
+        """
+        if score >= self.config.same_threshold:
+            return "same"
+        if score <= self.config.different_threshold:
+            return "different"
+        return "undecided"
+
+    def cross_score(self, id_a, id_b):
+        """Best appearance match between two stored objects; None when either has no samples."""
+        samples_a = [self._embeddings[k] for k in self.objects.get(id_a, {}).get("embedding_ids", [])]
+        samples_b = [self._embeddings[k] for k in self.objects.get(id_b, {}).get("embedding_ids", [])]
+        if not samples_a or not samples_b:
+            return None
+        return max(float(a @ b) for a in samples_a for b in samples_b)
+
+    # inspections --------------------------------------------------------------
+    def mark_inspected(self, object_id, mission_id):
+        record = self.objects.get(object_id)
+        if record is not None:
+            record["inspected"] = {"mission": mission_id, "stamp": time.time()}
+            self._save()
+
+    def was_inspected(self, object_id):
+        """The mission that inspected this object, or None."""
+        inspected = self.objects.get(object_id, {}).get("inspected")
+        return inspected["mission"] if inspected else None
