@@ -52,6 +52,33 @@ def test_frontier_keepout_excluded():
     assert find_frontiers(grid, zone, (1.0, 1.0)) == ([], [])
 
 
+def test_frontier_goal_never_uses_reachable_cell_in_keepout():
+    grid = room(unknown_rect=(5.0, 0.1, 9.9, 7.9))
+    zone = PatrolZone('Z', [(0, 0), (10, 0), (10, 8), (0, 8)],
+                      keepout=[[(4.0, 0.1), (4.8, 0.1), (4.8, 7.9), (4.0, 7.9)]])
+    reach = np.zeros_like(grid.free)
+    forbidden = grid.cell(4.5, 4.0)
+    allowed = grid.cell(3.9, 4.0)
+    reach[forbidden] = True
+    reachable, unreachable = find_frontiers(grid, zone, (1.0, 1.0), reach=reach, goal_search_m=2.0)
+    assert not reachable and unreachable
+    reach[allowed] = True
+    reachable, _ = find_frontiers(grid, zone, (1.0, 1.0), reach=reach, goal_search_m=2.0)
+    assert reachable and zone.contains(*reachable[0].goal[:2])
+
+
+def test_wider_frontier_search_keeps_goal_in_clear_reachable_space():
+    grid = room(unknown_rect=(5.0, 0.1, 9.9, 7.9))
+    zone = zone_for()
+    reach = np.zeros_like(grid.free)
+    cell = grid.cell(3.2, 4.0)
+    assert grid.traversable(0.9)[cell]
+    reach[cell] = True
+    assert not find_frontiers(grid, zone, (1.0, 1.0), clearance_m=0.9, reach=reach)[0]
+    reachable, _ = find_frontiers(grid, zone, (1.0, 1.0), clearance_m=0.9, reach=reach, goal_search_m=2.0)
+    assert reachable and grid.cell(*reachable[0].goal[:2]) == cell
+
+
 def test_frontier_behind_wall_is_reported_unreachable_not_dropped():
     # Wall at x=5 separates the robot from a pocket containing unknown space.
     grid = room(unknown_rect=(7.0, 0.1, 9.9, 7.9), walls=[(5.0, 0.0, 5.2, 8.0)])

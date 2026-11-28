@@ -201,12 +201,14 @@ class NavContractServer(Node):
             msg.twist.twist.angular.z, msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
             time.monotonic())
 
-    def _fresh_odom(self):
+    def _fresh_odom(self, *, received_after=None, stamped_after=None):
         sample = self.odom_sample
         if sample is None:
             return None
         speed, yaw_rate, stamp, received_at = sample
         if (math.isfinite(speed) and math.isfinite(yaw_rate)
+                and (received_after is None or received_at > received_after)
+                and (stamped_after is None or stamp > stamped_after)
                 and abs(self.now() - stamp) <= self.p['odom_max_age_s']
                 and 0 <= time.monotonic() - received_at <= self.p['odom_max_age_s']):
             return speed, yaw_rate
@@ -386,13 +388,22 @@ class NavContractServer(Node):
             state['nav2'].cancel_goal_async()
 
     def _wait_still(self):
-        deadline = time.monotonic() + self.p['stop_ack_timeout_s']
+        started = time.monotonic()
+        started_ros = self.now()
+        deadline = started + self.p['stop_ack_timeout_s']
+        fresh_checks = 0
+        last_fresh = None
         while time.monotonic() < deadline:
-            odom = self._fresh_odom()
+            odom = self._fresh_odom(received_after=started, stamped_after=started_ros)
+            if odom is not None:
+                fresh_checks += 1
+                last_fresh = odom
             if (odom is not None and abs(odom[0]) <= self.p['settle_speed_m_s']
                     and abs(odom[1]) <= self.p['settle_yaw_rate_rad_s']):
                 return True
             time.sleep(0.05)
+        self.get_logger().warning(
+            f'Stop not acknowledged: fresh odometry checks={fresh_checks}, last speed/yaw rate={last_fresh}')
         return False
 
     def _feedback(self, handle, goal, status):

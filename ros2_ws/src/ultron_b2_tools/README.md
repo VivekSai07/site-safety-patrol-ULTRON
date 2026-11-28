@@ -8,5 +8,8 @@
 - `stream_probe` — measure live/replayed topics over a wall-clock window: receive and header-stamp
   rates, message sizes, point counts, LaserScan finite beams/ranges and per-process CPU from `/proc`.
   Refuses `ROS_DOMAIN_ID` 0.
+- `sim_snapshot` — save one color PNG and provenance JSON from the fixed simulated head-camera
+  topic in domain 71; use a private DDS network. It never commands motion or assesses whether the robot is settled.
+  It refuses an existing output directory and does not authenticate the publisher.
 
 Planned (not yet): `bag_to_contract`, eval ports (`eval_slam`, `eval_localization`).

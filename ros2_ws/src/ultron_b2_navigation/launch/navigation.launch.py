@@ -9,6 +9,7 @@ profile sim|real, map_yaml (optional saved map -> map_server on nav/map; else li
 map_meta (map_meta.json or its folder: map id/version for contract checks), zone_file (PatrolZone YAML),
 use_stvl, use_sim_time.
 """
+import math
 import os
 from pathlib import Path
 
@@ -25,17 +26,30 @@ NAV2_NODES = ['controller_server', 'planner_server', 'behavior_server', 'bt_navi
 def footprint_radius(profile):
     path = Path(get_package_share_directory('ultron_b2_description')) / 'config' / 'footprint.yaml'
     data = yaml.safe_load(path.read_text())[profile]
-    if data.get('type') != 'circle' or not isinstance(data.get('radius_m'), (int, float)):
+    radius = data.get('radius_m')
+    if (data.get('type') != 'circle' or not isinstance(radius, (int, float))
+            or not math.isfinite(radius) or radius <= 0):
         raise RuntimeError(f'footprint "{profile}" is {data.get("type")} (radius {data.get("radius_m")}): '
                            'Nav2 refuses to start until the footprint is measured (TO_VERIFY)')
-    return float(data['radius_m'])
+    return float(radius)
+
+
+def planning_radius(profile):
+    radius = footprint_radius(profile)
+    if profile != 'sim':
+        return radius
+    path = Path(get_package_share_directory('ultron_b2_description')) / 'config' / 'footprint.yaml'
+    value = yaml.safe_load(path.read_text())['sim'].get('planning_radius_m')
+    if not isinstance(value, (int, float)) or not math.isfinite(value) or value < radius:
+        raise RuntimeError('simulation planning radius must be finite and at least the footprint radius')
+    return float(value)
 
 
 def render_params(profile, ns, map_topic, use_stvl):
     """Substitute tokens, optionally add STVL, write a params file under $ROS_HOME (never /tmp)."""
     share = Path(get_package_share_directory(PKG))
     text = (share / 'config' / f'nav2_{profile}.yaml').read_text()
-    subs = {'${NS}': ns, '${MAP_TOPIC}': map_topic, '${ROBOT_RADIUS}': str(footprint_radius(profile)),
+    subs = {'${NS}': ns, '${MAP_TOPIC}': map_topic, '${ROBOT_RADIUS}': str(planning_radius(profile)),
             '${BT_XML}': str(share / 'config' / 'bt' / 'navigate_no_motion_recovery.xml')}
     for k, v in subs.items():
         text = text.replace(k, v)

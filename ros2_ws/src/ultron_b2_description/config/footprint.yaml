@@ -3,6 +3,7 @@ schema: ultron.b2_footprint/v1
 sim:
   type: circle
   radius_m: 0.55
+  planning_radius_m: 0.90  # proposed sim clearance; exceeds the 0.85 m collision-approach radius
   source: assumed
   provenance: docs/b2_ros_stack/PLAN.md (sim 0.55 m circle until measured)
 real:

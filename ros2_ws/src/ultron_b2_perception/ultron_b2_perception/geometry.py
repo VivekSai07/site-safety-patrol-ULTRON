@@ -53,8 +53,8 @@ BODY_FROM_OPTICAL = np.array([[0.0, 0.0, 1.0, 0.0],
 def intrinsics(k):
     """3x3 K from a CameraInfo.k-like sequence of 9 values."""
     K = np.asarray(k, dtype=float).reshape(3, 3)
-    if K[0, 0] <= 0 or K[1, 1] <= 0:
-        raise ValueError('camera intrinsics are not calibrated (fx/fy <= 0)')
+    if not np.all(np.isfinite(K)) or K[0, 0] <= 0 or K[1, 1] <= 0:
+        raise ValueError('camera intrinsics are nonfinite or not calibrated (fx/fy <= 0)')
     return K
 
 

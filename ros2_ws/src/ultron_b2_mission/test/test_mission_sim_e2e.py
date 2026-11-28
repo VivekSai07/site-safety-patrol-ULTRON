@@ -13,10 +13,14 @@ hall. Expected with C (localization + map), D (nav/navigate_to_view, twist_mux o
 * the mission nodes publish no velocity topics.
 Optional env: ULTRON_E2E_LAUNCH_ARGS (extra launch args, e.g. ``map:=<dir> odom_source:=mola viz:=foxglove``),
 ULTRON_E2E_OUT (new directory for launch log, events and result; default: no artifacts, log discarded),
-ULTRON_E2E_TIMEOUT_S (wall-clock timeout for view and mission result; default 1200).
+ULTRON_E2E_TIMEOUT_S (wall-clock timeout for view and mission result; default 1200),
+ULTRON_E2E_LOC_DIAG=1 (with output directory, save bounded low-score scan, odometry, gate,
+and evaluation-only truth samples).
 Simulation results are not hardware evidence and oracle detections are not real perception.
 """
 import json
+from collections import deque
+import math
 import os
 import pathlib
 import shlex
@@ -41,10 +45,12 @@ def test_full_sim_mission_hall():
     from rclpy.executors import MultiThreadedExecutor
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-    from geometry_msgs.msg import Twist
+    from geometry_msgs.msg import PoseStamped, Twist
+    from nav_msgs.msg import Odometry
+    from sensor_msgs.msg import LaserScan
     from std_msgs.msg import Bool, String
     from ultron_b2_interfaces.action import RunMission
-    from ultron_b2_interfaces.msg import MissionEvent, MissionStatus, OperatorEnable
+    from ultron_b2_interfaces.msg import LocalizationState, MissionEvent, MissionStatus, MotionGateStatus, OperatorEnable
 
     env = dict(os.environ, ROS_DOMAIN_ID='71', ROS_LOCALHOST_ONLY='1')
     out = pathlib.Path(os.environ['ULTRON_E2E_OUT']) if os.environ.get('ULTRON_E2E_OUT') else None
@@ -66,10 +72,71 @@ def test_full_sim_mission_hall():
     node.create_subscription(Twist, 'cmd_vel', lambda m: cmd_vel.append((
         time.monotonic(), m.linear.x, m.linear.y, m.linear.z, m.angular.x, m.angular.y, m.angular.z)), 50)
     bridge_status = []
+    truth_pose = deque(maxlen=1)
+    collision_samples = []
+    node.create_subscription(PoseStamped, 'sim/ground_truth/base_pose', truth_pose.append, 10)
     latched = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE,
                          durability=DurabilityPolicy.TRANSIENT_LOCAL)
-    node.create_subscription(String, 'sim/bridge_status',
-                             lambda m: bridge_status.append(json.loads(m.data)), latched)
+
+    def on_bridge_status(msg):
+        status = json.loads(msg.data)
+        if status.get('collisions', 0) > (bridge_status[-1].get('collisions', 0) if bridge_status else 0):
+            pose = truth_pose[-1] if truth_pose else None
+            collision_samples.append({
+                'sim_time_s': status.get('sim_time_s'), 'collisions': status['collisions'],
+                'truth_stamp_s': (pose.header.stamp.sec + pose.header.stamp.nanosec * 1e-9) if pose else None,
+                'truth_x': pose.pose.position.x if pose else None,
+                'truth_y': pose.pose.position.y if pose else None,
+                'truth_qz': pose.pose.orientation.z if pose else None,
+                'truth_qw': pose.pose.orientation.w if pose else None,
+            })
+        bridge_status.append(status)
+
+    node.create_subscription(String, 'sim/bridge_status', on_bridge_status, latched)
+    if out and os.environ.get('ULTRON_E2E_LOC_DIAG') == '1':
+        scans = deque(maxlen=50)
+        loc_samples = []
+        odom_samples = deque(maxlen=1000)
+        gate_samples = deque(maxlen=1000)
+        seen_stamps = set()
+        scan_qos = QoSProfile(depth=50, reliability=ReliabilityPolicy.BEST_EFFORT)
+        node.create_subscription(LaserScan, 'sensors/scan', scans.append, scan_qos)
+
+        def on_localization(msg):
+            stamp = (msg.header.stamp.sec, msg.header.stamp.nanosec)
+            if (not msg.has_match_score or msg.match_score >= 0.7 or stamp in seen_stamps
+                    or len(loc_samples) >= 20):
+                return
+            scan = next((s for s in reversed(scans)
+                         if (s.header.stamp.sec, s.header.stamp.nanosec) == stamp), None)
+            if scan is None:
+                return
+            seen_stamps.add(stamp)
+            truth = truth_pose[-1] if truth_pose else None
+            loc_samples.append({
+                'stamp': list(stamp), 'score': msg.match_score, 'state': msg.state,
+                'pose': [msg.pose.position.x, msg.pose.position.y,
+                         msg.pose.orientation.z, msg.pose.orientation.w],
+                'truth_stamp': [truth.header.stamp.sec, truth.header.stamp.nanosec] if truth else None,
+                'truth_pose': [truth.pose.position.x, truth.pose.position.y,
+                               truth.pose.orientation.z, truth.pose.orientation.w] if truth else None,
+                'scan_frame': scan.header.frame_id, 'angle_min': scan.angle_min,
+                'angle_increment': scan.angle_increment, 'range_min': scan.range_min, 'range_max': scan.range_max,
+                'ranges': [float(r) if math.isfinite(r) else None for r in scan.ranges],
+            })
+
+        node.create_subscription(LocalizationState, 'state/localization', on_localization, latched)
+        node.create_subscription(Odometry, 'state/odom', lambda m: odom_samples.append({
+            'received_monotonic': time.monotonic(),
+            'stamp_s': m.header.stamp.sec + m.header.stamp.nanosec * 1e-9,
+            'vx': m.twist.twist.linear.x, 'vy': m.twist.twist.linear.y, 'wz': m.twist.twist.angular.z,
+        }), 50)
+        node.create_subscription(MotionGateStatus, 'safety/motion_gate', lambda m: gate_samples.append({
+            'received_monotonic': time.monotonic(),
+            'stamp_s': m.header.stamp.sec + m.header.stamp.nanosec * 1e-9,
+            'open': m.open, 'reason': m.inhibited_reason,
+            'vx': m.cmd_out.linear.x, 'vy': m.cmd_out.linear.y, 'wz': m.cmd_out.angular.z,
+        }), 50)
     seq = [0]
 
     def heartbeat():
@@ -207,10 +274,15 @@ def test_full_sim_mission_hall():
                 'bridge_status': bridge_status[-1] if bridge_status else None,
                 'hold_cmd_vel_max_abs': max((abs(v) for sample in held for v in sample[1:]), default=None)},
                 indent=2))
+            (out / 'collision_samples.json').write_text(json.dumps(collision_samples, indent=2))
+            if os.environ.get('ULTRON_E2E_LOC_DIAG') == '1':
+                (out / 'localization_samples.json').write_text(json.dumps(loc_samples, indent=2))
+                (out / 'stop_diagnostics.json').write_text(json.dumps({
+                    'odom': list(odom_samples), 'gate': list(gate_samples)}, indent=2))
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
-        os.killpg(launch.pid, signal.SIGINT)
+        launch.send_signal(signal.SIGINT)
         try:
             launch.wait(timeout=30)
         except subprocess.TimeoutExpired:

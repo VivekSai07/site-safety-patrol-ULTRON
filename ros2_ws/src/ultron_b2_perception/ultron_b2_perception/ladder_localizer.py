@@ -15,12 +15,16 @@ import sys
 
 import numpy as np
 
-from .localizer_core import (DropCounter, Rejected, color_box_to_depth, depth_to_metres, localize,
-                             visible_candidates)
+from .localizer_core import (DropCounter, Rejected, color_box_to_depth, depth_to_metres, localize, oracle_depth_mask,
+                             require_registered_depth, visible_candidates)
 from .geometry import intrinsics
 from .ros_util import image_to_numpy, ladder_type_from_label, run_node, sensor_qos, stamp_to_float, tf_to_matrix
 
 OBSERVATION, VIEW_CHECK = 'OBSERVATION', 'VIEW_CHECK'
+
+
+def stamp_ns(msg):
+    return msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
 
 
 def lookup_at_stamp(buffer, target, source, stamp_s, timeout_s):
@@ -55,11 +59,17 @@ def main(argv=None):
             self.max_age = float(p('max_image_age_s', 1.0).value)           # PROPOSED
             self.loc_max_age = float(p('localization_max_age_s', 1.0).value)
             self.depth_scale = float(p('depth_scale_16u', 0.001).value)     # RealSense default, TO_VERIFY
+            self.depth_registered_to_color = p('depth_registered_to_color', False).value
+            self.oracle_masks = p('oracle_depth_masks', False).value
+            if self.oracle_masks and p('run_mode', '').value != 'sim':
+                raise ValueError('oracle depth masks are restricted to simulation')
             self.max_range = float(p('max_range_m', 8.0).value)
             camera_qos = sensor_qos(self)
             self.tf_buffer = Buffer()
             self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
             self.depths = []
+            self.oracle_labels = {}
+            self.pending_detections = {}
             self.K_depth = self.K_color = None
             self.loc = None
             self.candidates = []
@@ -78,6 +88,11 @@ def main(argv=None):
             self.create_subscription(LocalizationState, 'state/localization', self._on_loc, 10)
             self.create_subscription(LadderCandidateArray, 'perception/ladder_candidates', self._on_cands, latched)
             self.create_subscription(LadderDetectionArray, 'perception/ladder_detections', self._on_dets, 10)
+            if self.oracle_masks:
+                self.create_subscription(Image, p('oracle_segmentation_topic',
+                                                  'sim/oracle/cam_head/ladder_labels').value,
+                                         self._on_labels, camera_qos)
+                self.create_timer(0.1, self._drain_pending)
             self.create_timer(1.0, self._stats)
 
         def _on_depth(self, msg):
@@ -86,19 +101,34 @@ def main(argv=None):
             except (Rejected, ValueError):
                 self.drops.drop('NO_DEPTH')
                 return
-            self.depths = (self.depths + [(stamp_to_float(msg.header.stamp), msg.header.frame_id, depth)])[-30:]
+            self.depths = (self.depths + [(stamp_to_float(msg.header.stamp), msg.header.frame_id,
+                                          depth, stamp_ns(msg))])[-30:]
+            if self.oracle_masks:
+                self._drain_pending()
+
+        def _on_labels(self, msg):
+            try:
+                if msg.encoding not in ('16UC1', 'mono16'):
+                    return
+                labels = image_to_numpy(msg)
+            except ValueError:
+                return
+            self.oracle_labels[stamp_ns(msg)] = (msg.header.frame_id, labels)
+            if len(self.oracle_labels) > 30:
+                self.oracle_labels.pop(min(self.oracle_labels))
+            self._drain_pending()
 
         def _on_depth_info(self, msg):
             try:
                 self.K_depth = intrinsics(msg.k)
             except ValueError:
-                pass
+                self.K_depth = None
 
         def _on_color_info(self, msg):
             try:
                 self.K_color = intrinsics(msg.k)
             except ValueError:
-                pass
+                self.K_color = None
 
         def _on_loc(self, msg):
             self.loc = msg
@@ -114,6 +144,32 @@ def main(argv=None):
                     and abs(t - stamp_to_float(loc.header.stamp)) <= self.loc_max_age)
 
         def _on_dets(self, msg):
+            if self.oracle_masks:
+                self.pending_detections[stamp_ns(msg)] = msg
+                if len(self.pending_detections) > 30:
+                    old = self.pending_detections.pop(min(self.pending_detections))
+                    self.drops.update({'ORACLE_FRAME_NOT_SYNCED': max(1, len(old.detections))})
+                self._drain_pending()
+                return
+            self._process_dets(msg)
+
+        def _drain_pending(self):
+            now = self.get_clock().now().nanoseconds
+            for key, msg in list(self.pending_detections.items()):
+                if now - key > self.max_age * 1e9:
+                    self.pending_detections.pop(key)
+                    self.drops.update({'ORACLE_FRAME_NOT_SYNCED': max(1, len(msg.detections))})
+                    continue
+                depth = next((d for d in self.depths if d[3] == key), None)
+                labels = self.oracle_labels.get(key)
+                if depth is not None and labels is not None:
+                    self.pending_detections.pop(key)
+                    if labels[0] != msg.header.frame_id:
+                        self.drops.update({'NO_ORACLE_MASK': max(1, len(msg.detections))})
+                        continue
+                    self._process_dets(msg, depth, labels[1])
+
+        def _process_dets(self, msg, exact_depth=None, labels=None):
             t = stamp_to_float(msg.header.stamp)
             n = max(1, len(msg.detections))
             now = self.get_clock().now().nanoseconds * 1e-9
@@ -121,11 +177,15 @@ def main(argv=None):
                 return self.drops.update({'IMAGE_TOO_OLD': n})
             if not self._loc_valid(t):
                 return self.drops.update({'LOCALIZATION_NOT_VALID': n})
+            try:
+                require_registered_depth(self.depth_registered_to_color)
+            except Rejected as exc:
+                return self.drops.update({exc.reason: n})
             if self.K_depth is None or (self.K_color is None and msg.detections):
                 return self.drops.update({'NO_CAMERA_INFO': n})
             if not self.depths:
                 return self.drops.update({'NO_DEPTH': n})
-            dt, frame, depth = min(self.depths, key=lambda d: abs(d[0] - t))
+            dt, frame, depth, _ = exact_depth or min(self.depths, key=lambda d: abs(d[0] - t))
             if abs(dt - t) > self.sync_tol:
                 return self.drops.update({'DEPTH_NOT_SYNCED': n})
             try:
@@ -136,18 +196,27 @@ def main(argv=None):
                 return self.drops.update({'STALE_TF': n})
             out = LadderCandidateArray(schema_version=LadderCandidateArray.SCHEMA_VERSION)
             out.header.stamp, out.header.frame_id = msg.header.stamp, self.map_frame
+            all_localized = True
             for det in msg.detections:
-                box = color_box_to_depth((det.bbox_x_min, det.bbox_y_min, det.bbox_x_max, det.bbox_y_max),
-                                         self.K_color, self.K_depth)
                 try:
-                    pos, cov, _rng = localize(box, depth, self.K_depth, T, max_range_m=self.max_range)
+                    color_box = (det.bbox_x_min, det.bbox_y_min, det.bbox_x_max, det.bbox_y_max)
+                    mask = None
+                    if self.oracle_masks:
+                        if not det.is_oracle or det.backend != 'oracle_sim' or labels.shape != (
+                                det.image_height, det.image_width):
+                            raise Rejected('NO_ORACLE_MASK', 'non-oracle detection or inconsistent image')
+                        mask = oracle_depth_mask(labels, color_box, depth.shape, self.K_color, self.K_depth)
+                    box = color_box_to_depth(color_box, self.K_color, self.K_depth)
+                    pos, cov, _rng = localize(box, depth, self.K_depth, T, max_range_m=self.max_range, mask=mask)
                 except Rejected as exc:
                     self.drops.drop(exc.reason)
+                    all_localized = False
                     continue
                 out.candidates.append(self._entry(out.header, OBSERVATION, pos, cov,
                                                   ladder_type_from_label(det.label), det.detection_id,
                                                   det.is_oracle))
-            for cid in visible_candidates(self.candidates, depth, self.K_depth, T):
+            checks = visible_candidates(self.candidates, depth, self.K_depth, T) if all_localized else ()
+            for cid in checks:
                 e = self._entry(out.header, VIEW_CHECK, (0.0, 0.0, 0.0), np.zeros((3, 3)), '', '', False)
                 e.candidate_id = cid
                 out.candidates.append(e)

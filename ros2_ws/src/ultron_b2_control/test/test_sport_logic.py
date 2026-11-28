@@ -16,6 +16,33 @@ def test_api_ids_pinned():
     assert json.loads(move_parameter(0.1, -0.2, 0.3)) == {'x': 0.1, 'y': -0.2, 'z': 0.3}
 
 
+def test_source_monitor_only_suppresses_known_shutdown_race(monkeypatch):
+    from ultron_b2_control import active_source_monitor as monitor
+
+    class Node:
+        def destroy_node(self):
+            pass
+
+    monkeypatch.setattr(monitor.rclpy, 'init', lambda **_: None)
+    monkeypatch.setattr(monitor.rclpy, 'try_shutdown', lambda: None)
+    monkeypatch.setattr(monitor, 'ActiveSourceMonitor', Node)
+    message = 'Unable to convert call argument to Python object (compile in debug mode for details)'
+
+    def fail():
+        raise RuntimeError(message)
+
+    monkeypatch.setattr(monitor.rclpy, 'spin', lambda _: fail())
+    monkeypatch.setattr(monitor.rclpy, 'ok', lambda: False)
+    monitor.main()
+    monkeypatch.setattr(monitor.rclpy, 'ok', lambda: True)
+    with pytest.raises(RuntimeError, match='Unable to convert'):
+        monitor.main()
+    monkeypatch.setattr(monitor.rclpy, 'ok', lambda: False)
+    monkeypatch.setattr(monitor.rclpy, 'spin', lambda _: (_ for _ in ()).throw(RuntimeError('other error')))
+    with pytest.raises(RuntimeError, match='other error'):
+        monitor.main()
+
+
 @pytest.mark.parametrize('kw,ok', [
     (dict(target='mock', env=MOCK_ENV, namespace='/ultron/sim'), True),
     (dict(target='mock', env={'ROS_DOMAIN_ID': '0', 'ROS_LOCALHOST_ONLY': '1'}, namespace='/ultron/sim'), False),

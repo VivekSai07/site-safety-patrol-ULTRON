@@ -10,6 +10,8 @@ MOLA-LO publishes an all-zero twist. Nav2 consumers use ``state/odom`` twist as 
 (RPP rotate-to-heading clamps to ``current + max_angular_accel * dt``), so a zero twist caps in-place
 rotation at 1.0 rad/s^2 * 0.05 s = 0.05 rad/s. When the input twist is all zero, the planar body-frame
 twist is derived from consecutive flattened poses (as the KISS-ICP node does).
+An initial zero-twist pose is held until a second ordered pose is available;
+duplicate or out-of-order poses are dropped rather than published as stillness.
 """
 import math
 
@@ -39,6 +41,8 @@ class OdomPlanarizer:
     def __init__(self, node):
         from geometry_msgs.msg import TransformStamped
         from nav_msgs.msg import Odometry
+        from rclpy.clock import JumpThreshold
+        from rclpy.duration import Duration
         from rclpy.qos import QoSProfile, ReliabilityPolicy
         from tf2_ros import TransformBroadcaster
 
@@ -48,15 +52,35 @@ class OdomPlanarizer:
         self.odom_frame = p('odom_frame', 'odom')
         self.base_frame = p('base_frame', 'base_link')
         self.publish_tf = bool(p('publish_tf', True))
+        self.max_future_s = float(p('max_future_s', 0.5))
+        if not math.isfinite(self.max_future_s) or self.max_future_s < 0:
+            raise ValueError('max_future_s must be finite and nonnegative')
         self.tf_pub = TransformBroadcaster(node)
         qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
         self.pub = node.create_publisher(Odometry, p('odom_out', 'state/odom'), qos)
         node.create_subscription(Odometry, p('odom_in', 'mola/odom_raw'), self._on_odom, qos)
         self.max_dz = self.max_tilt = 0.0
         self.prev = None
+        self.clock_jump = node.get_clock().create_jump_callback(
+            JumpThreshold(min_forward=Duration(seconds=1), min_backward=Duration(nanoseconds=-1),
+                          on_clock_change=True),
+            pre_callback=self._reset_history)
         node.create_timer(10.0, self._report)
 
+    def _reset_history(self):
+        self.prev = None
+
     def _on_odom(self, msg):
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        now = self.node.get_clock().now().nanoseconds * 1e-9
+        if now <= 0 or stamp > now + self.max_future_s:
+            self.node.get_logger().warning('dropping odometry with unavailable clock or future timestamp',
+                                           throttle_duration_sec=5.0)
+            return
+        if self.prev is not None and stamp <= self.prev[0]:
+            self.node.get_logger().warning('dropping non-increasing odometry timestamp',
+                                           throttle_duration_sec=5.0)
+            return
         pose = msg.pose.pose
         q = pose.orientation
         try:
@@ -71,9 +95,11 @@ class OdomPlanarizer:
         pose.position.x, pose.position.y, pose.position.z = x, y, z
         q.x, q.y, q.z, q.w = 0.0, 0.0, qz, qw
         tw = msg.twist.twist
-        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         yaw = 2.0 * math.atan2(qz, qw)
-        if (tw.linear.x, tw.linear.y, tw.angular.z) == (0.0, 0.0, 0.0) and self.prev is not None:
+        if (tw.linear.x, tw.linear.y, tw.angular.z) == (0.0, 0.0, 0.0):
+            if self.prev is None:
+                self.prev = (stamp, (x, y, yaw))
+                return
             tw.linear.x, tw.linear.y, tw.angular.z = planar_twist(self.prev[1], (x, y, yaw), stamp - self.prev[0])
         self.prev = (stamp, (x, y, yaw))
         tw.linear.z = tw.angular.x = tw.angular.y = 0.0

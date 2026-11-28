@@ -63,15 +63,22 @@ def _nodes(context):
         with open(_share('ultron_b2_description', 'config', 'footprint.yaml')) as fh:
             footprint = yaml.safe_load(fh)['sim']
         radius = footprint.get('radius_m')
+        planning_radius = footprint.get('planning_radius_m')
         if footprint.get('type') != 'circle' or not isinstance(radius, (int, float)) \
                 or not math.isfinite(radius) or radius <= 0:
             raise RuntimeError('simulation footprint must have a finite positive circle radius')
-        mission_params['clearance_m'] = max(float(radius), 0.55)
+        if not isinstance(planning_radius, (int, float)) or not math.isfinite(planning_radius) \
+                or planning_radius < radius:
+            raise RuntimeError('simulation planning radius must be finite and at least the footprint radius')
+        mission_params['clearance_m'] = max(float(planning_radius), 0.55)
+        mission_params['frontier_goal_search_m'] = 2.0
     return [
         Node(package='ultron_b2_perception', executable='ladder_detector', name='ladder_detector', output='screen',
              parameters=[perception_cfg, detector_params]),
         Node(package='ultron_b2_perception', executable='ladder_localizer', name='ladder_localizer', output='screen',
-             parameters=[perception_cfg]),
+             parameters=[perception_cfg, {'depth_registered_to_color': run_mode == 'sim',
+                                          'run_mode': run_mode,
+                                          'oracle_depth_masks': run_mode == 'sim' and backend == 'oracle_sim'}]),
         Node(package='ultron_b2_perception', executable='ladder_tracker', name='ladder_tracker', output='screen',
              parameters=[perception_cfg, {'memory_db': memory_db}]),
         Node(package='ultron_b2_mission', executable='mission_manager', name='mission_manager', output='screen',

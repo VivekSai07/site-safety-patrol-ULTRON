@@ -21,6 +21,7 @@ PKG = 'ultron_b2_control'
 def _setup(context):
     c = {k: context.launch_configurations.get(k, '') for k in (
         'namespace', 'push_namespace', 'driver', 'hardware_enable', 'bridge_target', 'teleop_requires_localization',
+        'teleop_requires_fresh_scan',
         'map_meta', 'map_id', 'map_version', 'use_sim_time')}
     share = get_package_share_directory(PKG)
     nav_share = get_package_share_directory('ultron_b2_navigation')
@@ -37,12 +38,15 @@ def _setup(context):
         Node(package=PKG, executable='active_source_monitor', name='active_source_monitor', output='screen',
              parameters=[mux_yaml]),
         Node(package='nav2_collision_monitor', executable='collision_monitor', name='collision_monitor',
-             output='screen', parameters=[f'{nav_share}/config/collision_monitor.yaml']),
+             output='screen', parameters=[f'{nav_share}/config/collision_monitor.yaml',
+                                          *([f'{share}/config/collision_monitor_sim_override.yaml']
+                                            if c['driver'] == 'sim' else [])]),
         Node(package='nav2_lifecycle_manager', executable='lifecycle_manager', name='lifecycle_manager_control',
              output='screen', parameters=[{'autostart': True, 'bond_timeout': 4.0,
                                            'node_names': ['collision_monitor']}]),
         Node(package='ultron_b2_navigation', executable='motion_gate', name='motion_gate', output='screen',
              parameters=[{'teleop_requires_localization': c['teleop_requires_localization'] != 'false',
+                          'teleop_requires_fresh_scan': c['teleop_requires_fresh_scan'] == 'true',
                           'map_meta_path': c['map_meta'], 'map_id': c['map_id'],
                           'map_version': int(c['map_version'] or 0)}]),
     ]
@@ -64,6 +68,7 @@ def generate_launch_description():
         DeclareLaunchArgument('hardware_enable', default_value='false', choices=['true', 'false']),
         DeclareLaunchArgument('bridge_target', default_value='mock', choices=['mock', 'robot']),
         DeclareLaunchArgument('teleop_requires_localization', default_value='true', choices=['true', 'false']),
+        DeclareLaunchArgument('teleop_requires_fresh_scan', default_value='false', choices=['true', 'false']),
         DeclareLaunchArgument('map_meta', default_value=''),
         DeclareLaunchArgument('map_id', default_value=''),
         DeclareLaunchArgument('map_version', default_value='0'),

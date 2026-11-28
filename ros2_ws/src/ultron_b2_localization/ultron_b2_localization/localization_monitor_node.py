@@ -244,13 +244,17 @@ class LocalizationMonitorNode:
             return
         pending = sorted(self.pending_scans, key=lambda m: (m.header.stamp.sec, m.header.stamp.nanosec))
         self.pending_scans = []
-        for m in pending:
-            self.monitor.note_scan(m.header.stamp.sec + m.header.stamp.nanosec * 1e-9)
+        age_limit = min(self.params['scan_age_limit_s'], self.params['pose_age_limit_s'])
+        pending = [m for m in pending
+                   if self.monitor.accepts_scan(m.header.stamp.sec + m.header.stamp.nanosec * 1e-9)
+                   and -self.params['scan_age_limit_s'] <= now - (
+                       m.header.stamp.sec + m.header.stamp.nanosec * 1e-9) <= age_limit]
+        for msg in pending:
+            self.monitor.note_scan(msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9)
         published = False
         for i, msg in enumerate(pending):
             t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-            if self.clock_guard and (now - t > self.params['scan_age_limit_s'] or
-                                     t - now > self.params['scan_age_limit_s']):
+            if not self.monitor.accepts_scan(t):
                 continue
             if now - t < SCORE_DELAY_S:
                 self.pending_scans = pending[i:]

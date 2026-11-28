@@ -18,6 +18,8 @@ def _include(context):
     run_mode = cfg.get('run_mode') or 'sim'
     ns = cfg.get('namespace') or MODES[run_mode]['namespace']
     live = run_mode == 'live'
+    sim_mapping_teleop = (run_mode == 'sim' and cfg.get('mode') == 'mapping'
+                          and cfg.get('sim_teleop_without_localization') == 'true')
     src = PythonLaunchDescriptionSource(
         get_package_share_directory('ultron_b2_control') + '/launch/control.launch.py')
     return [IncludeLaunchDescription(src, launch_arguments={
@@ -25,7 +27,9 @@ def _include(context):
         'driver': 'bridge' if live else 'sim',
         'hardware_enable': 'true' if live and cfg.get('hardware_enable') == 'true' else 'false',
         'bridge_target': 'robot' if live else 'mock',
-        'teleop_requires_localization': cfg.get('teleop_requires_localization', 'true') or 'true',
+        'teleop_requires_localization': ('false' if sim_mapping_teleop else
+                                        cfg.get('teleop_requires_localization', 'true') or 'true'),
+        'teleop_requires_fresh_scan': 'true' if sim_mapping_teleop else 'false',
         'map_meta': saved_map_paths(cfg)[1],
         'use_sim_time': cfg.get('use_sim_time', ''),
     }.items())]

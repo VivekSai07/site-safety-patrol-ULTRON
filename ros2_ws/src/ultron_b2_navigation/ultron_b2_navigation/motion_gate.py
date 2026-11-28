@@ -5,6 +5,7 @@ Input ``control/cmd_vel_safe`` (after twist_mux and collision_monitor), output `
 ``gate_logic.FinalGate``. SIMULATION-validated only; real limits are PROPOSED / TO_VERIFY.
 """
 import json
+import math
 from pathlib import Path
 
 import rclpy
@@ -12,6 +13,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
 from geometry_msgs.msg import Twist
+from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
 
 from ultron_b2_interfaces.msg import LocalizationState as LocalizationStateMsg
@@ -47,6 +49,8 @@ class MotionGateNode(Node):
         self.create_subscription(LocalizationStateMsg, 'state/localization', self._on_loc, reliable)
         self.create_subscription(String, 'control/active_source', self._on_source, reliable)
         self.create_subscription(MapInfo, 'map/info', self._on_map_info, latched)
+        if params['teleop_requires_fresh_scan']:
+            self.create_subscription(LaserScan, 'sensors/scan', self._on_scan, reliable)
         self.cmd_in = Twist()
         self.last_reason = None
         self.create_timer(1.0 / float(self.get_parameter('rate_hz').value), self._tick)
@@ -84,6 +88,12 @@ class MotionGateNode(Node):
 
     def _on_source(self, msg):
         self.gate.set_source(msg.data, self._now())
+
+    def _on_scan(self, msg):
+        valid = (msg.header.frame_id == 'base_footprint' and math.isfinite(msg.range_min)
+                 and math.isfinite(msg.range_max) and 0 <= msg.range_min < msg.range_max
+                 and any(math.isfinite(r) and msg.range_min <= r <= msg.range_max for r in msg.ranges))
+        self.gate.scan_stamp = (msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9) if valid else None
 
     def _on_map_info(self, msg):
         if self.adopt_map_info and (msg.map_id, msg.map_version) != (self.gate.map_id, self.gate.map_version):

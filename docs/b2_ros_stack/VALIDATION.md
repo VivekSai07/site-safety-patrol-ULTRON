@@ -330,7 +330,8 @@ Limitations / TO_VERIFY:
 - Collision polygons, limits, watchdog and the footprint are PROPOSED from the sim circle (r 0.55 m); the real B2 +
   payload footprint is TO_VERIFY.
 - In Humble, collision_monitor skips a source older than `source_timeout` (not fail-closed). Scan freshness is enforced
-  upstream only through localization STALE for autonomy and for teleop with the default flag.
+  upstream through localization STALE for autonomy and for teleop with the default flag. The later opt-in sim mapping
+  override adds its own proposed scan-freshness gate; it is not evidence of full obstacle coverage or hardware safety.
 - A Humble stop zone blocks all motion, including turning away; recovery is clearing the obstacle or a human action.
 - One map and one hall; static scene apart from test obstacles.
 - `nav2_real.yaml` was not run (no real sensors); spin/backup are not loaded for real.
@@ -396,6 +397,320 @@ Findings:
 UNRUN: zenoh-bridge-ros2dds (not installed; configs generated only), Isaac launcher (stub), live
 domain-0 bridge, laptop-side RViz display check (no display), Orin, and the full-system acceptance
 (part 2).
+
+## Sensor bringup and registration guard checkpoint
+
+At local `om/b2-ros-stack` HEAD `6a7a6bf` plus uncommitted registration-guard
+changes, in the existing Humble dev image with a private Docker bridge, domain
+71 and localhost-only DDS, the perception package and mission launch tests
+passed: **28 passed**. This includes a ROS graph check that a localizer with
+the default unregistered-depth setting counts `DEPTH_NOT_REGISTERED` and emits
+no observations. The launch tests check that only the simulated mission
+enables the co-located-camera assumption. This does not test a real registered
+depth stream.
+
+An isolated `sim mode:=mapping odom_source:=sim` sensor probe counted, over
+10 wall seconds: clock 499, lidar 100, scan 99, IMU 500, color images 95,
+depth images 96, color camera-info 96 and simulated odometry 500. These are
+delivery counts, not accuracy or full-mission evidence. The test container
+was explicitly stopped after the probe because the background launch did not
+exit on SIGINT; the wrapper exited 143, so this run does not demonstrate clean
+shutdown. No hardware or robot network was contacted.
+
+With the subsequent uncommitted simulation-only oracle pixel-mask change, the
+perception and mission launch suite passed **30 tests** on rerun; an initial
+run failed on a localizer shutdown traceback. A graph regression verified that
+a one-nanosecond-mismatched depth frame is not used and that a matching frame
+excludes nearer non-ladder pixels. A deterministic 80-pose-attempt rendered
+diagnostic (`ultron_b2_perception/tools/eval_oracle_depth.py`, seed 42) produced
+133 paired estimates and 5 rejections. Compared with simulator ladder centers,
+box-only depth had median/max error 0.313/6.544 m and 39 errors over 0.65 m;
+the oracle-mask path had 0.388/0.708 m and 1 error over 0.65 m. This comparison
+includes only cases accepted by both paths, uses privileged labels and ground
+truth, and measures surface-to-center offset, not physical accuracy. It does
+not prove that identity proliferation, navigation or the full mission is fixed.
+
+The localizer also suppresses absence checks if any detection in that frame
+cannot be localized; a ROS graph regression reproduced the prior false
+`VIEW_CHECK` and passed after the change. The focused perception and registration
+tests passed 26/26, including refusal of oracle masks outside simulation and rejection
+of a nonfinite camera matrix after an earlier valid one.
+
+An explicit `sim_teleop_without_localization:=true` option was added for
+simulation mapping only; it leaves the default unchanged and does not apply to
+live or mission mode. On an isolated domain-71 graph, an enabled simulated
+heartbeat and teleop command moved the kinematic odometry by over 0.06 m, loss
+of the heartbeat inhibited the gate with zero output, and a 2D map and pose
+graph were saved to a temporary directory. The scope/graph suite passed 4/4.
+This tests neither physical motion nor mapping completeness. These checks ran
+while a separate full-mission diagnostic and another dev container were active;
+resource contention is a confounder for that mission run.
+
+On the later uncommitted revision, the focused gate, perception and mission-launch
+suite passed **50 tests**. The rebuilt bringup package's registered simulation
+mapping test passed **5 cases**, including a simulated lidar blackout causing
+`SCAN_MISSING_OR_STALE` with zero gated velocity, recovery when scans resumed,
+and zero output on operator-heartbeat loss. An earlier run failed because the
+new scan guard incorrectly expected `base_link`; the actual scan is in
+`base_footprint`, and the rerun used the corrected frame. The scan guard checks
+freshness and at least one valid return, not sensor coverage, free space or
+real-world safety.
+
+The final combined localization, control, gate, perception and bringup
+regressions passed **88 tests**. An earlier combined run failed on an
+`active_source_monitor` rclpy conversion exception during shutdown; the
+monitor now suppresses that specific exception only when the ROS context is
+already shut down, with a regression ensuring live-context and unrelated errors
+still propagate. This does not resolve every shutdown traceback seen in the
+full mission diagnostic.
+
+The subsequent full mission diagnostic (`runs/oracle_mask_e2e_20261128/`,
+private domain 71) **failed**, not an acceptance pass. It reached a moving
+inspection goal; the injected HOLD produced 54 zero-output samples. It captured
+13 simulated views and handed off six simulated assessments for human review,
+but after localization degraded and became LOST it entered `AWAIT_OPERATOR`
+at 599.7 simulated seconds instead of returning a mission result. The last
+bridge status reported 16,082 rejected simulated collision attempts; the
+registry contained 12 candidate assets in the seven-ladder hall scenario.
+These are not physical collisions or physical inspection results. The localizer
+process in this diagnostic started before the later absence-check and invalid
+calibration fixes, and concurrent development containers add a resource-contention
+confounder. Shutdown tracebacks were also observed. Do not extrapolate this
+diagnostic to the final code or treat HOLD behavior alone as M6 acceptance.
+The localization log also showed buffered scan timestamps preceding a STALE
+transition being processed during revalidation. A later uncommitted monitor
+change rejects such scans until post-STALE data arrives; its focused localization
+and replay-clock tests passed (11 unit tests plus one isolated ROS clock test).
+This change was not in the diagnostic above and has not been shown to fix the
+mission's localization loss or collision attempts.
+
+The monitor now also drops scans outside the configured scan/pose freshness
+limits before they can refresh receipt time or be scored, in sim, replay and
+live modes. This prevents a backlog or far-future timestamp from briefly
+revalidating stale localization; it does not relax the existing limits. Focused
+monitor and replay-clock tests passed (14 cases, including the isolated ROS
+clock graph).
+
+The next diagnostic (`runs/final_e2e_20261128/`, private domain 71) also
+**failed**: it entered `AWAIT_OPERATOR` at 783.6 simulated seconds after
+localization degraded and became LOST. The HOLD observation contained 54
+zero-output samples. The last bridge status reported 1,404 rejected
+simulated collision attempts. Evaluation-only ground-truth samples placed
+all recorded collision increments at approximately (5.559, 8.550) m,
+facing 2.252 rad; a separate geometry check identified the blocking
+simulated footprint as `ladder_04`. The current localization node acquired
+additional duplicate/out-of-order scan safeguards after this diagnostic
+started, so this is not a test of the final code.
+
+A targeted sim-only teleop graph reproduced this episode: after placing the
+kinematic base 0.25 m before that pose and sending 0.1 m/s, the original
+configuration reported 140 rejected simulated collision attempts. A scan
+projection at the contact pose showed no points inside the rectangular stop
+zone and three within 0.75 m in the existing 0.45–1.00 m height band. This
+does not establish why every obstacle case fails, nor does it validate a
+physical lidar. The simulated driver's conservative ladder footprint and its
+visible geometry are not identical.
+
+The common collision-monitor configuration is unchanged for non-simulation
+drivers. For `driver:=sim` only, an override sets the proposed circular
+approach radius to 0.85 m instead of 0.60 m. In the targeted replay of that
+pose, the gated command first moved and then slowed, with no reported rejected
+collision attempts through the sampled motion interval. This is a conservative
+simulation-specific mitigation of one pose, not proof of obstacle coverage,
+walking stability, real B2 clearance or full-mission acceptance. The combined
+localization, control, navigation, perception, snapshot and bringup tests
+passed **106 cases**; a separate isolated replay-clock graph passed.
+
+With the sim-only 0.85 m margin and the newer scan ordering guard, a further
+full mission run (`runs/margin_e2e_20261128/`, private domain 71,
+`odom_source:=sim`) also **failed**: localization became LOST and the mission
+entered `AWAIT_OPERATOR` at 94.0 simulated seconds. The last bridge status
+reported zero collision attempts through 94.06 seconds, and the HOLD window
+had 54 zero-output samples. The test stopped far earlier than the previous
+collision episode and did not complete exploration or return to base; zero
+collision attempts here is not acceptance evidence. The run repeatedly
+observed scan/pose freshness failures and a scan/map score below 0.70.
+
+A repeat using the same saved map with its MOLA odometry source
+(`runs/mola_margin_e2e_20261128/`, private domain 71) also **failed**, before a
+moving inspection goal or HOLD injection. At the final bridge status, simulation
+time was 159.06 s, simulated odometry distance was zero and collision attempts
+were zero. The mission entered `AWAIT_OPERATOR` after repeated scan/TF
+freshness failures. Nav2 logged transform extrapolation errors followed by
+backend goal success at a pose away from the goal; the navigation contract
+must independently verify localized pose, and the affected first goal was
+cancelled during a localization inhibit. MOLA reported worker-busy scan drops.
+This run does not establish that the map/odometry pairing is the root cause or
+that either odometry choice meets mission acceptance.
+
+With the final freshness guard, `runs/fresh_final_e2e_20261128/`
+(`odom_source:=sim`) also **failed**: the mission entered `AWAIT_OPERATOR` at
+189.5 simulated seconds after a scan/map score of 0.69, followed by DEGRADED
+and LOST states. Its last bridge status reported 4.781 m simulated odometry
+and zero collision attempts, but the run ended before the previously observed
+ladder-edge collision. The injected moving HOLD had 54 zero-output samples;
+the events recorded four simulated capture results and two assessment
+requests. These are partial simulation observations, not mission acceptance,
+real perception or inspection results.
+
+For a low-score scan from `runs/loc_probe_e2e_20261128/`, the saved pose
+scored 0.670 against the map; an **offline evaluation-only** grid search found
+a nearby pose (approximately +0.10 m x, +0.10 m y, -0.10 rad) with score 1.0.
+This indicates alignment sensitivity for that scan, not a proven correct pose
+or an automatic recovery method. No ground truth or searched pose was fed to
+localization or control. The older MOLA evaluation map was built with a
+different 2D scan projection from the integrated bringup.
+
+A new SLAM Toolbox map was built using the actual bringup scan pipeline and
+simulated odometry (`runs/bringup_map_probe_20261128/`). Its scripted survey
+was **simulation-only**, bypassed the normal gated teleop command chain, and
+reported zero rejected collision attempts; it is not a safety validation.
+The map uses sensor/odometry estimates, not ground truth. With that map,
+`runs/matched_map_e2e_20261128/` still entered `AWAIT_OPERATOR` at 96.6 sim s
+after repeated stale scans and low scan/map score; its final status reported
+2.756 m odometry, zero collision attempts and 54 zero-output HOLD samples.
+Denser experimental SLAM scan matching (0.05 m, 0.05 rad, 0.1 s) was verified
+on the running sim node but also failed at 104.2 sim s
+(`runs/dense_slam_e2e_20261128/`). That experimental setting was removed.
+Neither run reached the former ladder-edge collision, so the zero counts do not
+establish full-route obstacle safety. The matching map and denser matching do
+not, on their own, resolve mission localization.
+
+With the same-pipeline map, MOLA odometry and a slower simulation rate of 0.5,
+`runs/slow_mola_e2e_20261128/` remained active longer, but was interrupted at
+873.08 simulated seconds with no mission result. Its last status showed zero
+rejected collision attempts and 9.907 m simulated odometry; the distance had
+not increased between sampled statuses at 379 and 839 simulated seconds near
+the previous ladder-edge region. Multiple inspection goals timed out or
+failed. The moving HOLD contained 36 zero-output samples. This is an interrupted
+diagnostic, not acceptance. It ran before the later planning-clearance change.
+Nav2 and mission planning now use a proposed **simulation-only** 0.90 m
+clearance, exceeding the simulated collision-monitor approach radius of 0.85 m,
+to reduce planning into the monitor's stopping envelope. The physical simulated
+footprint remains 0.55 m; the real profile is unchanged. This may reject more
+views and routes and does not prove general collision avoidance.
+
+With the 0.90 m simulated planning clearance, the shorter
+`runs/clearance_e2e_20261128/` diagnostic reached its deliberately limited
+wall-time observation deadline at 373.06 simulated seconds without a mission
+result. It reported 19.185 m simulated odometry, zero collision attempts,
+12 simulated capture results, six assessment requests and 36 zero-output HOLD
+samples. No exploration goal was sent. An offline check of this map found two
+reachable frontiers with 0.55 m clearance, but none within the original 1.5 m
+goal-search radius with 0.90 m clearance; increasing the search radius to
+2.0 m found one. The sim mission now uses that proposed wider frontier search,
+without reducing clearance or treating unobserved space as covered. Frontier
+goals are also explicitly restricted to the patrol-zone mask, including its
+keep-outs. These bounded findings are not full mission acceptance or physical
+inspection evidence.
+
+The subsequent `runs/fair_frontier_e2e_20261128/` full-acceptance attempt
+with the wider search and MOLA at 0.6x failed: it reached `AWAIT_OPERATOR`
+at 284.0 simulated seconds when navigation did not acknowledge a stop.
+Repeated localization degradations and controller map-to-odom TF errors
+preceded this. Its last bridge status at 285.06 simulated seconds reported
+5.972 m simulated odometry and zero rejected collision attempts; four
+simulated captures and two assessment requests occurred. It sent no
+exploration goal and did not return to base. The asserted HOLD had 40
+zero-output samples. The frontier change therefore has not passed the full
+mission gate, and the zero collision count is only evidence for this partial run.
+
+The `runs/fair_frontier_slow_e2e_20261128/` attempt used 0.5x simulation.
+After three simulated assessment handoffs it sent a frontier goal and
+reported that goal reached and settled. It then entered `AWAIT_OPERATOR`
+at 195.7 simulated seconds: after localization briefly degraded, the
+cancelled navigation goal did not obtain a stillness acknowledgment.
+There was no mission result or return-to-base goal. The last bridge status
+reported 11.027 m simulated odometry and zero rejected collision attempts;
+36 observed HOLD output samples were zero. There were no recorded persistent
+`Transform data too old` messages in this run. This confirms a frontier
+goal in one run, not full acceptance, stable localization, or hardware safety.
+
+Another 0.5x attempt, `runs/stop_diag_e2e_20261128/`, reached
+`AWAIT_OPERATOR` at 469.6 simulated seconds after a cancellation without a
+stillness acknowledgment. It recorded 12 simulated captures, six assessment
+requests, two failed frontier goals and no return to base. Last bridge status
+reported 24.437 m simulated odometry and zero rejected collision attempts.
+Around the final stop the recorded gated output was zero, while finite-difference
+MOLA odometry fluctuated around the stillness limits. The independent recorder
+saw one sample within both limits between the cancel event and the
+`AWAIT_OPERATOR` event and three in the following second; it does not establish
+which samples the navigation server observed before its timeout. This does not
+establish physical stopping.
+
+The navigation stop acknowledgment now requires an odometry sample both
+received and sensor-stamped after the stillness wait begins, in addition to
+the existing freshness and speed checks. This closes a pre-wait-sample race;
+neither the stop timeout nor the stillness limits were relaxed. The 59 focused
+navigation, control-chain and mock-mission tests passed after this change.
+
+The MOLA planarizer now waits for an ordered pose pair before publishing a
+zero-input-twist estimate, rejects duplicate/out-of-order and excessively
+future-stamped poses, and clears its differentiation history on clock
+discontinuities. This avoids turning a non-increasing timestamp into a
+fabricated zero speed; its proposed 0.5 s future allowance is not a hardware
+calibration. A ROS replay-clock graph confirmed backward and large forward
+jumps clear the history, and focused odometry/navigation tests passed. These
+checks do not prove the derived velocity is accurate enough to confirm real
+stopping or establish full mission acceptance.
+
+The subsequent `runs/ordered_odom_e2e_20261128/` attempt exercised the
+stricter acknowledgment and ordered MOLA odometry. It reached
+`AWAIT_OPERATOR` at 523.9 simulated seconds when a cancelled view goal did
+not obtain stop acknowledgment. The navigation server recorded 37 fresh
+post-wait odometry checks and a last speed of 0.0222 m/s, above the 0.02 m/s
+limit; this is not evidence of physical movement or a reason to raise the
+limit. The run had eight simulated capture results, four assessment requests,
+one frontier goal that did not settle, no return, and no mission result.
+The last bridge status reported 30.748 m simulated odometry and zero
+rejected collision attempts. Full mission acceptance remains failed.
+
+The `runs/kiss_mission_e2e_20261128/` comparison used the existing KISS-ICP
+odometry option and the same map at 0.5x. It entered `AWAIT_OPERATOR` at
+38.0 simulated seconds when a view goal lacked stop acknowledgment; the server
+logged 36 fresh post-wait odometry checks and last speed 0.0464 m/s. The last
+bridge status at 39.04 simulated seconds reported 1.097 m simulated odometry
+and zero rejected collision attempts. There was no capture or completed mission.
+This result does not establish a general comparison of the two estimators.
+
+After that comparison, KISS-ICP was also changed to reject non-increasing
+and excessively future-stamped clouds and to wait for an ordered pose pair
+before publishing derived twist. On a backward or large forward ROS-clock
+jump after it has started, the stateful KISS estimator stops publishing and
+requires a node restart; it must not silently reuse the old ICP map. Focused
+tests and a replay-clock graph cover these behaviors. The KISS mission
+comparison above predates these changes.
+
+With the ordered KISS changes, `runs/kiss_ordered_e2e_20261128/` likewise
+entered `AWAIT_OPERATOR` at 76.1 simulated seconds after a stop was not
+acknowledged. The last bridge status reported 3.427 m simulated odometry
+and zero rejected collision attempts; no capture or completed mission was
+recorded. The server reported 31 fresh post-wait odometry checks and a last
+speed of 0.1995 m/s. This partial run is not an acceptance pass.
+
+The simulated Nav2 yaw-goal tolerance was subsequently tightened from 0.25
+to 0.18 rad, so it is no looser than the mission's 0.20 rad requirement.
+The XY tolerance already met that relation. The real Nav2 profile is
+unchanged. This addresses a configuration mismatch, but does not establish
+why prior goals failed to settle or solve the stop-acknowledgment failures.
+The combined launch, odometry and stop regression tests passed; the full
+mission has not been rerun with the yaw change.
+
+Separately, the isolated replay-clock graph passed. The registered
+mapping-teleop graph also passed, while the registered mission launch graph
+initially failed on a shutdown-only rclpy conversion traceback in
+`cloud_to_scan`. The known conversion exception is now suppressed only after
+ROS shutdown, as already done for `cloud_filter`; both live-context and
+unrelated errors still propagate. The focused regression and registered mission
+launch graph passed on rerun. The workspace-wide `colcon test-result` also
+reported older external vendor-package lint results; those were not changed.
+
+`sim_snapshot` now saves one color PNG and a SHA-256/provenance sidecar from
+the fixed simulation topic without sending velocity. Its output does not
+authenticate the publisher or assert settling, label readability, inspection
+completeness or a checklist verdict. The mapping graph produced a nonuniform
+simulated PNG and the standalone utility tests passed. No generated capture
+is hardware evidence.
 
 ## M6 — Full-system simulation acceptance
 _Not assembled. Reviewer decision: pending (human)._
@@ -577,3 +892,17 @@ _Not assembled. Reviewer decision: pending (human)._
   considering M6. Simulation uses kinematic motion and ORACLE detections; neither establishes
   physical walking, real perception, or hardware readiness. Real motion remains NO-GO without
   the independently verified safety prerequisites and explicit authorization.
+
+### Yaw-aligned full mission retry
+
+FAIL — `test_full_sim_mission_hall`, MOLA, requested/achieved 0.5x simulation,
+workspace based on `6a7a6bf` with the uncommitted changes recorded in this section.
+After a HOLD intervention with 36 sampled zero outputs, four simulated captures
+and two assessment requests, it entered `AWAIT_OPERATOR` without a mission
+result. Localization briefly degraded and recovered; navigation did not acknowledge
+a stop. The stop check recorded 37 fresh odometry checks and last speed
+0.02985 m/s against the 0.02 m/s limit. The final bridge status recorded
+7.264 m simulated odometry and zero simulated collision stops. Four earlier
+view results reported `NOT_SETTLED`. Artifacts are local and unshared under
+`ros2_ws/runs/yaw_aligned_e2e_20261128/`. This is not mission acceptance or
+evidence of physical robot behavior.

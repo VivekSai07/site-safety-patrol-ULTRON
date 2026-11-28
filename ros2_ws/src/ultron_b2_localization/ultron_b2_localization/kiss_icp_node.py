@@ -7,7 +7,9 @@ odom origin is base_link at the first scan. With ``planar`` (default) the publis
 x, y, yaw only (z = roll = pitch = 0) for the 2D stack; the 3D estimate is kept internally.
 
 Frames are processed latest-only in a worker thread; skipped frames are counted and logged.
+After a clock discontinuity the stateful estimator must be restarted before publishing again.
 """
+import math
 import threading
 import time
 
@@ -72,6 +74,8 @@ class KissOdometryNode:
     def __init__(self, node):
         from geometry_msgs.msg import TransformStamped
         from nav_msgs.msg import Odometry
+        from rclpy.clock import JumpThreshold
+        from rclpy.duration import Duration
         from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
         from sensor_msgs.msg import PointCloud2
         from tf2_ros import Buffer, TransformBroadcaster, TransformListener
@@ -84,6 +88,9 @@ class KissOdometryNode:
         self.planar = p('planar', True)
         self.min_range = p('min_range', 1.0)
         self.max_range = p('max_range', 30.0)
+        self.max_future_s = float(p('max_future_s', 0.5))
+        if not math.isfinite(self.max_future_s) or self.max_future_s < 0:
+            raise ValueError('max_future_s must be finite and nonnegative')
         self.kiss = make_kiss(p('voxel_size', 0.3), p('max_points_per_voxel', 20), p('deskew', True),
                               p('initial_threshold', 2.0), p('min_motion_th', 0.1))
         self.Odometry, self.TransformStamped = Odometry, TransformStamped
@@ -100,6 +107,12 @@ class KissOdometryNode:
         self.received = self.processed = self.skipped = 0
         self.proc_times = []
         self.prev = None          # (stamp_s, 4x4 published pose)
+        self.state_lock = threading.Lock()
+        self.clock_invalidated = False
+        self.clock_jump = node.get_clock().create_jump_callback(
+            JumpThreshold(min_forward=Duration(seconds=1), min_backward=Duration(nanoseconds=-1),
+                          on_clock_change=True),
+            pre_callback=self._invalidate_clock)
         self.running = True
         self.worker = threading.Thread(target=self._work, daemon=True)
         self.worker.start()
@@ -132,12 +145,26 @@ class KissOdometryNode:
             if msg is None:
                 continue
             try:
-                self._process(msg)
+                with self.state_lock:
+                    if self.clock_invalidated:
+                        raise ValueError('clock jumped; restart KISS-ICP odometry')
+                    self._process(msg)
             except Exception as exc:  # keep running; a TF not yet available is expected at start
                 self.node.get_logger().warn(f'KISS-ICP frame skipped: {exc}', throttle_duration_sec=5.0)
 
+    def _invalidate_clock(self):
+        with self.state_lock:
+            if self.prev is not None:
+                self.clock_invalidated = True
+
     def _process(self, msg):
         start = time.perf_counter()
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        now = self.node.get_clock().now().nanoseconds * 1e-9
+        if now <= 0 or stamp > now + self.max_future_s:
+            raise ValueError('clock unavailable or cloud timestamp in the future')
+        if self.prev is not None and stamp <= self.prev[0]:
+            raise ValueError('non-increasing cloud timestamp')
         to_base = self._sensor_pose(msg.header.frame_id)
         xyz, times = cloud_to_arrays(msg)
         xyz, times = range_filter(xyz, times, self.min_range, self.max_range)
@@ -146,7 +173,9 @@ class KissOdometryNode:
         pts = xyz @ to_base[:3, :3].T + to_base[:3, 3]
         self.kiss.register_frame(pts, normalize_times(times))
         pose = flatten_pose(self.kiss.last_pose) if self.planar else self.kiss.last_pose.copy()
-        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        if self.prev is None:
+            self.prev = (stamp, pose)
+            return
         self._publish(msg.header.stamp, stamp, pose)
         self.processed += 1
         self.proc_times.append(time.perf_counter() - start)

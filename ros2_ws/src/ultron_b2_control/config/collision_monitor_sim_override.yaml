@@ -1,0 +1,5 @@
+# Simulation-only proposed margin for scan-visible ladder geometry near the simulated footprint.
+# Not a validated B2/payload footprint or a real-world obstacle-detection setting.
+/**/collision_monitor:
+  ros__parameters:
+    FootprintApproach.radius: 0.85

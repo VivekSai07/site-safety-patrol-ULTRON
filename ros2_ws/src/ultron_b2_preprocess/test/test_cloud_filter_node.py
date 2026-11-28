@@ -19,6 +19,31 @@ from ultron_b2_preprocess.cloud_filter import CloudFilter
 STAMP = 1795823322.5
 
 
+@pytest.mark.parametrize('module_name,node_name', [('cloud_filter', 'CloudFilter'), ('cloud_to_scan', 'CloudToScan')])
+def test_shutdown_suppresses_only_known_conversion_race(monkeypatch, module_name, node_name):
+    import importlib
+    module = importlib.import_module(f'ultron_b2_preprocess.{module_name}')
+
+    class Node:
+        def destroy_node(self):
+            pass
+
+    monkeypatch.setattr(module, node_name, Node)
+    monkeypatch.setattr(rclpy, 'init', lambda **_: None)
+    monkeypatch.setattr(rclpy, 'try_shutdown', lambda: None)
+    message = 'Unable to convert call argument to Python object (compile in debug mode for details)'
+    monkeypatch.setattr(rclpy, 'spin', lambda _: (_ for _ in ()).throw(RuntimeError(message)))
+    monkeypatch.setattr(rclpy, 'ok', lambda: False)
+    module.main()
+    monkeypatch.setattr(rclpy, 'ok', lambda: True)
+    with pytest.raises(RuntimeError, match='Unable to convert'):
+        module.main()
+    monkeypatch.setattr(rclpy, 'ok', lambda: False)
+    monkeypatch.setattr(rclpy, 'spin', lambda _: (_ for _ in ()).throw(RuntimeError('other error')))
+    with pytest.raises(RuntimeError, match='other error'):
+        module.main()
+
+
 def bag_cloud(xyz, frame='lidar_link', dt=0.1):
     """PointCloud2 in the recorded rslidar_sdk layout (x,y,z,intensity f32, ring u16, timestamp f64)."""
     dtype = np.dtype({'names': ['x', 'y', 'z', 'intensity', 'ring', 'timestamp'],

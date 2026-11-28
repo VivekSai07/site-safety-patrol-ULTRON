@@ -26,7 +26,7 @@ SUB_ARGS = ('run_mode', 'mode', 'odom_source', 'viz', 'record', 'bag', 'hardware
 
 def declare_arguments(run_mode):
     spec = MODES[run_mode]
-    return [
+    args = [
         DeclareLaunchArgument('mode', default_value='mapping', choices=list(STACK_MODES),
                               description='Stack mode'),
         DeclareLaunchArgument('odom_source', default_value=spec['default_odom_source'], choices=list(ODOM_SOURCES),
@@ -49,6 +49,11 @@ def declare_arguments(run_mode):
         DeclareLaunchArgument('tf_check', default_value='true', choices=['true', 'false'],
                               description='Run tf_authority_check; a violation shuts the launch down'),
     ]
+    if run_mode == 'sim':
+        args.append(DeclareLaunchArgument('sim_teleop_without_localization', default_value='false',
+                                          choices=['true', 'false'],
+                                          description='SIM mapping only: allow gated teleop without a saved map'))
+    return args
 
 
 def _include(name, run_mode):

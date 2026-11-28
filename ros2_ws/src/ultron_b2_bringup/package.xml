@@ -43,6 +43,9 @@
   <test_depend>launch_testing_ros</test_depend>
   <test_depend>python3-pytest</test_depend>
   <test_depend>geometry_msgs</test_depend>
+  <test_depend>sensor_msgs</test_depend>
+  <test_depend>python3-pil</test_depend>
+  <test_depend>ultron_b2_tools</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

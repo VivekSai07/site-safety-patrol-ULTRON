@@ -77,6 +77,26 @@ def test_blackout_goes_stale_then_recovers(matcher):
     assert m.state == 'VALID'
 
 
+def test_stale_recovery_ignores_buffered_pre_stale_scans(matcher):
+    m = LocalizationMonitor(DEFAULT_PARAMS, 'm', 1)
+    pose = (0.0, 0.0, 0.0)
+    _drive(m, matcher, 0.0, 10, lambda _: pose)
+    m.tick(1.5)
+    assert m.state == 'STALE'
+    for i in range(DEFAULT_PARAMS['recover_consecutive'] + 1):
+        m.update_scan(1.0 + i * 0.04, pose, _scan_from(pose), matcher)
+    assert m.state == 'STALE' and m.good_run == 0
+    m.update_scan(1.6, pose, _scan_from(pose), matcher)
+    m.update_scan(1.4, pose, _scan_from(pose), matcher)
+    m.update_scan(1.55, pose, _scan_from(pose), matcher)
+    m.update_scan(1.6, pose, _scan_from(pose), matcher)
+    assert m.good_run == 1
+    _drive(m, matcher, 1.7, DEFAULT_PARAMS['recover_consecutive'] - 2, lambda _: pose)
+    assert m.state == 'DEGRADED'
+    _drive(m, matcher, 2.5, 1, lambda _: pose)
+    assert m.state == 'VALID'
+
+
 def test_missing_transform_degrades_then_stale(matcher):
     m = LocalizationMonitor(DEFAULT_PARAMS, 'm', 1)
     t = _drive(m, matcher, 0.0, 10, lambda t: (0.0, 0.0, 0.0))

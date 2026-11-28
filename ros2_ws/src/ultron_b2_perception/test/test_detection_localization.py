@@ -9,9 +9,10 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ultron_b2_perception import backends  # noqa: E402
-from ultron_b2_perception.geometry import BODY_FROM_OPTICAL, planar  # noqa: E402
+from ultron_b2_perception.geometry import BODY_FROM_OPTICAL, intrinsics, planar  # noqa: E402
 from ultron_b2_perception.ladder_detector import FramePairs, frame_stamp_ns, oracle_segmentation_ids  # noqa: E402
-from ultron_b2_perception.localizer_core import Rejected, localize, visible_candidates  # noqa: E402
+from ultron_b2_perception.localizer_core import (Rejected, color_box_to_depth, localize, oracle_depth_mask,  # noqa: E402
+                                                  require_registered_depth, visible_candidates)
 from ultron_b2_perception.oracle import ORACLE_LABEL_PREFIX, project_ladders, segmentation_boxes  # noqa: E402
 
 K = np.array([[643.6, 0.0, 643.5], [0.0, 642.9, 362.0], [0.0, 0.0, 1.0]])
@@ -97,6 +98,39 @@ def test_localize_box_centre_to_map_point():
     assert cov.shape == (3, 3) and np.all(np.linalg.eigvalsh(cov) > 0)
     with pytest.raises(Rejected):
         localize((600, 300, 690, 420), np.full((H, W), np.nan, dtype=np.float32), K, T_map_opt)
+
+
+def test_unregistered_depth_is_rejected():
+    with pytest.raises(Rejected) as exc:
+        require_registered_depth(False)
+    assert exc.value.reason == 'DEPTH_NOT_REGISTERED'
+    require_registered_depth(True)
+
+
+@pytest.mark.parametrize('bad', [float('nan'), float('inf')])
+def test_nonfinite_camera_intrinsics_are_rejected(bad):
+    matrix = K.copy()
+    matrix[0, 2] = bad
+    with pytest.raises(ValueError):
+        intrinsics(matrix)
+
+
+def test_oracle_mask_excludes_foreground_and_background_in_box():
+    k_color = np.array([[100.0, 0, 49.5], [0, 100.0, 49.5], [0, 0, 1]])
+    k_depth = np.array([[50.0, 0, 24.5], [0, 50.0, 24.5], [0, 0, 1]])
+    labels = np.zeros((100, 100), dtype=np.uint16)
+    labels[20:80, 20:80] = 3
+    labels[30:70, 30:70] = 0
+    box = (20.0, 20.0, 80.0, 80.0)
+    mask = oracle_depth_mask(labels, box, (50, 50), k_color, k_depth)
+    depth = np.full((50, 50), 6.0, dtype=np.float32)
+    depth[mask] = 4.0
+    depth[20:30, 20:30] = 2.0
+    dbox = color_box_to_depth(box, k_color, k_depth)
+    pos, _, _ = localize(dbox, depth, k_depth, np.eye(4), mask=mask)
+    assert pos[2] == pytest.approx(4.0)
+    with pytest.raises(Rejected, match='NO_ORACLE_MASK'):
+        oracle_depth_mask(labels, (19.0, 20.0, 80.0, 80.0), depth.shape, k_color, k_depth)
 
 
 def test_visible_candidates_excludes_occluded_and_out_of_view():

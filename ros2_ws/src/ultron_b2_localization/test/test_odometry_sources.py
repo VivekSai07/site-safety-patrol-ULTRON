@@ -7,8 +7,8 @@ import pytest
 
 from ultron_b2_localization.b2_odom_adapter import SportModeRejected, sportmode_to_odometry
 from ultron_b2_localization.geometry import flatten_pose, matrix_to_quat, quat_to_matrix, twist_from_delta, yaw_of
-from ultron_b2_localization.kiss_icp_node import cloud_to_arrays, normalize_times, range_filter
-from ultron_b2_localization.odom_planarizer import planar_twist, planarize
+from ultron_b2_localization.kiss_icp_node import KissOdometryNode, cloud_to_arrays, normalize_times, range_filter
+from ultron_b2_localization.odom_planarizer import OdomPlanarizer, planar_twist, planarize
 
 
 def _sport(yaw=0.5, pitch=0.0, pos=(1.0, 2.0, 0.3), vel=(0.4, 0.0, 0.0), stamp=(0, 0), quat=None):
@@ -133,3 +133,91 @@ def test_planar_twist_is_body_frame_and_wraps_yaw():
     _, _, wz = planar_twist((0.0, 0.0, math.pi - 0.05), (0.0, 0.0, -math.pi + 0.05), 0.1)
     assert wz == pytest.approx(1.0)
     assert planar_twist((0, 0, 0), (1, 0, 0), 0.0) == (0.0, 0.0, 0.0)
+
+
+def test_planarizer_requires_ordered_pose_pair_for_derived_twist():
+    from nav_msgs.msg import Odometry
+
+    published = []
+    impl = OdomPlanarizer.__new__(OdomPlanarizer)
+    clock = [100.0]
+    impl.node = SimpleNamespace(get_logger=lambda: SimpleNamespace(warning=lambda *a, **k: None),
+                                get_clock=lambda: SimpleNamespace(
+                                    now=lambda: SimpleNamespace(nanoseconds=int(clock[0] * 1e9))))
+    impl.odom_frame, impl.base_frame = 'odom', 'base_link'
+    impl.max_future_s = 0.5
+    impl.max_dz = impl.max_tilt = 0.0
+    impl.prev = None
+    impl.publish_tf = False
+    impl.pub = SimpleNamespace(publish=published.append)
+
+    def pose(stamp, x):
+        msg = Odometry()
+        msg.header.stamp.sec = stamp
+        msg.pose.pose.position.x = x
+        msg.pose.pose.orientation.w = 1.0
+        return msg
+
+    impl._on_odom(pose(10, 0.0))
+    assert not published
+    impl._on_odom(pose(11, 1.0))
+    assert len(published) == 1
+    assert published[-1].twist.twist.linear.x == pytest.approx(1.0)
+    impl._on_odom(pose(11, 1.0))
+    impl._on_odom(pose(10, 0.0))
+    assert len(published) == 1
+    impl._on_odom(pose(12, 2.0))
+    assert published[-1].twist.twist.linear.x == pytest.approx(1.0)
+    impl._reset_history()
+    clock[0] = 1.0
+    impl._on_odom(pose(12, 2.0))
+    assert impl.prev is None
+    impl._on_odom(pose(1, 3.0))
+    assert len(published) == 2
+    clock[0] = 2.0
+    impl._on_odom(pose(2, 4.0))
+    assert published[-1].twist.twist.linear.x == pytest.approx(1.0)
+
+
+def test_kiss_skips_unordered_clouds_and_waits_for_pose_pair():
+    published, registered = [], []
+    impl = KissOdometryNode.__new__(KissOdometryNode)
+    impl.node = SimpleNamespace(get_clock=lambda: SimpleNamespace(
+        now=lambda: SimpleNamespace(nanoseconds=100_000_000_000)))
+    impl.prev = None
+    impl.planar = True
+    impl.min_range, impl.max_range = 0.1, 30.0
+    impl.max_future_s = 0.5
+    impl._sensor_pose = lambda frame: np.eye(4)
+    impl.kiss = SimpleNamespace(last_pose=np.eye(4),
+                                register_frame=lambda pts, times: registered.append(len(pts)))
+    impl._publish = lambda stamp_msg, stamp, pose: (published.append(stamp), setattr(impl, 'prev', (stamp, pose)))
+    impl.processed, impl.proc_times = 0, []
+
+    def cloud(stamp):
+        msg = _cloud(np.tile([[2.0, 0.0, 0.0]], (100, 1)), np.arange(100))
+        msg.header.stamp.sec = stamp
+        return msg
+
+    impl._process(cloud(10))
+    assert registered == [100] and not published
+    with pytest.raises(ValueError, match='non-increasing'):
+        impl._process(cloud(10))
+    with pytest.raises(ValueError, match='non-increasing'):
+        impl._process(cloud(9))
+    assert registered == [100]
+    impl._process(cloud(11))
+    assert published == [11.0] and registered == [100, 100]
+
+
+def test_kiss_clock_jump_invalidates_estimator_after_first_pose():
+    import threading
+
+    impl = KissOdometryNode.__new__(KissOdometryNode)
+    impl.state_lock = threading.Lock()
+    impl.clock_invalidated, impl.prev = False, None
+    impl._invalidate_clock()
+    assert not impl.clock_invalidated
+    impl.prev = (10.0, np.eye(4))
+    impl._invalidate_clock()
+    assert impl.clock_invalidated

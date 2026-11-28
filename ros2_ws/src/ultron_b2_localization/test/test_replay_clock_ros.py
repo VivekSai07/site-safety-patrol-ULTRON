@@ -60,8 +60,8 @@ def test_stopped_and_jumping_clock_never_keeps_valid_state():
         impl.monitor = LocalizationMonitor(DEFAULT_PARAMS, 'fixture-map', 1)
         matcher = SimpleNamespace(score=lambda *_: 1.0)
         endpoints = np.zeros((1, 2))
-        for _ in range(DEFAULT_PARAMS['valid_consecutive']):
-            impl.monitor.update_scan(10.1, (0, 0, 0), endpoints, matcher)
+        for i in range(DEFAULT_PARAMS['valid_consecutive']):
+            impl.monitor.update_scan(10.06 + i * 0.01, (0, 0, 0), endpoints, matcher)
         impl._publish(10.1)
         spin_for(0.1)
         assert states[-1][0] == 'VALID'
@@ -69,8 +69,8 @@ def test_stopped_and_jumping_clock_never_keeps_valid_state():
         assert states[-1] == ('STALE', 'Replay clock stopped advancing')
         assert impl.monitor.last_pose_stamp is None
         advance(10_200_000_000)
-        for _ in range(DEFAULT_PARAMS['recover_consecutive'] - 1):
-            impl.monitor.update_scan(10.2, (0, 0, 0), endpoints, matcher)
+        for i in range(DEFAULT_PARAMS['recover_consecutive'] - 1):
+            impl.monitor.update_scan(10.11 + i * 0.01, (0, 0, 0), endpoints, matcher)
         assert impl.monitor.state == 'DEGRADED'
         impl.monitor.update_scan(10.2, (0, 0, 0), endpoints, matcher)
         assert impl.monitor.state == 'VALID'
@@ -84,12 +84,106 @@ def test_stopped_and_jumping_clock_never_keeps_valid_state():
         advance(9_300_000_000)
         assert not impl.clock_guard.stalled(time.monotonic()), (
             impl.clock_guard.last_ns, impl.clock_guard.progressing, impl.last_observed_ros, impl._now())
-        for _ in range(DEFAULT_PARAMS['recover_consecutive']):
-            impl.monitor.update_scan(9.3, (0, 0, 0), endpoints, matcher)
+        for i in range(DEFAULT_PARAMS['recover_consecutive']):
+            impl.monitor.update_scan(9.21 + i * 0.01, (0, 0, 0), endpoints, matcher)
         assert impl.monitor.state == 'VALID'
         advance(11_000_000_000)
         assert impl.monitor.state == 'STALE' and 'clock jumped' in impl.monitor.reason
     finally:
+        executor.remove_node(node)
+        executor.remove_node(peer)
+        node.destroy_node()
+        peer.destroy_node()
+        executor.shutdown()
+        rclpy.shutdown()
+
+
+def test_planarizer_clears_pose_history_on_clock_jump():
+    assert os.environ.get('ROS_DOMAIN_ID') == '72'
+    assert os.environ.get('ROS_LOCALHOST_ONLY') == '1'
+    import rclpy
+    from rclpy.executors import SingleThreadedExecutor
+    from rclpy.node import Node
+    from rclpy.parameter import Parameter
+    from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+    from rosgraph_msgs.msg import Clock
+    from ultron_b2_localization.odom_planarizer import OdomPlanarizer
+
+    rclpy.init()
+    executor = SingleThreadedExecutor()
+    node = Node('clock_test_planarizer', namespace='/ultron/replay', parameter_overrides=[
+        Parameter('use_sim_time', Parameter.Type.BOOL, True)])
+    peer = Node('clock_test_planarizer_peer')
+    impl = OdomPlanarizer(node)
+    publisher = peer.create_publisher(Clock, '/clock',
+                                      QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT,
+                                                 durability=DurabilityPolicy.VOLATILE))
+    executor.add_node(node)
+    executor.add_node(peer)
+
+    def advance(stamp_ns):
+        msg = Clock()
+        msg.clock.sec, msg.clock.nanosec = divmod(stamp_ns, 10**9)
+        publisher.publish(msg)
+        end = time.monotonic() + 0.15
+        while time.monotonic() < end:
+            executor.spin_once(timeout_sec=0.01)
+
+    try:
+        advance(10_000_000_000)
+        impl.prev = (10.0, (0.0, 0.0, 0.0))
+        advance(9_000_000_000)
+        assert impl.prev is None
+        impl.prev = (9.0, (0.0, 0.0, 0.0))
+        advance(11_000_000_000)
+        assert impl.prev is None
+    finally:
+        executor.remove_node(node)
+        executor.remove_node(peer)
+        node.destroy_node()
+        peer.destroy_node()
+        executor.shutdown()
+        rclpy.shutdown()
+
+
+def test_kiss_stops_publishing_after_replay_clock_jump():
+    assert os.environ.get('ROS_DOMAIN_ID') == '72'
+    assert os.environ.get('ROS_LOCALHOST_ONLY') == '1'
+    import rclpy
+    from rclpy.executors import SingleThreadedExecutor
+    from rclpy.node import Node
+    from rclpy.parameter import Parameter
+    from rclpy.qos import QoSProfile, ReliabilityPolicy
+    from rosgraph_msgs.msg import Clock
+    from ultron_b2_localization.kiss_icp_node import KissOdometryNode
+
+    rclpy.init()
+    executor = SingleThreadedExecutor()
+    node = Node('clock_test_kiss', namespace='/ultron/replay', parameter_overrides=[
+        Parameter('use_sim_time', Parameter.Type.BOOL, True)])
+    peer = Node('clock_test_kiss_peer')
+    impl = KissOdometryNode(node)
+    publisher = peer.create_publisher(Clock, '/clock',
+                                      QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
+    executor.add_node(node)
+    executor.add_node(peer)
+
+    def advance(stamp_ns):
+        msg = Clock()
+        msg.clock.sec, msg.clock.nanosec = divmod(stamp_ns, 10**9)
+        publisher.publish(msg)
+        end = time.monotonic() + 0.15
+        while time.monotonic() < end:
+            executor.spin_once(timeout_sec=0.01)
+
+    try:
+        advance(10_000_000_000)
+        assert not impl.clock_invalidated
+        impl.prev = (10.0, np.eye(4))
+        advance(9_000_000_000)
+        assert impl.clock_invalidated
+    finally:
+        impl.close()
         executor.remove_node(node)
         executor.remove_node(peer)
         node.destroy_node()

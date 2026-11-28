@@ -76,11 +76,41 @@ def test_stop_requires_fresh_finite_odometry(monkeypatch, stamp, received, speed
     assert (NavContractServer._fresh_odom(server) is not None) is expected
 
 
+def test_stop_ack_rejects_odometry_received_before_wait(monkeypatch):
+    monkeypatch.setattr(server_module.time, 'monotonic', lambda: 20.0)
+    server = SimpleNamespace(odom_sample=(0.0, 0.0, 10.0, 19.9), now=lambda: 10.0, p=NAV_DEFAULTS)
+    assert NavContractServer._fresh_odom(server, received_after=19.9) is None
+    server.odom_sample = (0.0, 0.0, 10.0, 19.95)
+    assert NavContractServer._fresh_odom(server, received_after=19.9) == (0.0, 0.0)
+    assert NavContractServer._fresh_odom(server, received_after=19.9, stamped_after=10.0) is None
+    server.odom_sample = (0.0, 0.0, 10.1, 19.95)
+    assert NavContractServer._fresh_odom(server, received_after=19.9, stamped_after=10.0) == (0.0, 0.0)
+
+
+def test_stop_ack_checks_post_wait_receipt_and_sensor_stamp(monkeypatch):
+    clock = iter([20.0, 20.1, 20.2, 22.1])
+    monkeypatch.setattr(server_module.time, 'monotonic', lambda: next(clock))
+    monkeypatch.setattr(server_module.time, 'sleep', lambda duration: None)
+    samples = []
+
+    def fresh_odom(**kwargs):
+        samples.append(kwargs)
+        return None
+
+    warnings = []
+    server = SimpleNamespace(p=NAV_DEFAULTS, now=lambda: 10.0, _fresh_odom=fresh_odom,
+                             get_logger=lambda: SimpleNamespace(warning=warnings.append))
+    assert not NavContractServer._wait_still(server)
+    assert samples == [{'received_after': 20.0, 'stamped_after': 10.0}] * 2
+    assert 'fresh odometry checks=0' in warnings[0]
+
+
 @pytest.mark.parametrize('sample,expected', [
     (None, False), ((0.1, 0.0), False), ((0.0, 0.0), True)])
 def test_stop_ack_requires_still_fresh_sample(monkeypatch, sample, expected):
     clock = iter([0.0, 0.0, 3.0])
     monkeypatch.setattr(server_module.time, 'monotonic', lambda: next(clock))
     monkeypatch.setattr(server_module.time, 'sleep', lambda duration: None)
-    server = SimpleNamespace(p=NAV_DEFAULTS, _fresh_odom=lambda: sample)
+    server = SimpleNamespace(p=NAV_DEFAULTS, now=lambda: 10.0, _fresh_odom=lambda **kwargs: sample,
+                             get_logger=lambda: SimpleNamespace(warning=lambda msg: None))
     assert NavContractServer._wait_still(server) is expected

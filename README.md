@@ -1,5 +1,8 @@
 # ULTRON · Site Safety Patrol
 
+**B2 ROS branch transfer and bag replay:** see [B2_STACK_HANDOFF.md](B2_STACK_HANDOFF.md).
+The full autonomous simulation gate remains incomplete; this branch is not hardware-ready.
+
 A Unitree B2 walks a construction site, finds every ladder and the fire and first-aid equipment, and fills in nesseler's checklists with a photo as evidence for each point. Results arrive on a live dashboard while the robot is still walking.
 
 ```

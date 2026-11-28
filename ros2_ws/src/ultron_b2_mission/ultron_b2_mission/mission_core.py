@@ -49,6 +49,7 @@ class MissionConfig:
     nav_result_grace_s: float = 10.0        # own watchdog beyond the goal's timeout_s
     capture_timeout_s: float = 20.0
     clearance_m: float = 0.45               # robot radius incl. margin, PROPOSED/TO_VERIFY
+    frontier_goal_search_m: float = 1.5
     require_operator_enable: bool = True
     max_explore_failures: int = 5
     max_frontier_visits: int = 2            # PROPOSED: frontier reached this often but unresolved => blacklisted
@@ -384,6 +385,7 @@ class MissionCore:
         if not use_route:
             reachable, unreachable = find_frontiers(self.inputs.grid, self.zone, self.inputs.robot[:2],
                                                     clearance_m=self.cfg.clearance_m,
+                                                    goal_search_m=self.cfg.frontier_goal_search_m,
                                                     blacklist=self.frontier_blacklist, reach=reach)
             self.last_unreachable_frontiers = unreachable
             if reachable:

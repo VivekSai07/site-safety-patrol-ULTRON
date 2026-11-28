@@ -6,6 +6,7 @@ Every velocity source passes through here last (after twist_mux and collision_mo
 Checks, in order (first failure wins):
   HOLD                      ops/hold lock true (or hold reported as active source)
   OPERATOR_ENABLE_*         heartbeat missing / disabled / older than operator_enable_max_age_s
+  SCAN_MISSING_OR_STALE     scan required for simulation mapping teleop
   NO_MAP_LOADED / LOCALIZATION: ...   only for sources that require localization
   NO_COMMAND / COMMAND_STALE          command age > command_max_age_s
   COMMAND_NONFINITE / COMMAND_OVER_LIMIT
@@ -30,6 +31,8 @@ DEFAULTS = {
     'source_max_age_s': 0.5,          # PROPOSED: active_source older than this => autonomy
     'source_hysteresis_s': 0.1,       # PROPOSED
     'teleop_requires_localization': True,
+    'teleop_requires_fresh_scan': False,
+    'teleop_scan_max_age_s': 0.5,     # PROPOSED simulation-only check
     # PROPOSED limits (sim); real values TO_VERIFY with the B2 sport-mode envelope.
     'max_vx': 0.6, 'min_vx': -0.3, 'max_vy': 0.3, 'max_wz': 0.8,
 }
@@ -62,6 +65,7 @@ class FinalGate:
     source_stamp: float | None = None
     command: tuple | None = None
     command_stamp: float | None = None
+    scan_stamp: float | None = None
     _strict_seen: float | None = None
 
     def __post_init__(self):
@@ -112,6 +116,10 @@ class FinalGate:
             return 'OPERATOR_DISABLED'
         if now - self.operator_stamp > p['operator_enable_max_age_s']:
             return 'OPERATOR_ENABLE_STALE'
+        if source == 'teleop' and p['teleop_requires_fresh_scan']:
+            if self.scan_stamp is None or not math.isfinite(self.scan_stamp) \
+                    or not 0 <= now - self.scan_stamp <= p['teleop_scan_max_age_s']:
+                return 'SCAN_MISSING_OR_STALE'
         if self.requires_localization(source):
             if not self.map_id:
                 return 'NO_MAP_LOADED'

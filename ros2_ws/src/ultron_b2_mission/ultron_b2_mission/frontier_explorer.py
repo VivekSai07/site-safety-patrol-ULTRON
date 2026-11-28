@@ -80,7 +80,7 @@ def find_frontiers(grid, zone, robot_xy, *, clearance_m=0.35, min_size_cells=5, 
         ux, uy = (float(grid.xs[ui, uj].mean()), float(grid.ys[ui, uj].mean())) if ui.size else (cx, cy)
         fid = f'F-{int(round(cx / res))}-{int(round(cy / res))}'
         blk = any(math.hypot(cx - bx, cy - by) <= blacklist_radius_m for bx, by in blacklist)
-        cand = reach & ((grid.xs - cx) ** 2 + (grid.ys - cy) ** 2 <= goal_search_m ** 2)
+        cand = reach & zmask & ((grid.xs - cx) ** 2 + (grid.ys - cy) ** 2 <= goal_search_m ** 2)
         if not cand.any():
             unreachable.append(Frontier(fid, len(cells), (cx, cy), None, gain, math.inf, False, blk))
             continue

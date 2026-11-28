@@ -19,5 +19,6 @@ setup(
     entry_points={'console_scripts': [
         'stream_probe = ultron_b2_tools.stream_probe:main',
         'bag_inspect = ultron_b2_tools.bag_inspect:main',
+        'sim_snapshot = ultron_b2_tools.sim_snapshot:main',
     ]},
 )

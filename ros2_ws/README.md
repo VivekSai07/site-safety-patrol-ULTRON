@@ -23,6 +23,9 @@ For simulation navigation or mission, load a saved map using `map:=<map-director
 Launching mission mode starts its nodes; it does not by itself start a mission or grant operator
 enable. The sim ladder detector uses labelled ground-truth **ORACLE** detections, not real perception.
 See `docs/b2_ros_stack/VALIDATION.md` for measured results and outstanding integration checks.
+For a step-by-step sensor-stream probe and mission limitations, see
+[`docs/b2_ros_stack/SIM_TEST_GUIDE.md`](../docs/b2_ros_stack/SIM_TEST_GUIDE.md).
+The guide also covers the explicit simulation-only mapping teleop option and map saving.
 
 `dev.sh` mounts the repo at the same absolute path, runs as your uid/gid with
 `HOME=ros2_ws/.dev_home`, and sets `ROS_LOCALHOST_ONLY=1`, `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`,

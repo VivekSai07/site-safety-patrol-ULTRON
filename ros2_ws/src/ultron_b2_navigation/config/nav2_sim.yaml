@@ -82,7 +82,7 @@ controller_server:
       stateful: true
       plugin: nav2_controller::SimpleGoalChecker
       xy_goal_tolerance: 0.2
-      yaw_goal_tolerance: 0.25
+      yaw_goal_tolerance: 0.18
     FollowPath:
       plugin: nav2_rotation_shim_controller::RotationShimController
       primary_controller: nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController

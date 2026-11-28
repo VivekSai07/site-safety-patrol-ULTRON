@@ -131,6 +131,7 @@ class LocalizationMonitor:
         self.required = params['valid_consecutive']
         self.good_run = self.lost_run = 0
         self.degraded_since = None
+        self.stale_since = None
         self.last_scan_stamp = None
         self.last_rx_stamp = None
         self.last_pose = None
@@ -149,6 +150,7 @@ class LocalizationMonitor:
                 self.degraded_since = t
             if state == 'STALE':
                 self.good_run = 0
+                self.stale_since = t
         self.state, self.reason = state, reason
 
     def note_scan(self, stamp):
@@ -159,13 +161,20 @@ class LocalizationMonitor:
     def invalidate_clock(self, now, reason):
         """Invalidate all temporal evidence when replay time stops or jumps."""
         self._set('STALE', reason, now)
+        self.stale_since = now
         self.good_run = self.lost_run = 0
         self.degraded_since = None
         self.last_scan_stamp = self.last_rx_stamp = self.last_pose_stamp = None
         self.last_pose = self.last_score = None
 
+    def accepts_scan(self, stamp):
+        return ((self.stale_since is None or stamp > self.stale_since)
+                and (self.last_scan_stamp is None or stamp > self.last_scan_stamp))
+
     def update_scan(self, stamp, pose, endpoints_base, matcher):
         """Process one scan whose estimated pose (map frame) at ``stamp`` is ``pose`` or None."""
+        if not self.accepts_scan(stamp):
+            return self.state
         self.last_scan_stamp = stamp
         if pose is None:
             self.good_run = 0

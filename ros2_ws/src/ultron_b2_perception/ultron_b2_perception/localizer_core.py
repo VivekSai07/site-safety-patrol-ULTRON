@@ -12,7 +12,8 @@ import numpy as np
 from .geometry import apply, backproject, project
 
 DROP_REASONS = ('STALE_TF', 'NO_DEPTH', 'DEPTH_NOT_SYNCED', 'LOCALIZATION_NOT_VALID', 'INSUFFICIENT_DEPTH',
-                'OUT_OF_RANGE', 'BAD_BOX', 'NO_CAMERA_INFO', 'IMAGE_TOO_OLD')
+                'OUT_OF_RANGE', 'BAD_BOX', 'NO_CAMERA_INFO', 'IMAGE_TOO_OLD', 'DEPTH_NOT_REGISTERED',
+                'NO_ORACLE_MASK', 'ORACLE_FRAME_NOT_SYNCED')
 
 
 class Rejected(ValueError):
@@ -24,6 +25,12 @@ class Rejected(ValueError):
 class DropCounter(Counter):
     def drop(self, reason):
         self[reason] += 1
+
+
+def require_registered_depth(registered):
+    """Reject color/depth fusion unless registration is explicitly established."""
+    if not registered:
+        raise Rejected('DEPTH_NOT_REGISTERED')
 
 
 def depth_to_metres(raw, encoding, scale_16u=0.001):
@@ -42,8 +49,8 @@ def depth_to_metres(raw, encoding, scale_16u=0.001):
 def color_box_to_depth(box, K_color, K_depth):
     """Map a colour-image box into depth-image pixels via normalized coordinates.
 
-    Ignores the colour/depth baseline (59 mm on the D457 bag); with an aligned depth stream the
-    intrinsics are identical and this is the identity. PROPOSED approximation, TO_VERIFY.
+    Requires a depth image registered to the color optical center. This mapping accounts for
+    differing image intrinsics, not a physical baseline or optical rotation.
     """
     def conv(u, v):
         xn, yn = (u - K_color[0, 2]) / K_color[0, 0], (v - K_color[1, 2]) / K_color[1, 1]
@@ -53,7 +60,35 @@ def color_box_to_depth(box, K_color, K_depth):
     return (u0, v0, u1, v1)
 
 
-def foreground_depth(depth_m, box, *, percentile=35.0, min_valid=10, min_m=0.2, max_m=15.0):
+def oracle_depth_mask(labels, box, depth_shape, K_color, K_depth):
+    """Map one exact oracle box's instance pixels onto registered depth rays.
+
+    The instance label is used only to select pixels, not as a persistent asset identity.
+    Ambiguous or missing boxes are rejected rather than falling back to box-only depth.
+    """
+    if labels.ndim != 2 or not np.issubdtype(labels.dtype, np.integer):
+        raise Rejected('NO_ORACLE_MASK', 'invalid labels')
+    matches = []
+    for label in np.unique(labels):
+        if label == 0:
+            continue
+        v, u = np.nonzero(labels == label)
+        candidate = (float(u.min()), float(v.min()), float(u.max() + 1), float(v.max() + 1))
+        if candidate == tuple(box):
+            matches.append(label)
+    if len(matches) != 1:
+        raise Rejected('NO_ORACLE_MASK', 'box has no unique instance')
+    h, w = depth_shape
+    vd, ud = np.indices((h, w))
+    uc = np.rint(K_color[0, 0] * (ud - K_depth[0, 2]) / K_depth[0, 0] + K_color[0, 2]).astype(int)
+    vc = np.rint(K_color[1, 1] * (vd - K_depth[1, 2]) / K_depth[1, 1] + K_color[1, 2]).astype(int)
+    inside = (uc >= 0) & (uc < labels.shape[1]) & (vc >= 0) & (vc < labels.shape[0])
+    mask = np.zeros((h, w), dtype=bool)
+    mask[inside] = labels[vc[inside], uc[inside]] == matches[0]
+    return mask
+
+
+def foreground_depth(depth_m, box, *, percentile=35.0, min_valid=10, min_m=0.2, max_m=15.0, mask=None):
     """Foreground depth inside a box (ladders show background through the rungs)."""
     h, w = depth_m.shape
     x0, y0 = max(0, int(box[0])), max(0, int(box[1]))
@@ -62,6 +97,10 @@ def foreground_depth(depth_m, box, *, percentile=35.0, min_valid=10, min_m=0.2, 
         raise Rejected('BAD_BOX', f'{box}')
     patch = depth_m[y0:y1, x0:x1]
     valid = np.isfinite(patch) & (patch > min_m) & (patch < max_m)
+    if mask is not None:
+        if mask.shape != depth_m.shape:
+            raise Rejected('NO_ORACLE_MASK', 'mask and depth dimensions differ')
+        valid &= mask[y0:y1, x0:x1]
     v, u = np.nonzero(valid)
     if u.size < min_valid:
         raise Rejected('INSUFFICIENT_DEPTH', f'{u.size} valid pixels')
@@ -73,9 +112,9 @@ def foreground_depth(depth_m, box, *, percentile=35.0, min_valid=10, min_m=0.2, 
 
 
 def localize(box_depth_px, depth_m, K_depth, T_map_optical, *, max_range_m=8.0,
-             depth_sigma_a=0.02, depth_sigma_b=0.005, pixel_sigma=4.0):
+             depth_sigma_a=0.02, depth_sigma_b=0.005, pixel_sigma=4.0, mask=None):
     """Return (position_map, covariance_map 3x3, range_m)."""
-    z, u, v, spread = foreground_depth(depth_m, box_depth_px)
+    z, u, v, spread = foreground_depth(depth_m, box_depth_px, mask=mask)
     if z > max_range_m:
         raise Rejected('OUT_OF_RANGE', f'{z:.2f} m')
     p_cam = backproject(K_depth, u, v, z)

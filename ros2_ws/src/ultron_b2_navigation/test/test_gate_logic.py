@@ -47,6 +47,16 @@ def test_teleop_without_localization_only_when_flag_false():
     assert g.decide(10.0).reason == 'NO_MAP_LOADED'
 
 
+def test_mapping_teleop_requires_current_scan():
+    g = ready_gate(source='teleop', teleop_requires_localization=False, teleop_requires_fresh_scan=True)
+    g.localization, g.map_id = None, ''
+    for stamp in (None, math.nan, 9.4, 10.1):
+        g.scan_stamp = stamp
+        assert g.decide(10.0).reason == 'SCAN_MISSING_OR_STALE'
+    g.scan_stamp = 9.8
+    assert g.decide(10.0).open
+
+
 @pytest.mark.parametrize('src', ['bogus', 'none', '', 'TELEOP'])
 def test_unknown_source_is_strictest(src):
     g = ready_gate(source=src, teleop_requires_localization=False)

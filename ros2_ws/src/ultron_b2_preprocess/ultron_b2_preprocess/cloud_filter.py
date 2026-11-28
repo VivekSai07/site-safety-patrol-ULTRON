@@ -143,6 +143,9 @@ def main(args=None):
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except RuntimeError as exc:
+        if rclpy.ok() or str(exc) != 'Unable to convert call argument to Python object (compile in debug mode for details)':
+            raise
     finally:
         node.destroy_node()
         rclpy.try_shutdown()

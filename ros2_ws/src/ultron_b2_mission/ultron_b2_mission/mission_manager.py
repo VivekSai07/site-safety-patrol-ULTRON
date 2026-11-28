@@ -87,6 +87,7 @@ def main(argv=None):
                 'nav_timeout_s': float(p('nav_timeout_s', 90.0).value),
                 'capture_timeout_s': float(p('capture_timeout_s', 20.0).value),
                 'clearance_m': float(p('clearance_m', 0.45).value),
+                'frontier_goal_search_m': float(p('frontier_goal_search_m', 1.5).value),
             }
             self.use_candidate_yaw = bool(p('use_candidate_yaw', False).value)
             self.memory_db = p('memory_db', '').value
@@ -377,7 +378,7 @@ def main(argv=None):
                                              ladders_unreachable=sorted(s['ladders_unreachable']),
                                              ladders_missing=s['ladders_missing'])
             fr, _ = find_frontiers(grid, self.zone, robot[:2], clearance_m=core.cfg.clearance_m, reach=reach,
-                                   blacklist=core.frontier_blacklist)
+                                   goal_search_m=core.cfg.frontier_goal_search_m, blacklist=core.frontier_blacklist)
             pa = PoseArray()
             pa.header.frame_id, pa.header.stamp = self.map_frame, self.get_clock().now().to_msg()
             for f in fr:
