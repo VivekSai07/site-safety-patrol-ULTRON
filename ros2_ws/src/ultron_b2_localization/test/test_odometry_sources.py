@@ -8,7 +8,7 @@ import pytest
 from ultron_b2_localization.b2_odom_adapter import SportModeRejected, sportmode_to_odometry
 from ultron_b2_localization.geometry import flatten_pose, matrix_to_quat, quat_to_matrix, twist_from_delta, yaw_of
 from ultron_b2_localization.kiss_icp_node import cloud_to_arrays, normalize_times, range_filter
-from ultron_b2_localization.odom_planarizer import planarize
+from ultron_b2_localization.odom_planarizer import planar_twist, planarize
 
 
 def _sport(yaw=0.5, pitch=0.0, pos=(1.0, 2.0, 0.3), vel=(0.4, 0.0, 0.0), stamp=(0, 0), quat=None):
@@ -125,3 +125,11 @@ def test_kiss_icp_tracks_synthetic_motion():
     assert est[0, 3] == pytest.approx(1.4, abs=0.05)
     assert abs(est[1, 3]) < 0.05
     assert math.atan2(est[1, 0], est[0, 0]) == pytest.approx(0.42, abs=0.02)
+
+
+def test_planar_twist_is_body_frame_and_wraps_yaw():
+    vx, vy, wz = planar_twist((1.0, 1.0, math.pi / 2), (1.0, 1.5, math.pi / 2), 0.5)
+    assert vx == pytest.approx(1.0) and vy == pytest.approx(0.0, abs=1e-12)
+    _, _, wz = planar_twist((0.0, 0.0, math.pi - 0.05), (0.0, 0.0, -math.pi + 0.05), 0.1)
+    assert wz == pytest.approx(1.0)
+    assert planar_twist((0, 0, 0), (1, 0, 0), 0.0) == (0.0, 0.0, 0.0)

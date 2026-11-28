@@ -5,6 +5,11 @@ keeps z/roll/pitch drift (bag replay: |z| up to 0.11 m, roll/pitch up to 2.6 deg
 The stack contract is a planar ``odom -> base_link`` (x, y, yaw), identical for every ``odom_source``, so the
 MOLA TF is remapped away and this node republishes the flattened pose as the single TF authority plus
 ``state/odom``. Same stamp as the input; no buffering.
+
+MOLA-LO publishes an all-zero twist. Nav2 consumers use ``state/odom`` twist as the current velocity
+(RPP rotate-to-heading clamps to ``current + max_angular_accel * dt``), so a zero twist caps in-place
+rotation at 1.0 rad/s^2 * 0.05 s = 0.05 rad/s. When the input twist is all zero, the planar body-frame
+twist is derived from consecutive flattened poses (as the KISS-ICP node does).
 """
 import math
 
@@ -18,6 +23,16 @@ def planarize(position, orientation_xyzw):
     if not all(math.isfinite(v) for v in (*m[:3, 3], qz, qw)):
         raise ValueError('non-finite pose')
     return (float(m[0, 3]), float(m[1, 3]), 0.0), (0.0, 0.0, float(qz), float(qw))
+
+
+def planar_twist(prev, cur, dt):
+    """Body-frame (vx, vy, wz) between two planar poses (x, y, yaw); zeros if dt <= 0."""
+    if dt <= 0:
+        return 0.0, 0.0, 0.0
+    dx, dy = cur[0] - prev[0], cur[1] - prev[1]
+    c, s = math.cos(prev[2]), math.sin(prev[2])
+    dyaw = math.atan2(math.sin(cur[2] - prev[2]), math.cos(cur[2] - prev[2]))
+    return (c * dx + s * dy) / dt, (-s * dx + c * dy) / dt, dyaw / dt
 
 
 class OdomPlanarizer:
@@ -38,6 +53,7 @@ class OdomPlanarizer:
         self.pub = node.create_publisher(Odometry, p('odom_out', 'state/odom'), qos)
         node.create_subscription(Odometry, p('odom_in', 'mola/odom_raw'), self._on_odom, qos)
         self.max_dz = self.max_tilt = 0.0
+        self.prev = None
         node.create_timer(10.0, self._report)
 
     def _on_odom(self, msg):
@@ -55,6 +71,11 @@ class OdomPlanarizer:
         pose.position.x, pose.position.y, pose.position.z = x, y, z
         q.x, q.y, q.z, q.w = 0.0, 0.0, qz, qw
         tw = msg.twist.twist
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        yaw = 2.0 * math.atan2(qz, qw)
+        if (tw.linear.x, tw.linear.y, tw.angular.z) == (0.0, 0.0, 0.0) and self.prev is not None:
+            tw.linear.x, tw.linear.y, tw.angular.z = planar_twist(self.prev[1], (x, y, yaw), stamp - self.prev[0])
+        self.prev = (stamp, (x, y, yaw))
         tw.linear.z = tw.angular.x = tw.angular.y = 0.0
         if self.publish_tf:
             tf = self.TransformStamped()
