@@ -100,6 +100,30 @@ work through stationary data and calibration first. Request keyboard motion
 only after the command path and independent protections are verified.
 Proceed to mapping and then Nav2 shadow checks when their inputs pass.
 
+### Calibration handoff for D2
+
+Keep the supplied `calibration.zip` with the local session evidence. Before
+the slot, use its matrix inventory to prepare a table of expected parent
+and child frames, transform direction, units, source and confidence.
+During D1 record actual frame IDs, camera resolutions and timestamp
+sources. During D2 compare that inventory with live TF and marked physical
+references, and verify transform availability at sensor timestamps.
+
+The archive provides D455 stream intrinsics and factory depth-to-color
+extrinsics. Camera-to-base and LiDAR-to-base mounts come from the robot
+model. The IMU mount differs between the xacro and CAD references. Resolve
+that difference on the installed robot before using the IMU transform.
+The archive contains a LiDAR-to-IMU transform and time offset from FAST_LIO
+configuration. Verify them independently before using them in this stack.
+Camera-to-LiDAR alignment is nominal. Require measured alignment for any
+check that uses camera-to-LiDAR projection or cross-sensor association.
+
+Before the slot, identify the host, launch entry point and expected output
+for every required producer, and record the exact consumer environment.
+Enter the slot with the K1 import output and the D1 stream inventory ready
+for review. During D1 check actual message receipt on the SLAM consumer
+and mark any missing stream against its dependent check.
+
 ### Record fields as they become relevant
 
 P1 is an offline review. For D1, establish read-only authorization, on-site
