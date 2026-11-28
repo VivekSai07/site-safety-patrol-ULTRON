@@ -425,6 +425,11 @@ _Not assembled. Reviewer decision: pending (human)._
   observed. This is partial evidence, not full validation of the cancellation fix. The
   mission ended with gaps and no inspection capture; the freeze's cause remains unproven.
   Artifacts are local under `ros2_ws/runs/sim_integrated_result_bac1bf7/`.
+  The dev image has Nav2 1.1.20, tf2 0.25.23 and tf2_ros 0.25.24. The upstream
+  [geometry2 issue 995](https://github.com/ros2/geometry2/issues/995) reports a
+  similar persistent TF-listener stall and a suspected lock inversion for Humble tf2
+  0.25.23. This is a plausible lead, not proof of the cause here; no local backtrace or
+  controlled version comparison has established it. Do not treat a downgrade as validated.
 - Replay checkpoint `7d7444f` from `om/b2-ros-stack-replay-accept` is integrated.
   Its 32 tests passed; the replay clock guard reports stale
   localization when the clock stops, and measured queue-overflow drops fell to zero. One
