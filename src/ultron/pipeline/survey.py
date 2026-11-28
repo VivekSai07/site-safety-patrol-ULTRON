@@ -23,6 +23,23 @@ PART_OF_BOX = 0.7       # a box of one kind lying this much inside a better one 
 WIDE = 0.5              # metres: objects larger than this look different from every side
 EMPTY_VIEWS = 3         # views from places this far apart (below) that saw a stored object's place empty
 EMPTY_SPREAD = 0.3      # metres
+# An object in front of a wall (a wall box, a ladder leaning on the wall) cannot be looked through:
+# where it stood the wall is at its distance, so its place never looks empty. That it is gone shows
+# as not being detected where it would be in clear view. A detector misses things, so this counts
+# only for an object it found in most of its clear views before, and only after many views from
+# more than one place. (Simulated yard: the detector found one ladder in 1 of 57 clear views.)
+# (Hall recording: ladders 0.69 and 0.87, extinguisher 0.71, alarm box 0.46, hydrant cabinet 0.33.)
+RELIABLE = 0.4          # share of its earlier clear views an object was detected in ...
+MIN_VIEWS = 10          # ... over at least this many
+# Frames from one spot are one look, whatever the frame rate: a view counts as a new one only after
+# the robot moved or turned this much.
+LOOK_STEP = (0.2, math.radians(10))  # metres, radians
+# Looks in this patrol with its place in clear view and no detection: as many as make missing a
+# present object every time unlikely (below CHANCE, were looks independent), at least MIN_LOOKS ...
+CHANCE = 0.02
+MIN_LOOKS = 4           # (0.45 needs 7 looks, 0.71 needs 4)
+MISSED_PLACES = 2       # ... from places this far apart
+MISSED_SPREAD = 0.5     # metres
 # The depth camera's error grows with the square of the range. With the D457's noise (as fitted
 # to the real camera, simulated yard) sightings up to 12.5 m land inside the object's footprint;
 # from 15 m on 0.25-0.9 m off (90th percentile), more than footprints are matched within. Such
@@ -68,6 +85,10 @@ class Survey:
         stored = objects.all() if map_id else []
         self.anchoring = Anchoring(stored) if stored else None
         self._empty = {}  # stored object id -> robot positions from which its place looked empty
+        # Stored objects the detector has found reliably: not finding them in clear view says something.
+        self.reliable = {o.id: max(MIN_LOOKS, math.ceil(math.log(CHANCE) / math.log(1 - min(o.detected / o.views, 0.95))))
+                         for o in stored if o.views >= MIN_VIEWS and o.detected >= RELIABLE * o.views}  # id -> looks needed
+        self._missed = {}  # stored object id -> [looks without a detection, places they were from, last pose]
         self.created = set()  # objects this patrol created: provisional until it is lined up
         # Objects announced (`object_found`) in this workspace: resuming does not announce them twice.
         self.announced = {e["object"] for e in store.events(limit=None) if e["kind"] == "object_found"}
@@ -157,28 +178,50 @@ class Survey:
         return seen
 
     def check_moved(self, frame, seen):
-        """Stored objects whose place this frame looks right through, from a trusted pose.
+        """Count the objects whose place this frame has in clear view, and judge stored ones not
+        detected in this patrol: is their place empty, or are they reliably found yet missed?
 
         Only a patrol lined up with the stored objects can say a place is empty; one view is not
         enough, nor are views from one spot. An object detected in this patrol is not gone."""
-        if not (self.anchoring and self.anchoring.state == Anchoring.ANCHORED and frame.pose):
+        if not (frame.pose and self.calibration) or self.anchoring and self.anchoring.state != Anchoring.ANCHORED:
             return
         here = {o.id for o in seen}
+        in_view = []
         for site_object in self.objects.all():
-            if (site_object.id not in self.anchoring.stored or site_object.id in here
-                    or self.seen_now.get(site_object.id) or site_object.status not in ("FOUND", "INSPECTED")):
+            if site_object.status not in ("FOUND", "INSPECTED"):
                 continue
             verdict = look_through(frame, self.calibration, site_object)
+            if verdict is None:
+                continue  # out of view, too near or far, or hidden: says nothing
+            in_view.append(site_object.id)
+            if (not self.anchoring or site_object.id not in self.anchoring.stored or site_object.id in here
+                    or self.seen_now.get(site_object.id)):
+                continue
             if verdict == "occupied":
                 self._empty.pop(site_object.id, None)
-            elif verdict == "empty":
+            else:
                 places = self._empty.setdefault(site_object.id, [])
                 if all(math.dist(p, frame.pose[:2]) >= EMPTY_SPREAD for p in places):
                     places.append(tuple(frame.pose[:2]))
                 if len(places) >= EMPTY_VIEWS:
-                    self.objects.update(site_object.id, status="MOVED")
-                    self.store.emit("object_moved", object=site_object.id, object_kind=site_object.kind,
-                                    position=site_object.position, views=len(places))
+                    self._gone(site_object, "place seen empty", len(places))
+                    continue
+            if site_object.id in self.reliable:
+                missed = self._missed.setdefault(site_object.id, [0, [], None])
+                last = missed[2]
+                turned = last and abs(math.remainder(frame.pose[2] - last[2], math.tau))
+                if last is None or math.dist(last[:2], frame.pose[:2]) >= LOOK_STEP[0] or turned >= LOOK_STEP[1]:
+                    missed[0], missed[2] = missed[0] + 1, tuple(frame.pose)
+                if all(math.dist(p, frame.pose[:2]) >= MISSED_SPREAD for p in missed[1]):
+                    missed[1].append(tuple(frame.pose[:2]))
+                if missed[0] >= self.reliable[site_object.id] and len(missed[1]) >= MISSED_PLACES:
+                    self._gone(site_object, "not detected in clear view", missed[0])
+        self.objects.count_views(in_view, here)
+
+    def _gone(self, site_object, reason, views):
+        self.objects.update(site_object.id, status="MOVED")
+        self.store.emit("object_moved", object=site_object.id, object_kind=site_object.kind,
+                        position=site_object.position, reason=reason, views=views)
 
     def _landmark(self, object_id, sighting):
         """A stored object was seen (positions in the stored map's frame, as corrected so far).

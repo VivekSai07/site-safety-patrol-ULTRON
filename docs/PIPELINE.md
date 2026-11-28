@@ -91,7 +91,7 @@ nothing an earlier mission inspected (it still inspects stored objects never ins
 | `lift.py` | Detection → map position from lidar, depth image or assumed range; floor plane removed | depth path run on the real recording and the simulated yard; **assumes the camera looks along the robot's +x from its origin** |
 | `objects.py` | Object map: associate sightings by track, then by floor footprint (radius without one), merge fragments, stable ids, saved every change | works on the real recording |
 | `anchor.py` | Lines a patrol up with the objects stored by earlier ones on the same map; gross-error guard | replay of the real recording with injected pose errors; synthetic |
-| `moved.py` | Looks through a stored object's footprint with the depth image: still there, hidden, or gone | real recording (no false "moved"; planted empty spots found); synthetic |
+| `moved.py` | Looks through a stored object's footprint with the depth image: still there, hidden, or gone; a verdict means the place was in clear view (the survey also counts detections in such views to judge wall-backed objects) | real recording (no false "moved"; planted empty spots and dropped detections found); simulated yard; synthetic |
 | `keyframes.py` | Bounded keyframe store per object × view range × viewing direction; selection for the reader | works; quality score is a simple heuristic |
 | `coverage.py` | Missing views → goal poses around the object | works; no occlusion or part visibility |
 | `navigate.py` | `Passive`, `Operator`, `DashboardNavigator` (dashboard `/api/goal` → bridge → Nav2) | tested against the dashboard app; **never run with Nav2** |
@@ -226,10 +226,25 @@ What the open yard forced (the hall recording had none of it):
   clearly more strongly (counts, not just presence). D2 then re-observes both twins, each on the
   right one (23 -> 143 and 29 -> 151 sightings), and makes no third. The detector found L52 alone
   in only 1 of 57 frames.
-- **Gone against a wall cannot be seen** (measured at D2's stop: 29 "occupied", no "empty"): the look-through test sees an empty place only in front of
-  open space. Where L10 leaned, the container wall stands at the footprint's distance and reads as
-  "something there". The same holds for every wall-mounted kind (extinguisher, hose cabinet, alarm
-  box): their removal is never reported. Not yet addressed.
+- **Gone against a wall cannot be looked through** (measured at D2's stop: 29 "occupied", no
+  "empty"): the look-through test sees an empty place only in front of open space. Where L10
+  leaned, the container wall stands at the footprint's distance and reads as "something there". The
+  same holds for every wall-mounted kind (extinguisher, hose cabinet, alarm box).
+- **So gone is also "reliably found, now missed in clear view"** (`survey.py`). Every object counts
+  the frames that had its place in clear view (footprint inside the image at 1-4.5 m, not hidden:
+  `look_through` gives a verdict) and the frames of those that detected it. A stored object found
+  in at least 40 % of at least 10 such views on earlier patrols is marked moved (`object_moved`,
+  `reason: "not detected in clear view"`) when a lined-up patrol never detects it, yet has its
+  place in clear view in enough distinct looks (a new look after 0.2 m or 10 degrees of motion,
+  whatever the frame rate) from two places 0.5 m apart. Enough looks: as many as make missing a
+  present object every time under 2 % likely, at least 4 (0.45 needs 7, 0.71 needs 4). Detected
+  later, it is `object_back`. D2 (noisy): L10 (found in 61 of 117 clear views on A and B) reported
+  moved after 6 looks; no other object marked moved on C, D or D2, no flip-flops.
+  Real recording, run 2 on run 1's map with one object's detections dropped (the object stays in
+  the depth image, as a wall would): LAD-001, LAD-002, FEX-001 reported moved after 4 looks, ALM-001
+  (0.45) after 7; HYD-001 (found in 2 of 7 clear views) is not judged. Unchanged run 2 at rates 4,
+  8 and 16: nothing marked moved. Its limit: an object that is present but that the detector stops
+  finding (new lighting, a cover) is reported moved, then back if found again.
 - **Sightings beyond 12 m are not used.** With the D457's noise (`depth=noisy`, fitted by the
   simulator to the real camera: 6 mm at 2 m, 97 mm at 8 m) ladders seen up to 12.5 m still land
   inside their footprint (90th percentile); from 15 m on they lie 0.25-0.9 m off, a ladder 40 m
@@ -293,6 +308,8 @@ planner, Om's detection evaluation, and non-ladder objects on the dashboard.
   (above) and synthetic tests only; on real data, replays of the one recording (same start; injected
   pose errors; fake objects planted on open floor). No real localised (`map`) pose yet. Pose errors of 0.7-1 m are flagged as gross: stored
   landmarks are known only to 0.3-0.6 m, so the guard cannot tell them apart and changes nothing.
+- Removal judged by non-detection: on real data only with detections dropped from a replay, not
+  with an object physically taken away; the detection rates it relies on come from one recording.
 - Displacements over 2 m (beyond the reach in which an unmatched sighting is taken for a stored
   object) are not caught by the guard: such an object is created anew.
 - Two ladders closer than about 0.4 m edge to edge and never seen in one frame become one object.

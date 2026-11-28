@@ -85,6 +85,8 @@ def _centre(site_object):
 def _join(target, other):
     """Add `other`'s sightings and footprint to `target`."""
     target.sightings += other.sightings
+    target.views += other.views
+    target.detected += other.detected
     for key, count in other.cells.items():
         target.cells[key] = target.cells.get(key, 0) + count
     if target.cells:
@@ -289,7 +291,8 @@ class ObjectMap:
                 _join(target, wrong)
             else:
                 target = SiteObject(self._new_id(kind), kind, wrong.position, wrong.sightings,
-                                    wrong.first_seen, wrong.last_seen, verified=True, cells=dict(wrong.cells))
+                                    wrong.first_seen, wrong.last_seen, verified=True, cells=dict(wrong.cells),
+                                    views=wrong.views, detected=wrong.detected)
                 self._objects[target.id] = target
             for found in self._objects.values():
                 found.apart = [i for i in found.apart if i != object_id]
@@ -302,6 +305,16 @@ class ObjectMap:
             for found in self._objects.values():
                 found.apart = [i for i in found.apart if i != object_id]
             self._save()
+
+    def count_views(self, in_view, detected):
+        """Objects (ids) whose place a frame had in clear view, and which of them it detected."""
+        with self._lock:
+            for object_id in in_view:
+                found = self._objects[object_id]
+                found.views += 1
+                found.detected += object_id in detected
+            if in_view:
+                self._save()
 
     def update(self, object_id, **changes):
         with self._lock:

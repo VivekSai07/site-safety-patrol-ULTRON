@@ -703,25 +703,27 @@ class AnchoringTest(unittest.TestCase):
         places = [self.LADDER, self.LEFT, self.RIGHT, self.NEW]
         if moved:
             places[1] = moved
-        return ([rectangle(*self.LADDER, 1.5, 0.5)] + [rectangle(x, y, 0.3, 0.3) for x, y in places[1:]],
-                ["ladder", "fire_extinguisher", "fire_extinguisher", "fire_extinguisher"])
+        # Index 4: a wall 0.35 m behind RIGHT as the robot looks at it; nothing the detector finds.
+        return ([rectangle(*self.LADDER, 1.5, 0.5)] + [rectangle(x, y, 0.3, 0.3) for x, y in places[1:]]
+                + [rectangle(self.RIGHT[0] + 0.35, self.RIGHT[1], 0.1, 4.0)],
+                ["ladder", "fire_extinguisher", "fire_extinguisher", "fire_extinguisher", None])
 
-    def patrol(self, run, targets, error=(0.0, 0.0, 0.0), moved=None, new=True, gone=(), missed=()):
+    def patrol(self, run, targets, error=(0.0, 0.0, 0.0), moved=None, new=True, gone=(), missed=(), wall=False):
         """Look at each target from three nearby directions; the robot believes it stands where
         `error` (angle, dx, dy about the origin) puts it. The new object exists from run 2 on."""
         from ultron.pipeline.anchor import apply
         shapes, kinds = self.shapes(moved)
-        present = [n for n in (range(4) if new and run != "run-1" else range(3)) if n not in gone]
+        present = [n for n in (range(4) if new and run != "run-1" else range(3)) if n not in gone] + [4] * wall
         store = Store(self.root / run)
-        survey = Survey(Rendered(kinds=kinds, missed=missed), ObjectMap(self.folder), KeyframeStore(self.folder), store,
-                        CALIBRATION, interval=0, map_id="hall-v1")
+        survey = Survey(Rendered(kinds=kinds, missed=(*missed, 4)), ObjectMap(self.folder), KeyframeStore(self.folder),
+                        store, CALIBRATION, interval=0, map_id="hall-v1")
         stamp = 0.0
         for target in targets:
             for side in (3, 4, 5) * 2:
                 true = facing(target, side, 2.5)
                 believed = (*apply(error, true[:2]), true[2] + error[0])
                 seen = rendered("a", believed, [], stamp)
-                seen.depth, seen.outlines = render(true, [shapes[n] if n in present else [] for n in range(4)])
+                seen.depth, seen.outlines = render(true, [shapes[n] if n in present else [] for n in range(5)])
                 survey.feed(seen)
                 stamp += 1.0
         merged = survey.tidy()
@@ -822,6 +824,25 @@ class AnchoringTest(unittest.TestCase):
         survey, store, _ = self.patrol("run-2", [self.LEFT, self.LADDER, self.RIGHT], new=False, missed=[2])
         self.assertEqual(self.events(store, "object_moved"), [])
         self.assertEqual(survey.objects.get("FEX-002").status, "FOUND")
+
+    def test_an_object_taken_from_in_front_of_a_wall_is_marked_moved(self):
+        """The wall stands where the extinguisher stood: its place never looks empty. Found in
+        every clear view on two patrols, then in none from three places: it is gone."""
+        self.first_patrol()
+        self.patrol("run-1b", [self.LEFT, self.LADDER, self.RIGHT], new=False)
+        self.assertGreaterEqual(ObjectMap(self.folder).get("FEX-002").views, 10)
+        survey, store, _ = self.patrol("run-2", [self.LEFT, self.LADDER, self.RIGHT, self.RIGHT], new=False,
+                                       gone=[2], wall=True)
+        moved = self.events(store, "object_moved")
+        self.assertEqual([(e["object"], e["reason"]) for e in moved], [("FEX-002", "not detected in clear view")])
+        self.assertEqual(survey.objects.get("FEX-001").status, "FOUND")
+
+    def test_a_wall_backed_object_seen_once_is_not_marked_moved(self):
+        """Too few earlier views to know the detector finds it: not finding it says nothing."""
+        self.first_patrol()
+        survey, store, _ = self.patrol("run-2", [self.LEFT, self.LADDER, self.RIGHT, self.RIGHT], new=False,
+                                       gone=[2], wall=True)
+        self.assertEqual(self.events(store, "object_moved"), [])
 
     def test_nothing_is_marked_moved_before_the_patrol_is_lined_up(self):
         self.first_patrol()
