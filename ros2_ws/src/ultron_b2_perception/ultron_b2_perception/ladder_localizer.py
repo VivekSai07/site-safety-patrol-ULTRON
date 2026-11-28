@@ -18,7 +18,7 @@ import numpy as np
 from .localizer_core import (DropCounter, Rejected, color_box_to_depth, depth_to_metres, localize,
                              visible_candidates)
 from .geometry import intrinsics
-from .ros_util import image_to_numpy, ladder_type_from_label, run_node, stamp_to_float, tf_to_matrix
+from .ros_util import image_to_numpy, ladder_type_from_label, run_node, sensor_qos, stamp_to_float, tf_to_matrix
 
 OBSERVATION, VIEW_CHECK = 'OBSERVATION', 'VIEW_CHECK'
 
@@ -38,7 +38,7 @@ def lookup_at_stamp(buffer, target, source, stamp_s, timeout_s):
 
 def main(argv=None):
     from rclpy.node import Node
-    from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
+    from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from sensor_msgs.msg import CameraInfo, Image
     from std_msgs.msg import String
     from tf2_ros import Buffer, TransformListener
@@ -56,6 +56,7 @@ def main(argv=None):
             self.loc_max_age = float(p('localization_max_age_s', 1.0).value)
             self.depth_scale = float(p('depth_scale_16u', 0.001).value)     # RealSense default, TO_VERIFY
             self.max_range = float(p('max_range_m', 8.0).value)
+            camera_qos = sensor_qos(self)
             self.tf_buffer = Buffer()
             self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
             self.depths = []
@@ -69,11 +70,11 @@ def main(argv=None):
             latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                                  durability=DurabilityPolicy.TRANSIENT_LOCAL)
             self.create_subscription(Image, p('depth_topic', 'sensors/cam_head/depth/image_rect_raw').value,
-                                     self._on_depth, qos_profile_sensor_data)
+                                     self._on_depth, camera_qos)
             self.create_subscription(CameraInfo, p('depth_info_topic', 'sensors/cam_head/depth/camera_info').value,
-                                     self._on_depth_info, qos_profile_sensor_data)
+                                     self._on_depth_info, camera_qos)
             self.create_subscription(CameraInfo, p('color_info_topic', 'sensors/cam_head/color/camera_info').value,
-                                     self._on_color_info, qos_profile_sensor_data)
+                                     self._on_color_info, camera_qos)
             self.create_subscription(LocalizationState, 'state/localization', self._on_loc, 10)
             self.create_subscription(LadderCandidateArray, 'perception/ladder_candidates', self._on_cands, latched)
             self.create_subscription(LadderDetectionArray, 'perception/ladder_detections', self._on_dets, 10)

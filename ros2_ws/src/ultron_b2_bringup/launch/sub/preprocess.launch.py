@@ -1,7 +1,8 @@
 """Sub-launch `preprocess` (owner: Agent B).
 
 cloud_filter: sensors/lidar/points -> sensors/lidar/points_filtered (self box, range, height, voxel,
-optional deskew). pointcloud_to_laserscan: points_filtered -> sensors/scan in base_footprint.
+optional deskew). cloud_to_scan: points_filtered -> sensors/scan in base_footprint, RELIABLE in and out
+(the only sensors/scan publisher; upstream pointcloud_to_laserscan is best-effort only and lost most clouds).
 Parameter files are chosen by calibration_profile (sim|real) from ultron_b2_preprocess/config/.
 """
 from launch import LaunchDescription
@@ -23,7 +24,6 @@ def generate_launch_description():
     declared = [DeclareLaunchArgument(k, default_value='') for k in SUB_ARGS]
     cloud_filter = Node(package='ultron_b2_preprocess', executable='cloud_filter', name='cloud_filter',
                         output='screen', parameters=[_config('cloud_filter')])
-    to_scan = Node(package='pointcloud_to_laserscan', executable='pointcloud_to_laserscan_node',
-                   name='pointcloud_to_laserscan', output='screen', parameters=[_config('pointcloud_to_laserscan')],
-                   remappings=[('cloud_in', 'sensors/lidar/points_filtered'), ('scan', 'sensors/scan')])
+    to_scan = Node(package='ultron_b2_preprocess', executable='cloud_to_scan', name='cloud_to_scan',
+                   output='screen', parameters=[_config('cloud_to_scan')])
     return LaunchDescription(declared + [cloud_filter, to_scan])

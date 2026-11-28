@@ -2,7 +2,7 @@
 """Eval-only wrapper around the validated simulation bridge (src/ultron/autonomy/sim_bridge.py).
 
 Rewires its topics to the B2 stack contract under /ultron/sim (sensors/lidar/points_filtered,
-sensors/scan) and, for odom_source mola/kiss, moves the bridge's simulated leg odometry and its
+sim/scan; the bringup cloud_to_scan alone publishes sensors/scan) and, for odom_source mola/kiss, moves the bridge's simulated leg odometry and its
 odom->base_link TF off the stack topics so the lidar odometry under test is the only TF authority.
 Ground truth is only logged to <out>/ground_truth.csv (evaluation), never fed to the estimator.
 """
@@ -29,7 +29,7 @@ def main():
     config = load_sim_slam_config()
     ns = '/ultron/sim'
     stack_odom = a.odom_source == 'sim'
-    topics = dict(config.topics, points=f'{ns}/sensors/lidar/points_filtered', scan=f'{ns}/sensors/scan',
+    topics = dict(config.topics, points=f'{ns}/sensors/lidar/points_filtered', scan=f'{ns}/sim/scan',  # preprocess cloud_to_scan owns sensors/scan
                   odom=f'{ns}/state/odom' if stack_odom else f'{ns}/eval/sim_leg_odom')
     config = dataclasses.replace(config, topics=topics, odometry=dict(config.odometry, seed=a.seed))
     sim_bridge.check_isolation(config)

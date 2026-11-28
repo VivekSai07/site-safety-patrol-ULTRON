@@ -74,3 +74,19 @@ def run_node(factory, argv=None, executor_threads=0):
         if rclpy.ok():
             rclpy.shutdown()
     return 0
+
+
+def sensor_qos(node):
+    """Subscription QoS for camera topics from the ``sensor_input_reliability`` parameter (default reliable).
+
+    Integration QoS rule: sensor publishers are RELIABLE; large-sample consumers subscribe RELIABLE with a
+    small depth because best-effort readers lose fragmented ~1 MB images on hosts with small socket buffers.
+    Use best_effort only for a driver that publishes best-effort (a reliable reader would not match it).
+    """
+    from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
+    value = node.declare_parameter('sensor_input_reliability', 'reliable').value
+    if value not in ('reliable', 'best_effort'):
+        raise ValueError(f'sensor_input_reliability must be reliable or best_effort, got {value!r}')
+    if value == 'best_effort':
+        return qos_profile_sensor_data
+    return QoSProfile(depth=2, reliability=ReliabilityPolicy.RELIABLE, history=HistoryPolicy.KEEP_LAST)

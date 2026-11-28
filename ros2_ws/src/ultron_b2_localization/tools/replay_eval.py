@@ -41,7 +41,7 @@ GROUPS = {
     'slam_toolbox': ('async_slam_toolbox_node', 'localization_slam_toolbox_node', 'sync_slam_toolbox_node'),
     'monitor': ('localization_monitor',),
     'map_manager': ('map_manager',),
-    'scan_conversion': ('pointcloud_to_laserscan_node', 'cloud_to_scan.py'),
+    'scan_conversion': ('cloud_to_scan',),
     'sim_bridge': ('eval_sim_bridge',),
 }
 

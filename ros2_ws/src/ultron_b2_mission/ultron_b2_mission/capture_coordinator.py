@@ -41,10 +41,9 @@ def main(argv=None):
     from rclpy.callback_groups import ReentrantCallbackGroup
     from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
     from rclpy.node import Node
-    from rclpy.qos import qos_profile_sensor_data
     from sensor_msgs.msg import Image
     from ultron_b2_interfaces.action import CaptureViews
-    from ultron_b2_perception.ros_util import image_to_numpy, stamp_to_float
+    from ultron_b2_perception.ros_util import image_to_numpy, sensor_qos, stamp_to_float
 
     class CaptureCoordinator(Node):
         def __init__(self):
@@ -57,9 +56,10 @@ def main(argv=None):
             self.lock = threading.Lock()
             self.latest = {}
             cb = ReentrantCallbackGroup()
+            camera_qos = sensor_qos(self)
             for modality, topic in topics.items():
                 self.create_subscription(Image, topic, lambda m, k=modality: self._on_image(k, m),
-                                         qos_profile_sensor_data, callback_group=cb)
+                                         camera_qos, callback_group=cb)
             self.server = ActionServer(self, CaptureViews, 'mission/capture_views', execute_callback=self._execute,
                                        goal_callback=self._goal_cb, cancel_callback=lambda _: CancelResponse.ACCEPT,
                                        callback_group=cb)

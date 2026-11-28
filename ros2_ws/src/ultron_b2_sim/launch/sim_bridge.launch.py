@@ -4,7 +4,8 @@ Run inside the stack namespace (bringup's drivers sub-launch pushes ``/ultron/si
 
     ros2 launch ultron_b2_sim sim_bridge.launch.py namespace:=/ultron/sim
 
-Velocity input is the gated ``cmd_vel`` (motion_gate is its sole publisher in the stack).
+Velocity input is ``sim/cmd_vel`` from the control sim_driver, which forwards the gated ``cmd_vel``
+(motion_gate is the sole ``cmd_vel`` publisher in the stack). The bringup sets ``scan_topic:=sim``.
 robot_state_publisher owns ``base_link -> sensor`` TF, so this launch never publishes it.
 """
 from launch import LaunchDescription

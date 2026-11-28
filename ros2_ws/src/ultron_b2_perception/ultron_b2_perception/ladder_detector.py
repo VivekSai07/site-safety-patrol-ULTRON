@@ -17,7 +17,7 @@ import yaml
 from .backends import BackendUnavailable, make_backend
 from .geometry import intrinsics
 from .oracle import project_ladders, segmentation_boxes
-from .ros_util import image_to_numpy, pose_to_matrix, run_node, stamp_to_float, tf_to_matrix
+from .ros_util import image_to_numpy, pose_to_matrix, run_node, sensor_qos, stamp_to_float, tf_to_matrix
 
 
 def load_oracle_ladders(path):
@@ -31,7 +31,7 @@ def load_oracle_ladders(path):
 def main(argv=None):
     import rclpy
     from rclpy.node import Node
-    from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
+    from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from geometry_msgs.msg import PoseStamped
     from sensor_msgs.msg import CameraInfo, Image
     from std_msgs.msg import String
@@ -47,6 +47,7 @@ def main(argv=None):
             self.max_rate = float(p('max_rate_hz', 5.0).value)            # PROPOSED
             self.oracle_source = p('oracle_source', 'projection').value  # projection | segmentation
             self.oracle_file = p('oracle_ladders_file', '').value
+            self.sensor_qos = sensor_qos(self)
             self.oracle_pose_tol = float(p('oracle_pose_tolerance_s', 0.1).value)
             self.base_frame = p('base_frame', 'base_link').value
             self.max_range = float(p('max_range_m', 8.0).value)            # PROPOSED
@@ -74,9 +75,9 @@ def main(argv=None):
             self._status(f'AVAILABLE backend={self.backend_name}{tag}')
             self.get_logger().info(f'ladder detector AVAILABLE backend={self.backend_name}{tag}')
             self.create_subscription(CameraInfo, p('camera_info_topic', 'sensors/cam_head/color/camera_info').value,
-                                     self._on_info, qos_profile_sensor_data)
+                                     self._on_info, self.sensor_qos)
             self.create_subscription(Image, p('image_topic', 'sensors/cam_head/color/image_raw').value,
-                                     self._on_image, qos_profile_sensor_data)
+                                     self._on_image, self.sensor_qos)
 
         def _status(self, text):
             self.status_pub.publish(String(data=text))
@@ -88,10 +89,10 @@ def main(argv=None):
                 self.tf_listener = TransformListener(self.tf_buffer, self)
                 # EVALUATION_ONLY ground-truth pose: used solely to render ORACLE boxes.
                 self.create_subscription(PoseStamped, self.declare_parameter(
-                    'oracle_pose_topic', 'ground_truth/pose').value, self._on_gt, 50)
+                    'oracle_pose_topic', 'sim/ground_truth/base_pose').value, self._on_gt, 50)
                 depth_topic = self.declare_parameter('oracle_depth_topic', '').value
                 if depth_topic:
-                    self.create_subscription(Image, depth_topic, self._on_depth, qos_profile_sensor_data)
+                    self.create_subscription(Image, depth_topic, self._on_depth, self.sensor_qos)
             elif self.oracle_source == 'segmentation':
                 with open(self.declare_parameter('oracle_segmentation_ids_file', '').value) as fh:
                     data = yaml.safe_load(fh)
@@ -99,7 +100,7 @@ def main(argv=None):
                 self.seg = {}
                 self.create_subscription(Image, self.declare_parameter(
                     'oracle_segmentation_topic', 'sensors/cam_head/oracle/segmentation').value, self._on_seg,
-                    qos_profile_sensor_data)
+                    self.sensor_qos)
             else:
                 raise ValueError(f'unknown oracle_source {self.oracle_source}')
 

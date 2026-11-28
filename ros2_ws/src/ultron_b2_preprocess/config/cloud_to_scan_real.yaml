@@ -1,11 +1,10 @@
-# pointcloud_to_laserscan (Humble) for the REAL lidar: sensors/lidar/points_filtered -> sensors/scan.
+# cloud_to_scan (ultron_b2_preprocess, RELIABLE in/out) for the REAL lidar: sensors/lidar/points_filtered -> sensors/scan.
 # Height band: integrated ch.04 window -0.20..0.35 m in base_link, expressed in base_footprint
 # (base_link is 0.65 m above base_footprint in calibration/real.yaml, TO_VERIFY) = 0.45..1.00 m.
 # Floor sits at ~0 in base_footprint (lidar_link 0.75 m above it). All values PROPOSED.
 /**:
   ros__parameters:
     target_frame: base_footprint
-    transform_tolerance: 0.05
     min_height: 0.45
     max_height: 1.00
     angle_min: -3.14159265
@@ -14,5 +13,3 @@
     scan_time: 0.1
     range_min: 0.35
     range_max: 12.0
-    use_inf: true
-    inf_epsilon: 1.0

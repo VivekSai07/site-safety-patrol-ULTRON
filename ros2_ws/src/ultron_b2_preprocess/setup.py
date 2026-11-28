@@ -17,8 +17,9 @@ setup(
     zip_safe=True,
     maintainer='ULTRON team',
     maintainer_email='ultron@example.invalid',
-    description='Lidar preprocessing: self box, range/height crop, voxel, optional deskew; laserscan config',
+    description='Lidar preprocessing: self box, range/height crop, voxel, optional deskew; reliable cloud->scan',
     license='Apache-2.0',
     tests_require=['pytest'],
-    entry_points={'console_scripts': ['cloud_filter = ultron_b2_preprocess.cloud_filter:main']},
+    entry_points={'console_scripts': ['cloud_filter = ultron_b2_preprocess.cloud_filter:main',
+                                    'cloud_to_scan = ultron_b2_preprocess.cloud_to_scan:main']},
 )

@@ -71,7 +71,9 @@ def _sim(context):
     source = PythonLaunchDescriptionSource(os.path.join(
         get_package_share_directory('ultron_b2_sim'), 'launch', 'sim_bridge.launch.py'))
     args = {'odom_source': cfg.get('odom_source', 'sim'),
-            'calibration_profile': cfg.get('calibration_profile', 'sim')}
+            'calibration_profile': cfg.get('calibration_profile', 'sim'),
+            # preprocess cloud_to_scan is the single sensors/scan publisher; the bridge's own scan goes to sim/scan.
+            'scan_topic': 'sim'}
     for key in ('sim_rate', 'sim_people', 'sim_route', 'sim_scenario', 'sim_hidden_ladders', 'sim_scan_topic',
                 'sim_camera'):
         if cfg.get(key):

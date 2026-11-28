@@ -3,9 +3,9 @@
 #   ULTRON_MODE=replay ULTRON_DEV_ARGS="-v <bag>:/bag:ro" ros2_ws/scripts/dev.sh \
 #     bash -lc 'src/ultron_b2_localization/tools/eval_bag.sh <mola|kiss> <out_dir> [mapping|localization] [map_ref]'
 # Plays only /scan_cloud (remapped to <ns>/sensors/lidar/points_filtered; bag /tf is NOT played: its
-# world->imu_link is an IMU orientation frame, BAG_FACTS.md). Until Agent B's preprocessing lands, the
-# scan is produced here by tools/cloud_to_scan.py (reliable QoS; z band -0.35..1.0 m in base_link,
-# range >= 1 m). pointcloud_to_laserscan was tried first and dropped 21-99 % of the clouds (best effort).
+# world->imu_link is an IMU orientation frame, BAG_FACTS.md). The scan comes from the bringup's
+# ultron_b2_preprocess cloud_to_scan (RELIABLE; the only sensors/scan publisher). The former eval-only
+# tools/cloud_to_scan.py was removed at integration; pointcloud_to_laserscan (best effort) dropped 21-99 %.
 # Mapping runs end with map/save (save_3d for MOLA). Outputs (CSV, summary.json, logs) go to <out_dir>.
 set -u
 set +u; source /opt/ros/humble/setup.bash; source install/setup.bash; set -u
@@ -36,8 +36,6 @@ extra=()
 [ -n "$MAP_REF" ] && extra+=("map:=$MAP_REF")
 setsid ros2 launch ultron_b2_bringup replay.launch.py mode:="$MODE" odom_source:="$SRC" "${extra[@]}" \
   > "$OUT/launch.log" 2>&1 &
-pids+=($!)
-setsid python3 "$HERE/cloud_to_scan.py" --ros-args -r __ns:=$NS > "$OUT/scan.log" 2>&1 &
 pids+=($!)
 setsid python3 "$HERE/replay_eval.py" --out "$OUT" --namespace $NS > "$OUT/recorder.log" 2>&1 &
 REC=$!

@@ -56,7 +56,8 @@ both. Static TF `base_link → lidar_link` comes from `robot_state_publisher`.
   absolute (not namespaced) and unused.
 - The scan must arrive reliably and completely. `pointcloud_to_laserscan` (best effort) delivered
   only 0.3–79 % of the bag's 1.5 MB clouds and broke slam_toolbox. The eval tool
-  `tools/cloud_to_scan.py` (reliable QoS) delivered 364/364.
+  `tools/cloud_to_scan.py` (reliable QoS) delivered 364/364; at integration it was replaced by the
+  installed `ultron_b2_preprocess` `cloud_to_scan` node (RELIABLE), the only `sensors/scan` publisher.
 - slam_toolbox warns that `min_laser_range` 0.3 is below the scan's `range_min` (1.0 m on the
   real profile). The warning is harmless.
 - No result here is hardware or real-perception validation. See VALIDATION.md (Agent C).

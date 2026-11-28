@@ -14,7 +14,7 @@ NAV = {'controller_server', 'local_costmap/local_costmap', 'planner_server', 'gl
 CONTROL_NODES = {'twist_mux', 'active_source_monitor', 'collision_monitor', 'lifecycle_manager_control',
                  'motion_gate', 'sim_driver'}                                           # Agent D
 EXPECTED_SIM = ({'robot_state_publisher', 'tf_authority_check', 'ultron_sim_bridge', 'cloud_filter',
-                 'pointcloud_to_laserscan', 'slam_toolbox', 'mission_placeholder'}
+                 'cloud_to_scan', 'slam_toolbox', 'mission_placeholder'}
                 | SLAM_COMMON | NAV | CONTROL_NODES)
 CONTROL = NAV | CONTROL_NODES | {'mission_placeholder'}
 EXPECTED_REPLAY_LOCALIZATION = ((EXPECTED_SIM - CONTROL - {'slam_toolbox', 'ultron_sim_bridge'})
@@ -33,7 +33,7 @@ def _launch(run_mode, domain, *args, wait_s=6.0, expect=None):
 
 
 def _stack_nodes(nodes, namespace):
-    # tf2_ros TransformListeners (pointcloud_to_laserscan, slam_toolbox) spawn hidden transform_listener_impl_<id> nodes.
+    # tf2_ros TransformListeners (cloud_to_scan, slam_toolbox) spawn hidden transform_listener_impl_<id> nodes.
     return {n[len(namespace) + 1:] for n in nodes
             if n.startswith(namespace + '/') and not n[len(namespace) + 1:].startswith('transform_listener_impl_')}
 

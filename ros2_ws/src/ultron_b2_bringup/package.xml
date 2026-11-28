@@ -33,7 +33,6 @@
   <exec_depend>xacro</exec_depend>
   <exec_depend>rmw_cyclonedds_cpp</exec_depend>
   <exec_depend>ultron_b2_preprocess</exec_depend>
-  <exec_depend>pointcloud_to_laserscan</exec_depend>
   <exec_depend>ros2bag</exec_depend>
   <exec_depend>realsense2_camera_msgs</exec_depend>
   <!-- live drivers (rslidar_sdk, xsens_mti_ros2_driver, realsense2_camera) are not dependencies: not in the

@@ -2,7 +2,7 @@
 
     ros2 run ultron_b2_tools stream_probe --duration 30 --namespace /ultron/replay \
         --topics sensors/lidar/points sensors/lidar/points_filtered sensors/scan sensors/imu/data \
-        --proc cloud_filter pointcloud_to_laserscan --json out.json
+        --proc cloud_filter cloud_to_scan --json out.json
 
 Subscribes RELIABLE when every publisher offers reliable, else best-effort. A best-effort reader
 loses most ~1 MB fragmented samples (clouds, images) on a host with a small net.core.rmem_max,
