@@ -36,8 +36,8 @@ The [assessment runbook](docs/ASSESSMENT_RUNBOOK.md) describes an optional
 live adapter and a separate 24-view simulation experiment. The current
 [integrated patrol worker](docs/HARDWARE_READINESS.md#reproduce-on-the-laptop)
 uses the user-authorized OpenAI path when explicitly enabled; images and prompts
-leave the laptop and can incur API charges. Successful cloud inference and
-real-data accuracy remain unverified in this restricted execution environment.
+leave the laptop and can incur API charges. A one-keyframe cloud response was verified from the user laptop;
+real-data accuracy and damaged-image detection remain unverified.
 Default simulation makes no cloud calls.
 
 The existing [generation-prompt ZIP](deliverables/ULTRON_inspection_prompt_pack_v1.zip)
