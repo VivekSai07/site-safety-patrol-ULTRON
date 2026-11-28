@@ -23,3 +23,5 @@ datasets/
 .env.*
 # nesseler form and other downloaded reference data stay local
 data/
+# Text encoder that YOLOE downloads into the working directory on first use.
+mobileclip*.ts
