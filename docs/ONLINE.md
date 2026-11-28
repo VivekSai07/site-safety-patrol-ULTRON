@@ -92,6 +92,30 @@ exclude each other. A full loop would be:
 None of that is wired. Today `online` works with a person driving, with a recording, or with goals
 through the dashboard or contract navigators when exploration is idle.
 
+## Tested
+
+These runs used YOLOE and Qwen3-VL 8B through Ollama on the RTX 5090 workstation, replayed with
+`--realtime`.
+
+**Simulated patrol A** (86 s, sim evidence, lidar candidates on):
+- 14 ladders found. All 9 with usable keyframes were read online; the other 5 were only ever seen
+  beyond 4.5 m and have no keyframes, the same as offline.
+- The first sheet arrived 19 s into the patrol. Five sheets came in during the walk; the last four
+  were drained after the stream ended.
+- One ladder was reopened and read a second time with an extra side.
+- 17 lidar candidates counted: 14 explained by detected ladders, 2 dismissed by looking, 1 left open.
+
+**Hall recording** (36 s, real B2 data, no lidar candidates):
+- The same 5 objects as offline.
+- The fire extinguisher, alarm box and both ladders were flushed as the robot passed them; the
+  extinguisher's and alarm box's checklists were back during the walk.
+- The extinguisher was reopened once (another side).
+- The ladder sheets and the hose cabinet were done just after the stream ended.
+
+Unit tests: `tests/test_pipeline_online.py`. A gated reader proves the survey keeps finding and
+collecting the next ladder while the first is being read. The other tests cover reject before
+read, reopen, off-thread view goals, and candidate explained or dismissed.
+
 ## Not verified
 
 - Never run on the robot or with Nav2. Moving navigators are tested only with a scripted navigator.
