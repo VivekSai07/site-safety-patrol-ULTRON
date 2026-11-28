@@ -41,14 +41,17 @@ class Candidate(tuple):
 
 class LidarCandidates:
     def __init__(self, floor=None, low=0.3, high=2.8, min_top=1.0, min_span=0.6, size=(0.2, 1.8),
-                 reach=(1.0, 10.0), every=1.0, min_points=15, lying=True, flat=(0.04, 0.25),
+                 reach=(1.0, 6.0), every=1.0, min_points=15, lying=True, flat=(0.04, 0.25),
                  flat_reach=6.0, flat_size=(1.0, 6.0), flat_width=0.9):
         self.floor = floor            # floor height in the map frame; None: estimated per cloud
         self.low, self.high = low, high  # height band kept above the floor
         self.min_top = min_top        # a blob must reach this high above the floor ...
         self.min_span = min_span      # ... and its points span at least this much height
         self.size = size              # longest side of the blob from above, metres
-        self.reach = reach            # distance band from the robot in which clouds are dense enough
+        # Distance band from the robot. 6 m covers a 10 x 8 m room from its middle; on the hall
+        # recording 10 m gave 4 of 5 objects and 50 unexplained upright candidates, 6 m gave 5 of 5
+        # and 23 (sim yard: ladders found within 8 m of the route 11 of 11 at 10 m, 9 of 11 at 6 m).
+        self.reach = reach
         self.every = every            # seconds between clouds looked at
         self.min_points = min_points
         self.lying = lying            # also look for low, long blobs: ladders lying on the floor
