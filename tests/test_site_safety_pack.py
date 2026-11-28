@@ -139,5 +139,17 @@ class SafetyOracleTests(unittest.TestCase):
                 sim.close()
 
 
+@unittest.skipUnless(importlib.util.find_spec('pydantic'), 'dashboard models need pydantic')
+class DashboardEventCompatTests(unittest.TestCase):
+    def test_safety_violation_event_fits_existing_contract(self):
+        from ultron.dashboard.models import Event
+        event = Event(mission_id='PATROL-01', type='SAFETY_VIOLATION', time=12.5,
+                      asset_id='person_nohelm',
+                      data={'violation': 'PPE_HELMET_MISSING', 'evidence': 'frames/00042.jpg',
+                            'source': 'SIMULATION_ORACLE'})
+        self.assertEqual(event.type, 'SAFETY_VIOLATION')
+        self.assertEqual(event.data['violation'], 'PPE_HELMET_MISSING')
+
+
 if __name__ == '__main__':
     unittest.main()

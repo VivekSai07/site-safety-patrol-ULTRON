@@ -191,6 +191,18 @@ From the repository root, on a machine with MuJoCo, NumPy and Pillow (verify dep
 PYTHONPATH=src MUJOCO_GL=egl python3 -m ultron demo --out runs/ultron-demo
 ```
 
+## Site safety sweep beyond ladders
+
+Checklists are data, not code: `--safety` makes patrol 0 also check a fire
+extinguisher, first-aid station, escape-route sign and two workers (one without
+helmet/vest → `SAFETY_VIOLATION` events with evidence frames), then writes
+`safety_sweep.json` for the 9-criterion `site_safety_v1` VLM assessment. See
+[docs/SITE_SAFETY.md](docs/SITE_SAFETY.md).
+
+```bash
+PYTHONPATH=src MUJOCO_GL=egl python3 -m ultron demo --out runs/safety-demo --patrols 1 --safety
+```
+
 Omit `--out` for a unique run folder. Existing folders are refused. Default: two patrols with acceleration-limited motion; simulated duration follows the route and turn profile, and rendering speed depends on the machine. Run data is roughly 200–300 MB because depth arrays are preserved.
 
 After generating a run at `runs/ultron-demo/`, open `report.html` directly, or serve it:
