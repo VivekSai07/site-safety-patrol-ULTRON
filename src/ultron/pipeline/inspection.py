@@ -59,8 +59,10 @@ class Inspection:
                 if outcome == UNAVAILABLE:
                     self.store.emit("navigation_held", reason=outcome, detail=getattr(self.navigator, "detail", ""))
                     break  # no navigation: the views stay missing, the form is read from what there is
-                if outcome in (BUSY, PREEMPTED) and held < self.max_hold:
+                if outcome in (BUSY, PREEMPTED):
                     # The explorer or the operator drives: wait and ask again, the place is not at fault.
+                    if held >= self.max_hold:
+                        break  # still not ours: read the form from what there is
                     tried.discard((request.view, request.side))
                     self.store.emit("navigation_held", reason=outcome, detail=getattr(self.navigator, "detail", ""))
                     self.sleep(5.0)
