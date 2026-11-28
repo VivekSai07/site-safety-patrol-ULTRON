@@ -45,14 +45,18 @@ None, `advise()` returns [], places keep pose + thumbnail.
 ## CLI
 
     pip install -e '.[spatial]'
+    python -m ultron.spatial --store runs/spatial demo    # self-contained double-detection demo
     python -m ultron.spatial --store runs/spatial ingest --data runs/pipeline
     python -m ultron.spatial --store runs/spatial status
     python -m ultron.spatial --store runs/spatial audit          # one object stored twice?
     python -m ultron.spatial --store runs/spatial query "wooden step ladder"
 
-`ingest` replays an existing pipeline workspace (objects.json + keyframes)
-into the memory, so the morning's recording can be audited for the
-double-detection immediately. `audit` works offline from stored vectors.
+`demo` builds a tiny workspace from the repo's ladder renders (two views of
+one ladder stored as two objects) and shows audit catching it — runs on any
+machine with the weights. `ingest` replays a real pipeline workspace
+(objects.json + keyframes) into the memory; the patrol workspace lives on
+the machine that ran `python -m ultron.pipeline`, so run ingest there.
+`audit` works offline from stored vectors.
 
 ## State
 

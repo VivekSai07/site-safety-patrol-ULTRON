@@ -321,3 +321,14 @@ class TestCli(unittest.TestCase):
     def test_status_counts(self):
         self.run_cli("ingest", "--data", str(self.workspace))
         self.assertIn("3 objects", self.run_cli("status"))
+
+    def test_missing_workspace_fails_with_guidance_not_traceback(self):
+        with self.assertRaises(SystemExit) as caught:
+            self.run_cli("ingest", "--data", str(self.workspace / "nowhere"))
+        self.assertIn("no pipeline workspace", str(caught.exception))
+        self.assertIn("nowhere", str(caught.exception))
+
+    def test_demo_builds_and_audits_its_own_workspace(self):
+        out = self.run_cli("demo")
+        self.assertIn("2 objects", out)
+        self.assertIn("audit", out)

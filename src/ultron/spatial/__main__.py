@@ -27,6 +27,11 @@ def ingest(args):
 
     memory = _memory(args, need_embedder=True)
     workspace = Path(args.data)
+    if not (workspace / "objects.json").is_file() or not (workspace / "keyframes.json").is_file():
+        raise SystemExit(
+            f"no pipeline workspace at {workspace}: expected objects.json and keyframes.json.\n"
+            "Point --data at a 'python -m ultron.pipeline' workspace (on the machine that ran the "
+            "patrol), or build a demo workspace first; see docs/SPATIAL_MEMORY.md.")
     objects = {record["id"]: record for record in json.loads((workspace / "objects.json").read_text())}
     for keyframe in json.loads((workspace / "keyframes.json").read_text()):
         record = objects.get(keyframe["object_id"])
@@ -87,6 +92,35 @@ def status(args):
         print(f"  {object_id}  {record['kind']}  ({where})  samples={len(record['embedding_ids'])}  inspected={done}")
 
 
+def demo(args):
+    """Build a tiny workspace from the repo's ladder renders, then ingest and audit it.
+
+    Two views of one rendered ladder are stored as two objects a metre apart —
+    the double-detection failure — so audit should flag them as one.
+    """
+    from PIL import Image
+
+    renders = sorted(Path("datasets/nesseler_photoreal_v2/images").glob("S01-01-*-a000-*.png"))[:2]
+    if len(renders) < 2:
+        raise SystemExit("demo needs the datasets/nesseler_photoreal_v2 renders; run from the repo root")
+    workspace = Path(str(args.store).rstrip("/") + "-demo-workspace")
+    (workspace / "keyframes").mkdir(parents=True, exist_ok=True)
+    objects, keyframes = [], []
+    for index, source in enumerate(renders):
+        name = f"ladder-{index + 1}"
+        file = f"keyframes/{name}.jpg"
+        Image.open(source).convert("RGB").save(workspace / file)
+        objects.append({"id": name, "kind": "ladder", "position": [float(index), 0.0]})
+        keyframes.append({"object_id": name, "file": file, "box": [0, 0, 1000, 1000],
+                          "pose": [float(index), 0.0, 0.0], "stamp": 100.0 + index})
+    (workspace / "objects.json").write_text(json.dumps(objects))
+    (workspace / "keyframes.json").write_text(json.dumps(keyframes))
+    args.data, args.mission = str(workspace), "DEMO"
+    ingest(args)
+    print("-- audit: two views of one ladder were stored as two objects --")
+    audit(args)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="python -m ultron.spatial",
                                      description="Build and query the patrol's spatial memory.")
@@ -104,6 +138,8 @@ def main(argv=None):
     command.set_defaults(run=audit)
     command = commands.add_parser("status", help="what the memory holds")
     command.set_defaults(run=status)
+    command = commands.add_parser("demo", help="self-contained double-detection demo from repo renders")
+    command.set_defaults(run=demo)
     arguments = parser.parse_args(argv)
     arguments.run(arguments)
 
