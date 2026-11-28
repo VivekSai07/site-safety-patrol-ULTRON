@@ -12,10 +12,10 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
-from . import checklist, protocol_pdf
+from . import checklist, protocol_pdf, site_checklists
 from .bus import Bus, sse_stream
 from .models import (EXPLORATION_ACTIVE, Event, ExplorationAction, ExplorationRequest, ExplorationState,
-                     ExplorationUpdate, Goal, GoalUpdate, Inspection, MissionEnd, MissionStart, Pose, safe_id)
+                     ExplorationUpdate, Goal, GoalUpdate, Inspection, MissionEnd, MissionStart, Pose, SiteCheck, safe_id)
 from .notify import Notifier, load_config
 from .store import Duplicate, Store, now
 
@@ -345,6 +345,29 @@ def create_app(db_path=':memory:', media_dir='runs/dashboard-media', notify_conf
         bus.publish('inspection', record)
         await asyncio.to_thread(notifier.on_inspection, record)
         return {'ok': True}
+
+    # Site checks: nesseler's other checklists. Taken in and kept for the history pages only;
+    # the live page stays about ladders.
+    @app.get('/api/site-checklists')
+    async def site_checklist_catalogue():
+        return site_checklists.describe()
+
+    @app.post('/api/missions/{mission_id}/site-checks', status_code=201)
+    async def add_site_check(mission_id: str, body: SiteCheck):
+        require_mission(mission_id)
+        store.put_site_check(mission_id, body)
+        return {'mission_id': mission_id, 'object_id': body.object_id}
+
+    @app.get('/api/missions/{mission_id}/site-checks')
+    async def get_site_checks(mission_id: str):
+        require_mission(mission_id)
+        return store.site_checks(mission_id)
+
+    @app.get('/api/missions/{mission_id}/site-summary')
+    async def get_site_summary(mission_id: str):
+        require_mission(mission_id)
+        return {'mission_id': mission_id,
+                **site_checklists.patrol_summary(store.site_checks(mission_id), store.inspections(mission_id))}
 
     @app.get('/api/checklist')
     async def checklist_structure():

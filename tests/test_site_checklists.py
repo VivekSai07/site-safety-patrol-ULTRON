@@ -49,5 +49,54 @@ class SameAsPipeline(unittest.TestCase):
         self.assertFalse(rows['EH-9']['detector'])
 
 
+def row(summary, row_id):
+    return next(r for c in summary['checklists'] for r in c['rows'] if r['id'] == row_id)
+
+
+def checklist(summary, key):
+    return next(c for c in summary['checklists'] if c['key'] == key)
+
+
+class PatrolSummary(unittest.TestCase):
+    EXT = {'object_id': 'FEX-001', 'kind': 'fire_extinguisher', 'rows': {
+        'BS-1': {'answer': 'ja', 'remark': 'roter Löscher an der Wand', 'photo': 'fex-1'},
+        'BS-2': {'answer': 'offen', 'remark': 'Plakette nicht lesbar', 'photo': 'fex-2'}}}
+
+    def test_nothing_seen_is_never_a_no(self):
+        s = sc.patrol_summary([])
+        self.assertEqual(row(s, 'BS-1')['answer'], sc.NOT_FOUND)     # detector exists, object not seen
+        self.assertEqual(row(s, 'EH-9')['answer'], sc.NO_DETECTOR_YET)  # escape sign: nothing detects it
+        self.assertEqual(row(s, 'EH-4')['answer'], sc.BY_PERSON)
+        self.assertNotIn(sc.NO, [r['answer'] for c in s['checklists'] for r in c['rows']])
+
+    def test_found_object_answers_its_rows(self):
+        s = sc.patrol_summary([self.EXT])
+        self.assertEqual((row(s, 'BS-1')['answer'], row(s, 'BS-1')['photo'], row(s, 'BS-1')['objects']),
+                         (sc.YES, 'fex-1', ['FEX-001']))
+        self.assertEqual((row(s, 'BS-2')['answer'], row(s, 'BS-2')['remark']), (sc.OPEN, 'Plakette nicht lesbar'))
+        self.assertEqual(checklist(s, 'erste_hilfe_brandschutz')['headline'], sc.OPEN)
+        presence = {p['kind']: p for p in s['presence']}
+        self.assertEqual((presence['fire_extinguisher']['found'], presence['fire_extinguisher']['objects']), (1, ['FEX-001']))
+        self.assertEqual((presence['scaffold']['found'], presence['scaffold']['detector']), (0, False))
+
+    def test_one_bad_object_makes_the_row_a_no(self):
+        expired = {'object_id': 'FEX-002', 'kind': 'fire_extinguisher',
+                   'rows': {'BS-2': {'answer': 'nein', 'remark': 'Prüffrist 03/2025 abgelaufen', 'photo': 'fex-3'}}}
+        s = sc.patrol_summary([self.EXT, expired])
+        self.assertEqual((row(s, 'BS-2')['answer'], row(s, 'BS-2')['photo_object']), (sc.NO, 'FEX-002'))
+        self.assertEqual(row(s, 'BS-1')['answer'], sc.YES)
+        self.assertEqual(checklist(s, 'erste_hilfe_brandschutz')['headline'], sc.NO)
+
+    def test_ladder_row_of_the_effectiveness_check(self):
+        self.assertEqual(row(sc.patrol_summary([]), 'WK-5')['answer'], sc.NOT_FOUND)
+        passed = row(sc.patrol_summary([], [{'status': 'AUTOMATED_PASS'}]), 'WK-5')
+        self.assertEqual(passed['answer'], sc.OPEN)  # screening is not "measures sufficient"
+        flagged = row(sc.patrol_summary([], [{'status': 'AUTOMATED_PASS'}, {'status': 'FLAGGED'}]), 'WK-5')
+        self.assertEqual((flagged['answer'], flagged['remark']), (sc.NO, '2 Leiter(n) geprüft, 1 mit Mangel'))
+
+    def test_briefing_form_is_all_for_a_person(self):
+        self.assertEqual(checklist(sc.patrol_summary([self.EXT]), 'einweisung_nachunternehmen')['headline'], sc.BY_PERSON)
+
+
 if __name__ == '__main__':
     unittest.main()

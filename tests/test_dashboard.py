@@ -532,6 +532,49 @@ class ExplorationTest(unittest.TestCase):
         self.assertEqual(self.ask(client, 'start').status_code, 201)
 
 
+@unittest.skipUnless(HAVE_DASHBOARD, 'dashboard extras not installed')
+class SiteCheckTest(unittest.TestCase):
+    """Non-ladder objects and their checklist rows, per patrol, for the history pages."""
+
+    EXT = {'object_id': 'FEX-001', 'kind': 'fire_extinguisher', 'position': [2.0, 3.5], 'verified': True,
+           'rows': {'BS-1': {'answer': 'ja', 'photo': 'fex-1'}, 'BS-2': {'answer': 'offen', 'remark': 'zu weit'}}}
+
+    def setUp(self):
+        self.client = TestClient(create_app(':memory:'))
+        self.client.post('/api/missions', json={'mission_id': 'PATROL-01', 'site_id': 'site-a'})
+
+    def post(self, body, mission='PATROL-01'):
+        return self.client.post(f'/api/missions/{mission}/site-checks', json=body)
+
+    def test_round_trip_and_summary(self):
+        self.assertEqual(self.post(self.EXT).status_code, 201)
+        checks = self.client.get('/api/missions/PATROL-01/site-checks').json()
+        self.assertEqual([(c['object_id'], c['kind'], c['position']) for c in checks], [('FEX-001', 'fire_extinguisher', [2.0, 3.5])])
+        summary = self.client.get('/api/missions/PATROL-01/site-summary').json()
+        rows = {r['id']: r for c in summary['checklists'] for r in c['rows']}
+        self.assertEqual((rows['BS-1']['answer'], rows['BS-2']['answer'], rows['EH-1']['answer']), ('ja', 'offen', 'nicht_gefunden'))
+        self.assertEqual(len(summary['checklists']), 5)
+
+    def test_a_later_post_replaces_the_object(self):
+        self.post(self.EXT)
+        self.post({**self.EXT, 'rows': {'BS-2': {'answer': 'nein', 'remark': 'abgelaufen'}}})
+        checks = self.client.get('/api/missions/PATROL-01/site-checks').json()
+        self.assertEqual((len(checks), checks[0]['rows']['BS-2']['answer']), (1, 'nein'))
+
+    def test_rejects_what_the_checklists_do_not_cover(self):
+        self.assertEqual(self.post(self.EXT, mission='NOPE').status_code, 404)
+        self.assertEqual(self.post({**self.EXT, 'kind': 'coffee_machine'}).status_code, 422)
+        self.assertEqual(self.post({**self.EXT, 'rows': {'XX-1': {'answer': 'ja'}}}).status_code, 422)
+        self.assertEqual(self.post({**self.EXT, 'rows': {'EH-1': {'answer': 'ja'}}}).status_code, 422)  # a kit row from an extinguisher
+        self.assertEqual(self.post({**self.EXT, 'rows': {'BS-1': {'answer': 'maybe'}}}).status_code, 422)
+        self.assertEqual(self.post({**self.EXT, 'object_id': '../x'}).status_code, 422)
+        self.assertEqual(self.client.get('/api/missions/PATROL-01/site-checks').json(), [])
+
+    def test_catalogue_is_served(self):
+        catalogue = self.client.get('/api/site-checklists').json()
+        self.assertEqual([c['key'] for c in catalogue][0], 'erste_hilfe_brandschutz')
+
+
 @unittest.skipUnless(HAVE_DASHBOARD, 'dashboard extras not installed (pip install -e .[dashboard])')
 class RouteHistoryTest(unittest.TestCase):
     """Each patrol keeps its route and the occupancy map it drove on, for the history page."""
